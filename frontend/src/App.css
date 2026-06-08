@@ -1,0 +1,23 @@
+.hello-page {
+  max-width: 640px;
+  margin: 4rem auto;
+  padding: 0 1.5rem;
+  text-align: center;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.subtitle {
+  color: #666;
+  margin-bottom: 2rem;
+}
+
+.hello-card {
+  background: #f0f7ff;
+  border: 1px solid #cfe3ff;
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.error {
+  color: #c0392b;
+}
