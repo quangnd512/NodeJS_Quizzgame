@@ -46,6 +46,14 @@ export function getSubjectDisplayName(id: string): string {
 export const MIN_SUBJECTS = 1;
 export const MAX_SUBJECTS = 7;
 
+/**
+ * Do dai toi da cho phep cho cac truong ho so dang chuoi tu do
+ * (`displayName`, `phone`, `school`, `province`) khi cap nhat qua
+ * `PUT /api/users/profile`. Ngan chan du lieu rac/qua kho qua bat thuong
+ * (vi du paste nham 1 doan van ban dai vao o "Tinh/thanh").
+ */
+export const MAX_PROFILE_FIELD_LENGTH = 100;
+
 /** Du lieu tra ve cho `GET /api/users/me` - profile + so du diem hien tai. */
 export interface UserMeDto {
   id: string;
@@ -58,6 +66,8 @@ export interface UserMeDto {
   /** Danh sach mon hoc DAY DU thong tin (ca id lan ten hien thi) - tien loi cho FE render truc tiep. */
   subjects: SubjectCatalogEntry[];
   createdAt: Date;
+  /** Thoi diem dang nhap gan nhat (cap nhat moi lan goi POST /api/auth/login thanh cong). */
+  lastLoginAt: Date | null;
   /** So diem tich luy hien tai - lay tu PointsService (bang `user_points`). */
   points: number;
 }

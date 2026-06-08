@@ -21,6 +21,16 @@ export class InvalidSubjectsError extends UsersError {
   }
 }
 
+/**
+ * Nem ra khi du lieu cap nhat ho so (`PUT /api/users/profile`) khong hop le -
+ * vi du chuoi qua dai (vuot `MAX_PROFILE_FIELD_LENGTH`).
+ */
+export class InvalidProfileInputError extends UsersError {
+  constructor(message: string) {
+    super(message, 'INVALID_PROFILE_INPUT');
+  }
+}
+
 /** Nem ra khi khong tim thay user (truong hop hi huu - vi du bi xoa giua chung trong luc xu ly request). */
 export class UserNotFoundError extends UsersError {
   constructor(identifier: string) {

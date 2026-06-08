@@ -16,8 +16,12 @@ export const authRouter = Router();
  *      neu chua co thi TAO MOI (dong bo thong tin co ban tu Firebase).
  *   3. Phat hanh JWT noi bo va tra ve cho client cung profile user.
  *
- * Client se dung JWT nay (thay vi Firebase token) cho cac request tiep theo -
- * giam phu thuoc vao Firebase, phu hop ca cho Socket.io (PvP real-time).
+ * Client SE DUNG JWT NAY (KHONG dung lai Firebase token) cho TAT CA cac
+ * request tiep theo can dang nhap - vi du `GET /api/users/me`,
+ * `POST /api/users/subjects`, `PUT /api/users/profile`, va ca cac su kien
+ * Socket.io trong PvP real-time sau nay. Middleware `verifyAppToken`
+ * (xem `middleware/auth.middleware.ts`) chiu trach nhiem xac thuc JWT nay -
+ * giam phu thuoc + do tre goi lai Firebase tren moi request.
  */
 authRouter.post(
   '/login',

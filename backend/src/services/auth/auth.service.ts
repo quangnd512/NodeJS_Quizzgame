@@ -44,17 +44,31 @@ export class AuthService {
   /**
    * Dang nhap: nhan thong tin user da duoc xac thuc tu Firebase (qua middleware
    * `verifyFirebaseToken`), tim ban ghi `User` tuong ung trong PostgreSQL -
-   * neu chua co thi TAO MOI ("tao/lay user" theo dung yeu cau) - roi phat hanh
-   * 1 JWT noi bo cho client su dung trong cac request tiep theo.
+   * neu chua co thi TAO MOI, neu da co thi DONG BO CO CHON LOC - roi phat hanh
+   * 1 JWT noi bo (session token) cho client su dung trong cac request tiep theo.
+   *
+   * QUYET DINH THIET KE - "DONG BO CO CHON LOC" (selective sync, theo dung
+   * huong da thong nhat - chuan cua hau het app mobile hien nay):
+   *   - Moi lan dang nhap THANH CONG, CHI cap nhat lai 2 truong tu Firebase:
+   *     `email` (vi Firebase la "nguon su that" cho danh tinh dang nhap - email
+   *     co the doi neu user lien ket lai phuong thuc dang nhap) va `lastLoginAt`
+   *     (= thoi diem hien tai, phuc vu thong ke "user hoat dong").
+   *   - KHONG ghi de `displayName`/`phone` moi lan dang nhap - 2 truong nay do
+   *     NGUOI DUNG TU QUAN LY qua `PUT /api/users/profile` (xem `UsersService.
+   *     updateProfile`); neu dong bo lai tu Firebancel moi lan login se XOA mat
+   *     tuy chinh ca nhan cua ho (vi du ho doi ten hien thi trong app khac voi
+   *     ten tren Google).
+   *   - `school`/`province`/`subjects` hoan toan do nguoi dung dien trong
+   *     onboarding - Firebase khong co cac truong nay nen khong lien quan.
    *
    * XU LY RACE CONDITION: neu user dang nhap LAN DAU TIEN tu 2 thiet bi gan
    * nhu dong thoi (vi du mo app tren dien thoai va may tinh bang cung luc),
    * ca 2 request co the cung thay "chua co user" va cung co tao moi -> 1 trong
-   * 2 se vi pham rang buoc UNIQUE(firebaseUid). Ta bat loi nay va THU LAI 1 LAN
-   * bang cach doc lai (luc nay ban ghi da ton tai do request kia tao xong).
+   * 2 se vi pham rang buoc UNIQUE. Ta bat loi nay va xu ly trong
+   * `findCreateOrSyncUser` (xem chi tiet trong do).
    */
   public async login(firebaseUser: FirebaseAuthenticatedUser): Promise<LoginResult> {
-    const { user, isNewUser } = await this.findOrCreateUser(firebaseUser);
+    const { user, isNewUser } = await this.findCreateOrSyncUser(firebaseUser);
 
     const token = signAppToken({ userId: user.id, firebaseUid: user.firebaseUid });
 
@@ -66,17 +80,19 @@ export class AuthService {
   }
 
   /**
-   * Tim ban ghi `User` theo `firebaseUid`; neu chua co thi tao moi voi thong
-   * tin co ban tu Firebase (displayName, email, phone). Cac truong con lai
-   * (school, province, subjects) se duoc nguoi dung dien trong qua trinh
-   * "onboarding" (qua `POST /api/users/subjects` va cap nhat profile sau nay).
+   * Tim ban ghi `User` theo `firebaseUid`:
+   *   - Neu CHUA CO -> tao moi voi thong tin co ban tu Firebase (displayName,
+   *     email, phone, lastLoginAt = hien tai). Cac truong con lai (school,
+   *     province, subjects) se duoc nguoi dung dien trong qua trinh "onboarding".
+   *   - Neu DA CO -> dong bo CO CHON LOC: chi cap nhat `email` (neu Firebase
+   *     tra ve gia tri khac) va `lastLoginAt` (luon cap nhat = hien tai).
    */
-  private async findOrCreateUser(
+  private async findCreateOrSyncUser(
     firebaseUser: FirebaseAuthenticatedUser,
   ): Promise<{ user: Awaited<ReturnType<PrismaClient['user']['findUniqueOrThrow']>>; isNewUser: boolean }> {
     const existing = await this.prisma.user.findUnique({ where: { firebaseUid: firebaseUser.uid } });
     if (existing) {
-      return { user: existing, isNewUser: false };
+      return { user: await this.syncExistingUser(existing, firebaseUser), isNewUser: false };
     }
 
     try {
@@ -86,6 +102,7 @@ export class AuthService {
           displayName: firebaseUser.displayName,
           email: firebaseUser.email,
           phone: firebaseUser.phoneNumber,
+          lastLoginAt: new Date(),
         },
       });
       return { user: created, isNewUser: true };
@@ -102,7 +119,9 @@ export class AuthService {
           where: { firebaseUid: firebaseUser.uid },
         });
         if (createdByOtherRequest) {
-          return { user: createdByOtherRequest, isNewUser: false };
+          // Van la "dang nhap" tu goc nhin cua request nay - dong bo
+          // `lastLoginAt`/`email` nhu binh thuong (xem `syncExistingUser`).
+          return { user: await this.syncExistingUser(createdByOtherRequest, firebaseUser), isNewUser: false };
         }
 
         // TRUONG HOP 2 - xung dot du lieu THAT (vi du `email` da thuoc ve mot
@@ -112,6 +131,39 @@ export class AuthService {
         // lo cau truc CSDL qua `message`) - thay vao do nem loi nghiep vu ro
         // rang, anh xa sang HTTP 409 Conflict.
         throw new AccountConflictError(violatedField ?? 'email');
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Dong bo CO CHON LOC mot user DA TON TAI khi dang nhap lai:
+   *   - `lastLoginAt` -> luon cap nhat thanh thoi diem hien tai.
+   *   - `email` -> CHI cap nhat neu Firebase tra ve gia tri KHAC voi DB hien
+   *     tai (tranh ghi DB khong can thiet khi khong co gi thay doi).
+   *
+   * KHONG dung cho `displayName`/`phone` - xem giai thich chi tiet trong
+   * docblock cua `login()`.
+   *
+   * Neu cap nhat `email` vi pham UNIQUE (email vua duoc Firebase tra ve da
+   * thuoc ve mot tai khoan KHAC trong he thong) -> nem `AccountConflictError`
+   * (409) thay vi de lo loi Prisma nguyen van.
+   */
+  private async syncExistingUser(
+    user: Awaited<ReturnType<PrismaClient['user']['findUniqueOrThrow']>>,
+    firebaseUser: FirebaseAuthenticatedUser,
+  ): Promise<Awaited<ReturnType<PrismaClient['user']['findUniqueOrThrow']>>> {
+    const data: { lastLoginAt: Date; email?: string | null } = { lastLoginAt: new Date() };
+
+    if (firebaseUser.email !== user.email) {
+      data.email = firebaseUser.email;
+    }
+
+    try {
+      return await this.prisma.user.update({ where: { id: user.id }, data });
+    } catch (err) {
+      if (isUniqueConstraintError(err)) {
+        throw new AccountConflictError(getViolatedUniqueField(err) ?? 'email');
       }
       throw err;
     }

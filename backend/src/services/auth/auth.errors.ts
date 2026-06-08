@@ -33,6 +33,44 @@ export class InvalidFirebaseTokenError extends AuthError {
 }
 
 /**
+ * JWT noi bo (phat hanh boi `POST /api/auth/login`) khong hop le: sai chu ky,
+ * het han, sai dinh dang, hoac thieu truong bat buoc (`userId`/`firebaseUid`).
+ *
+ * Khac voi `InvalidFirebaseTokenError` (loi token CUA FIREBASE) - loi nay xay
+ * ra khi xac thuc bang "session token" noi bo cua he thong (dung cho cac
+ * request SAU khi da dang nhap, va cho Socket.io).
+ */
+export class InvalidSessionTokenError extends AuthError {
+  constructor(reason: string) {
+    super(
+      `Phien dang nhap khong hop le hoac da het han (chi tiet: ${reason}). ` +
+        `Vui long dang nhap lai (POST /api/auth/login).`,
+      'INVALID_SESSION_TOKEN',
+    );
+  }
+}
+
+/**
+ * Token noi bo hop le (chu ky/dinh dang dung) nhung TAI KHOAN tuong ung
+ * (`userId` trong payload) khong con ton tai trong CSDL - vi du tai khoan
+ * da bi xoa sau khi token duoc phat hanh. Phai bao loi RIENG voi
+ * `InvalidSessionTokenError` vi nguyen nhan khac nhau (token cu nhung tai
+ * khoan da mat, khong phai do token sai/het han) - giup debug & log chinh xac hon.
+ */
+export class SessionUserNotFoundError extends AuthError {
+  constructor(userId: string) {
+    super(
+      `Khong tim thay tai khoan ung voi phien dang nhap nay (id='${userId}'). ` +
+        `Tai khoan co the da bi xoa - vui long dang nhap lai.`,
+      'SESSION_USER_NOT_FOUND',
+    );
+    this.userId = userId;
+  }
+
+  public readonly userId: string;
+}
+
+/**
  * Nem ra khi mot endpoint yeu cau user da hoan tat dang ky (co ban ghi trong
  * bang `users`) nhung Firebase UID trong token chua tung dang nhap qua
  * `POST /api/auth/login`. Client nen goi /login truoc.

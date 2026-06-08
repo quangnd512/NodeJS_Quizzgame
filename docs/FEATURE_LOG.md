@@ -401,3 +401,69 @@ hoàn tất "onboarding" bằng cách chọn các môn học muốn ôn thi (1-7
   nên có thêm endpoint `PATCH /api/users/me` riêng (hiện chưa có trong yêu cầu).
 - TODO: viết unit test chính thức (Vitest/Jest) cho `AuthService`/`UsersService`
   với Prisma + Firebase Admin được mock, thay vì chỉ kiểm tra "đường ống" lỗi.
+
+### Cập nhật sau review (2026-06-08) — Quyết định kiến trúc & mở rộng
+
+Theo phản hồi review (xem `docs/CODE_REVIEW_LOG.md` mục "Vấn đề còn mở"),
+người dùng đã chốt 2 quyết định kiến trúc và yêu cầu triển khai ngay (vì mọi
+module tiếp theo đều cần xác thực):
+
+**1. `verifyAppToken` — middleware xác thực bằng JWT nội bộ (PHƯƠNG THỨC CHÍNH cho mọi request sau khi đăng nhập)**
+- Thêm middleware mới `verifyAppToken` (`auth.middleware.ts`): đọc JWT nội bộ
+  từ header `Authorization: Bearer <token>`, giải mã + xác thực qua
+  `verifyAppToken` (lib `jwt.ts`, import alias `decodeAppToken` để tránh trùng
+  tên), tra cứu `User` trực tiếp theo `userId` trong payload (không cần "vòng"
+  qua `firebaseUid` như `verifyFirebaseToken`), gán `req.currentUser`.
+- Lỗi token sai/hết hạn → `InvalidSessionTokenError` (401, code
+  `INVALID_SESSION_TOKEN`); token hợp lệ nhưng tài khoản đã bị xoá →
+  `SessionUserNotFoundError` (401, code `SESSION_USER_NOT_FOUND`) — phân biệt
+  rõ 2 nguyên nhân để debug & log chính xác.
+- **Đã loại bỏ `requireRegisteredUser`** (middleware cũ, nay dư thừa vì
+  `verifyAppToken` luôn đảm bảo `currentUser` tồn tại hoặc nem lỗi trước đó).
+- `users.route.ts` chuyển từ `verifyFirebaseToken + requireRegisteredUser`
+  sang **chỉ `verifyAppToken`** — áp dụng ở cấp router (`usersRouter.use(...)`).
+- `verifyFirebaseToken` (xác thực bằng Firebase ID Token) **chỉ còn dùng cho
+  `POST /api/auth/login`** — đúng vai trò "cửa ngõ" trao đổi Firebase token
+  lấy session token nội bộ. Các request sau đó (kể cả Socket.io PvP sau này)
+  đều dùng `verifyAppToken`, giảm phụ thuộc + độ trễ gọi lại Firebase.
+
+**2. Đồng bộ có chọn lọc (selective sync) khi đăng nhập + endpoint `PUT /api/users/profile`**
+- `AuthService.login` (qua `findCreateOrSyncUser` + `syncExistingUser` mới):
+  - User MỚI: tạo với đầy đủ thông tin từ Firebase + `lastLoginAt = hiện tại`.
+  - User ĐÃ CÓ: **CHỈ** đồng bộ lại `email` (nếu Firebase trả về giá trị khác
+    — vì email là "nguồn sự thật" của danh tính đăng nhập) và `lastLoginAt`
+    (luôn cập nhật = thời điểm hiện tại). **KHÔNG** ghi đè `displayName`/`phone`
+    — tránh xoá mất tuỳ chỉnh cá nhân của người dùng.
+  - Xung đột UNIQUE khi đồng bộ `email` (email đã thuộc tài khoản khác) →
+    `AccountConflictError` (409) — nhất quán với luồng tạo mới.
+- Thêm trường `lastLoginAt: DateTime?` vào model `User`
+  (migration `20260608064453_add_last_login_at`).
+- **Endpoint mới: `PUT /api/users/profile`** — cho phép người dùng tự quản lý
+  `displayName`, `phone`, `school`, `province`:
+  - Theo kiểu "PATCH bán phần": trường vắng mặt trong body → giữ nguyên,
+    trường gửi `null` → xoá (set về `null`), trường gửi chuỗi → validate độ
+    dài (`MAX_PROFILE_FIELD_LENGTH = 100`) rồi `trim()`.
+  - **KHÔNG** cho sửa `email` (đồng bộ tự động từ Firebase) hay `subjects`
+    (có endpoint + luật validate riêng) — tách trách nhiệm rõ ràng.
+  - Lỗi `InvalidProfileInputError` (code `INVALID_PROFILE_INPUT`, HTTP 400)
+    khi dữ liệu không hợp lệ.
+- `UserMeDto`/`UserProfileDto` bổ sung trường `lastLoginAt` để FE hiển thị.
+
+### Đã kiểm thử lại (sau khi sửa)
+- `npx tsc --noEmit` ✅ pass.
+- Tạo user test trực tiếp trong DB + tự ký JWT nội bộ bằng `JWT_SECRET` thật
+  (không qua Firebase) để kiểm thử toàn bộ luồng mới — **chạy thực tế trên
+  server thật**, kết quả đúng như kỳ vọng:
+  - `GET /me` không token / token rác → `401 MISSING_AUTH_TOKEN` /
+    `401 INVALID_SESSION_TOKEN`
+  - `GET /me` với session token hợp lệ → trả đúng profile + `lastLoginAt` + điểm
+  - `POST /subjects` với `[{id:"toan"}, {id:"VAN", name:"hacked-name"}]` →
+    chuẩn hoá đúng thành `[{id:"TOAN", name:"Toán"}, {id:"VAN", name:"Ngữ văn"}]`
+    (tự viết hoa, **bỏ qua `name` giả mạo từ client**, tra cứu lại tên chuẩn)
+  - `PUT /profile` set `displayName`/`school`/`province` → lưu đúng, trả về
+    profile đầy đủ
+  - `PUT /profile` với `{"school": null}` → xoá đúng trường `school`, **giữ
+    nguyên** `displayName`/`province` đã set trước đó (đúng ngữ nghĩa "PATCH
+    bán phần")
+  - `PUT /profile` với chuỗi 200 ký tự → `400 INVALID_PROFILE_INPUT`
+  - Đã xoá user test sau khi kiểm thử xong (không để lại rác trong DB).

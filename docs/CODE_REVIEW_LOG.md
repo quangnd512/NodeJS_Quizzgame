@@ -190,3 +190,52 @@ PrismaClientKnownRequestError` để TypeScript narrow kiểu chính xác hơn).
   các request sau `/login`), đặc biệt quan trọng cho Socket.io/PvP sắp tới.
 - **Có nên đồng bộ lại `displayName`/`email`/`phone` mỗi lần đăng nhập** hay
   giữ nguyên hành vi "chỉ đồng bộ lúc tạo mới" như hiện tại?
+
+---
+
+## Cập nhật Review #2 — Xử lý các vấn đề kiến trúc còn mở (2026-06-08)
+
+Người dùng đã xem xét 2 "Vấn đề còn mở" ở trên và CHỐT quyết định:
+
+> **Vấn đề 1** — Thêm `verifyAppToken` middleware, dùng cho TẤT CẢ route sau
+> `/login` và Socket.io. Đây là việc BẮT BUỘC phải làm trước khi code các
+> module tiếp theo vì mọi route đều cần xác thực.
+>
+> **Vấn đề 2** — Dùng đồng bộ có chọn lọc: chỉ update `email` và `lastLoginAt`
+> mỗi lần login, các field còn lại do user tự quản lý qua `PUT /api/users/profile`.
+> Đây là approach chuẩn của hầu hết app mobile hiện nay.
+
+### Đã triển khai theo đúng quyết định trên:
+
+**1. `verifyAppToken` middleware** (xem chi tiết trong `FEATURE_LOG.md` mục 3
+"Cập nhật sau review"):
+- Middleware mới xác thực bằng JWT nội bộ, tra cứu `User` trực tiếp theo `userId`.
+- 2 lỗi mới: `InvalidSessionTokenError` (401), `SessionUserNotFoundError` (401)
+  — phân biệt rõ "token sai/hết hạn" với "tài khoản đã bị xoá".
+- Loại bỏ `requireRegisteredUser` (dead code sau khi chuyển đổi).
+- `users.route.ts` (mọi route cần đăng nhập) chuyển sang dùng `verifyAppToken`.
+- `verifyFirebaseToken` thu hẹp phạm vi — CHỈ còn dùng cho `POST /api/auth/login`
+  (đúng vai trò "trao đổi" Firebase token lấy session token nội bộ).
+- → **Giải quyết triệt để vấn đề "JWT được phát hành nhưng không bao giờ
+  được dùng"** đã nêu ở Review #2 gốc.
+
+**2. Đồng bộ có chọn lọc + `PUT /api/users/profile`:**
+- `AuthService` tách logic thành `findCreateOrSyncUser` + `syncExistingUser`:
+  user đã tồn tại CHỈ đồng bộ `email` (nếu đổi) và `lastLoginAt`; KHÔNG ghi đè
+  `displayName`/`phone` (do người dùng tự quản lý).
+- Thêm trường `lastLoginAt` vào model `User` (migration `add_last_login_at`).
+- Thêm endpoint `PUT /api/users/profile` (kiểu "PATCH bán phần" — vắng mặt =
+  giữ nguyên, `null` = xoá), với validate độ dài (`InvalidProfileInputError`,
+  400) và **không cho sửa `email`/`subjects`** (tách trách nhiệm rõ ràng).
+- → **Giải quyết vấn đề "không có nơi để chỉnh sửa hồ sơ ngoài lúc tạo mới"**.
+
+### Kiểm thử lại sau khi sửa
+- `npx tsc --noEmit` ✅ pass — không có `any`, không lỗi kiểu.
+- Test trên server thật (tạo user test trực tiếp trong DB + tự ký session
+  token bằng `JWT_SECRET` thật, không qua Firebase — vì mục đích chỉ kiểm thử
+  lớp `verifyAppToken` + `UsersService`, không phải lớp Firebase đã test ở
+  Review trước): xác nhận đầy đủ các luồng `GET /me`, `POST /subjects`,
+  `PUT /profile` (set, xoá theo "patch bán phần", validate độ dài) hoạt động
+  đúng như thiết kế. Đã dọn dẹp dữ liệu test, không để lại rác trong DB.
+
+### Trạng thái: ✅ Cả 2 vấn đề kiến trúc đã được giải quyết theo đúng quyết định của người dùng — sẵn sàng để review lần cuối trước khi merge.

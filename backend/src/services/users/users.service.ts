@@ -3,8 +3,9 @@
 import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrismaClient } from '../../lib/prisma.js';
 import { PointsService, pointsService } from '../points/points.service.js';
-import { InvalidSubjectsError, UserNotFoundError } from './users.errors.js';
+import { InvalidProfileInputError, InvalidSubjectsError, UserNotFoundError } from './users.errors.js';
 import {
+  MAX_PROFILE_FIELD_LENGTH,
   MAX_SUBJECTS,
   MIN_SUBJECTS,
   SUBJECT_CATALOG,
@@ -18,6 +19,24 @@ import {
 export interface SubjectInput {
   id: string;
   name?: string;
+}
+
+/**
+ * Du lieu cap nhat ho so ca nhan (`PUT /api/users/profile`).
+ *
+ * QUY UOC "PATCH BAN PHAN": chi cac truong CO MAT (key ton tai) trong object
+ * nay moi duoc cap nhat; truong vang mat (khong co key) giu nguyen gia tri cu
+ * trong DB; truong duoc gui voi gia tri `null` se XOA du lieu cu (cho phep
+ * "bo trong" lai).
+ *
+ * LUU Y: KHONG co `email`/`subjects` o day - 2 truong nay duoc quan ly rieng
+ * (xem comment chi tiet trong `users.route.ts` tai endpoint `PUT /profile`).
+ */
+export interface ProfileUpdateInput {
+  displayName?: string | null;
+  phone?: string | null;
+  school?: string | null;
+  province?: string | null;
 }
 
 export class UsersService {
@@ -66,6 +85,63 @@ export class UsersService {
   }
 
   /**
+   * Cap nhat cac truong ho so CA NHAN ma nguoi dung tu quan ly:
+   * `displayName`, `phone`, `school`, `province`.
+   *
+   * QUYET DINH THIET KE (dong bo CO CHON LOC): theo dung huong da thong nhat,
+   * `email` va `lastLoginAt` la du lieu DONG BO TU FIREBASE (cap nhat tu dong
+   * trong `AuthService.login` o moi lan dang nhap) - KHONG cho phep sua qua
+   * day. `subjects` co quy trinh validate rieng (`updateSubjects`). Endpoint
+   * nay CHI quan ly cac truong con lai - dung "PATCH ban phan": field nao
+   * khong co trong `update` thi giu nguyen, field gui `null` thi xoa.
+   *
+   * @throws InvalidProfileInputError neu gia tri qua dai (vuot `MAX_PROFILE_FIELD_LENGTH`)
+   * @throws UserNotFoundError neu khong tim thay user (hi huu)
+   */
+  public async updateProfile(userId: string, update: ProfileUpdateInput): Promise<UserMeDto> {
+    const data: Record<string, string | null> = {};
+
+    for (const [field, value] of Object.entries(update)) {
+      if (value === undefined) continue; // Vang mat -> giu nguyen, khong dua vao cau lenh UPDATE.
+      data[field] = this.validateProfileField(field, value);
+    }
+
+    try {
+      await this.prisma.user.update({ where: { id: userId }, data });
+    } catch (err) {
+      if (this.isRecordNotFoundError(err)) {
+        throw new UserNotFoundError(userId);
+      }
+      throw err;
+    }
+
+    // Tra ve profile day du (kem diem) sau khi cap nhat - tan dung lai logic
+    // ket hop du lieu da co san trong `getProfile`, tranh trung lap code.
+    return this.getProfile(userId);
+  }
+
+  /**
+   * Validate 1 truong ho so dang chuoi (hoac `null` de xoa): khong duoc
+   * vuot qua `MAX_PROFILE_FIELD_LENGTH` ky tu sau khi `trim()`.
+   */
+  private validateProfileField(fieldName: string, value: string | null): string | null {
+    if (value === null) {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    if (trimmed.length > MAX_PROFILE_FIELD_LENGTH) {
+      throw new InvalidProfileInputError(
+        `Truong "${fieldName}" qua dai (toi da ${MAX_PROFILE_FIELD_LENGTH} ky tu, hien co ${trimmed.length}).`,
+      );
+    }
+
+    // Chuoi rong sau khi trim -> coi nhu "xoa" (tra ve null) - tranh luu
+    // chuoi rong vo nghia vao DB (vi du nguoi dung go khoang trang roi xoa het).
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  /**
    * Lay thong tin profile day du cua user kem so diem tich luy hien tai.
    * Ket hop du lieu tu 2 nguon: bang `users` (profile) va `PointsService` (so du diem).
    *
@@ -91,6 +167,7 @@ export class UsersService {
       province: user.province,
       subjects: user.subjects.map((id) => ({ id, name: getSubjectDisplayName(id) })),
       createdAt: user.createdAt,
+      lastLoginAt: user.lastLoginAt,
       points: balance.currentPoints,
     };
   }

@@ -17,10 +17,13 @@ import type { NextFunction, Request, Response } from 'express';
 import { FirebaseAuthError } from 'firebase-admin/auth';
 import { getFirebaseAuth } from '../lib/firebase-admin.js';
 import { prisma } from '../lib/prisma.js';
+// Doi ten khi import de tranh trung voi ten middleware `verifyAppToken` o duoi.
+import { InvalidAppTokenError, verifyAppToken as decodeAppToken } from '../lib/jwt.js';
 import {
   InvalidFirebaseTokenError,
+  InvalidSessionTokenError,
   MissingAuthTokenError,
-  UserNotRegisteredError,
+  SessionUserNotFoundError,
 } from '../services/auth/auth.errors.js';
 import type { FirebaseAuthenticatedUser } from '../services/auth/auth.types.js';
 
@@ -96,23 +99,59 @@ export async function verifyFirebaseToken(req: Request, _res: Response, next: Ne
 }
 
 /**
- * Middleware "chot chan" - dat SAU `verifyFirebaseToken` cho cac endpoint
- * BAT BUOC user da hoan tat dang ky trong he thong (da co ban ghi `users`),
- * vi du `GET /api/users/me`, `POST /api/users/subjects`.
+ * Middleware Express: xac thuc bang JWT NOI BO (session token do
+ * `POST /api/auth/login` phat hanh) - thay vi Firebase ID Token.
  *
- * Neu `req.currentUser` chua duoc gan (user moi xac thuc Firebase thanh cong
- * nhung CHUA TUNG goi `/api/auth/login`) -> nem `UserNotRegisteredError`
- * (HTTP 403) huong dan client goi /login truoc.
+ * ĐÂY LÀ PHƯƠNG THỨC XÁC THỰC CHÍNH cho MỌI request SAU khi đã đăng nhập
+ * (bao gồm cả các sự kiện Socket.io trong PvP real-time sau này), vì:
+ *   - Không cần gọi lại Firebase ở mỗi request → giảm độ trễ + chi phí.
+ *   - JWT noi bo chua san `userId` (khoa chinh trong PostgreSQL) → tra cuu
+ *     truc tiep, khong can "vong" qua `firebaseUid` nhu `verifyFirebaseToken`.
  *
- * Cach dung:
+ * LUONG HOAT DONG:
+ *   1. Doc header "Authorization: Bearer <app-jwt-token>".
+ *   2. Giai ma + xac thuc chu ky/han dung qua `verifyAppToken` (lib/jwt.ts).
+ *      Token sai/het han/sai dinh dang → `InvalidSessionTokenError` (401).
+ *   3. Tra cuu `User` theo `userId` trong payload. Khong tim thay (vi du tai
+ *      khoan da bi xoa sau khi token duoc cap) → `SessionUserNotFoundError` (401).
+ *   4. Gan `req.currentUser`, goi `next()`.
+ *
+ * Cach dung trong route (THAY THE cho `verifyFirebaseToken` + `requireRegisteredUser`
+ * o moi noi CAN dang nhap - ngoai tru chinh endpoint `/api/auth/login`):
  * ```ts
- * router.get('/me', verifyFirebaseToken, requireRegisteredUser, handler);
+ * router.get('/me', verifyAppToken, async (req, res, next) => { ... });
  * ```
  */
-export function requireRegisteredUser(req: Request, _res: Response, next: NextFunction): void {
-  if (!req.currentUser || !req.firebaseUser) {
-    next(new UserNotRegisteredError(req.firebaseUser?.uid ?? 'unknown'));
-    return;
+export async function verifyAppToken(req: Request, _res: Response, next: NextFunction): Promise<void> {
+  try {
+    const token = extractBearerToken(req.headers.authorization);
+    if (!token) {
+      throw new MissingAuthTokenError();
+    }
+
+    let payload;
+    try {
+      payload = decodeAppToken(token);
+    } catch (err) {
+      // `verifyAppToken` (lib/jwt.ts) co the nem `InvalidAppTokenError` (token
+      // sai/het han/thieu truong) hoac `JwtConfigError` (thieu JWT_SECRET - loi
+      // CAU HINH he thong, KHONG phai loi cua client). Chi bien doi truong hop
+      // dau thanh loi nghiep vu 401; loi cau hinh duoc nem nguyen ven de
+      // middleware xu ly loi tap trung tra ve 500 (dung ban chat - can sua server).
+      if (err instanceof InvalidAppTokenError) {
+        throw new InvalidSessionTokenError(err.message);
+      }
+      throw err;
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: payload.userId } });
+    if (!user) {
+      throw new SessionUserNotFoundError(payload.userId);
+    }
+
+    req.currentUser = user;
+    next();
+  } catch (err) {
+    next(err);
   }
-  next();
 }

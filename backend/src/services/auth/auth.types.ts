@@ -27,6 +27,8 @@ export interface UserProfileDto {
   province: string | null;
   subjects: string[];
   createdAt: Date;
+  /** Thoi diem dang nhap gan nhat (cap nhat moi lan goi POST /api/auth/login thanh cong). */
+  lastLoginAt: Date | null;
 }
 
 /** Ket qua tra ve cho client sau khi dang nhap thanh cong. */
@@ -50,5 +52,6 @@ export function toUserProfileDto(user: User): UserProfileDto {
     province: user.province,
     subjects: user.subjects,
     createdAt: user.createdAt,
+    lastLoginAt: user.lastLoginAt,
   };
 }
