@@ -73,10 +73,21 @@ export async function verifyFirebaseToken(req: Request, _res: Response, next: Ne
     req.firebaseUser = firebaseUser;
 
     // Tra cuu them ban ghi User trong DB (khong bat buoc phai ton tai).
-    // Dung try/catch rieng vi day la buoc "lam giau du lieu" - neu DB tam thoi
-    // loi, ta van uu tien cho qua middleware (cac endpoint can `currentUser`
-    // se tu kiem tra va bao loi UserNotRegisteredError phu hop hon).
-    req.currentUser = (await prisma.user.findUnique({ where: { firebaseUid: firebaseUser.uid } })) ?? undefined;
+    // QUAN TRONG: dung try/catch RIENG (long ben trong) cho buoc nay vi day
+    // chi la buoc "lam giau du lieu" (enrichment) - khong phai dieu kien bat
+    // buoc de request di tiep. Neu DB tam thoi loi (mat ket noi, timeout...),
+    // ta KHONG muon lam that bai NHUNG request co xac thuc Firebase hop le
+    // (vi du cac route khong can `currentUser`). Cac endpoint thuc su can
+    // `currentUser` da co `requireRegisteredUser` tu kiem tra va bao loi phu hop.
+    try {
+      req.currentUser = (await prisma.user.findUnique({ where: { firebaseUid: firebaseUser.uid } })) ?? undefined;
+    } catch (lookupErr) {
+      console.error(
+        '[verifyFirebaseToken] Khong the tra cuu User trong DB (bo qua, tiep tuc xu ly request):',
+        lookupErr,
+      );
+      req.currentUser = undefined;
+    }
 
     next();
   } catch (err) {

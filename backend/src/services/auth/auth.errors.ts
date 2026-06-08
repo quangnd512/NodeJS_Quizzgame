@@ -49,3 +49,28 @@ export class UserNotRegisteredError extends AuthError {
 
   public readonly firebaseUid: string;
 }
+
+/**
+ * Nem ra khi tao tai khoan moi that bai vi MOT TRUONG DUY NHAT KHAC (vi du
+ * `email`) da duoc dung boi mot tai khoan Firebase khac - KHONG PHAI truong
+ * hop "dua tao user" thong thuong (xem `AuthService.findOrCreateUser`).
+ *
+ * Tinh huong nay co the xay ra khi mot nguoi dang ky 2 tai khoan Firebase
+ * khac nhau (vi du: 1 bang Google, 1 bang sdt) nhung Google tra ve cung 1
+ * dia chi email da duoc lien ket voi tai khoan kia. Day la xung dot du lieu
+ * THAT - khong the tu giai quyet bang cach doc lai, can bao loi ro rang cho
+ * client (KHONG tra nguyen van thong bao loi ky thuat tu Prisma/Postgres ra
+ * ngoai - tranh lo cau truc CSDL).
+ */
+export class AccountConflictError extends AuthError {
+  constructor(field: string) {
+    super(
+      `Khong the hoan tat dang ky: thong tin '${field}' da duoc su dung boi mot tai khoan khac. ` +
+        `Vui long su dung phuong thuc dang nhap khac hoac lien he ho tro.`,
+      'ACCOUNT_CONFLICT',
+    );
+    this.field = field;
+  }
+
+  public readonly field: string;
+}
