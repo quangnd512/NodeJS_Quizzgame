@@ -1,0 +1,83 @@
+// ============================================================================
+// Prisma schema cho QuizzGame
+// Phan nay tap trung vao HE THONG DIEM TICH LUY (Points System):
+//   - user_points: so du diem hien tai cua tung user (co optimistic locking)
+//   - point_transactions: nhat ky (log) tat ca cac thay doi diem, dung de
+//     audit, doi soat va debug khi can thiet.
+//
+// Luu y quan trong:
+//   - Diem tich luy la "currency" duy nhat trong game => khong duoc am.
+//   - Moi thay doi diem PHAI di kem 1 ban ghi trong point_transactions
+//     (atomic trong cung 1 Prisma $transaction) de dam bao co the truy vet.
+//   - Truong "version" trong user_points dung cho OPTIMISTIC LOCKING:
+//     moi lan update phai kiem tra version cu khop voi DB, neu khong khop
+//     (do request khac da cap nhat truoc) thi coi nhu that bai va retry.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Bang luu so du diem tich luy hien tai cua tung nguoi dung.
+/// Moi user chi co DUY NHAT 1 ban ghi (quan he 1-1 thong qua userId).
+model UserPoints {
+  id            String   @id @default(uuid())
+
+  /// ID cua user (lien ket voi he thong Auth - Firebase Auth UID duoc luu o bang User rieng,
+  /// o day dung String de tuong thich voi UID dang chuoi cua Firebase).
+  userId        String   @unique
+
+  /// So diem tich luy hien tai. Mac dinh = 0 khi tao user moi.
+  /// RANG BUOC NGHIEP VU: khong duoc phep < 0 (kiem tra o tang ung dung
+  /// truoc khi ghi, vi Prisma/Postgres khong ho tro CHECK constraint
+  /// truc tiep qua schema mot cach don gian & portable).
+  currentPoints Int      @default(0)
+
+  /// Phien ban ban ghi - dung cho OPTIMISTIC LOCKING.
+  /// Moi lan UPDATE thanh cong se tang version len 1.
+  /// Neu 2 request cung doc version=5 va cung muon update,
+  /// chi 1 trong 2 thanh cong (vi WHERE version = 5 chi dung 1 lan),
+  /// request con lai phai doc lai va thu lai (retry).
+  version       Int      @default(0)
+
+  /// Thoi diem cap nhat gan nhat - tu dong cap nhat moi khi ban ghi thay doi.
+  lastUpdated   DateTime @updatedAt
+
+  @@map("user_points")
+}
+
+/// Bang nhat ky (log) cho MOI thay doi diem trong he thong.
+/// Day la nguon "su that" (source of truth) de doi soat, audit, va
+/// giai quyet khieu nai cua nguoi choi (vi du: "tai sao toi bi tru diem?").
+model PointTransaction {
+  id        String   @id @default(uuid())
+
+  /// ID cua user bi anh huong boi giao dich nay.
+  userId    String
+
+  /// So diem thay doi: duong (+) la cong diem, am (-) la tru diem.
+  /// Vi du: +1 (dung cau hoi tap), -60 (vao thi thu), +120 (dat 10 diem thi thu).
+  delta     Int
+
+  /// Ly do thay doi diem - dang chuoi co dinh (enum-like) de de truy van/thong ke.
+  /// Vi du: "ON_TAP_CORRECT", "THI_THU_ENTRY_FEE", "THI_THU_RESULT_BONUS",
+  ///        "PVP_WIN", "PVP_LOSE", "PVP_LOCK_BET", "TRANSFER_IN", "TRANSFER_OUT", v.v.
+  reason    String
+
+  /// Du lieu bo sung dang JSON, linh hoat theo tung loai giao dich.
+  /// Vi du: { "examId": "...", "score": 8.5 } hoac { "matchId": "...", "opponentId": "..." }
+  metadata  Json?
+
+  /// Thoi diem giao dich duoc tao - khong doi sau khi tao (immutable log).
+  createdAt DateTime @default(now())
+
+  // Index theo userId + createdAt giup truy van lich su giao dich cua 1 user
+  // theo thu tu thoi gian (phan trang) duoc nhanh hon dang ke.
+  @@index([userId, createdAt])
+  @@map("point_transactions")
+}
