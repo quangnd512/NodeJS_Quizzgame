@@ -10,7 +10,8 @@ export interface PointsBalance {
   currentPoints: number;
   /** Phien ban hien tai cua ban ghi (phuc vu debug optimistic locking neu can). */
   version: number;
-  lastUpdated: Date;
+  /** Thoi diem cap nhat gan nhat. `null` neu user chua tung co giao dich (chua ton tai ban ghi DB). */
+  lastUpdated: Date | null;
 }
 
 /** Mot ban ghi trong nhat ky giao dich diem. */

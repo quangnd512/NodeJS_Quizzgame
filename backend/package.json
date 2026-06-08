@@ -9,7 +9,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "smoke:points": "tsx src/scripts/smoke-test-points.ts",
-    "smoke:points:concurrency": "tsx src/scripts/smoke-test-points-concurrency.ts"
+    "smoke:points:concurrency": "tsx src/scripts/smoke-test-points-concurrency.ts",
+    "smoke:points:transfer-race": "tsx src/scripts/smoke-test-points-transfer-race.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

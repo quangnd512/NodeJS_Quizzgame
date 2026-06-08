@@ -62,6 +62,17 @@ function isUniqueConstraintError(err: unknown): boolean {
  */
 const MAX_OPTIMISTIC_RETRY = 10;
 
+/**
+ * Gioi han toi da cho 1 lan cong/tru/chuyen diem.
+ * Cot `currentPoints`/`delta` trong DB la kieu Postgres `Int` (32-bit, toi da ~2.14 ty).
+ * Dat gioi han nay (1 trieu) de:
+ *   (1) Tranh tran so (overflow) khi `currentPoints + amount` vuot qua gioi han Int,
+ *   (2) Chan cac gia tri bat thuong/tan cong (vi du client gui amount = 999999999999).
+ * Con so nay ran rai hon nhieu so voi gia tri lon nhat trong GDD hien tai (cuoc toi da
+ * = 50% diem tich luy, thuong cao nhat = 180 diem) nen khong anh huong nghiep vu thuc te.
+ */
+const MAX_POINTS_AMOUNT = 1_000_000;
+
 /** Khoang thoi gian cho toi thieu/toi da (ms) truoc khi thu lai - co jitter ngau nhien de tranh "thundering herd". */
 const RETRY_BACKOFF_MIN_MS = 10;
 const RETRY_BACKOFF_MAX_MS = 50;
@@ -100,6 +111,8 @@ export class PointsService {
     reason: string,
     metadata?: Prisma.InputJsonValue,
   ): Promise<PointsBalance> {
+    this.assertNonEmptyString(userId, 'userId');
+    this.assertNonEmptyString(reason, 'reason');
     this.assertPositiveInteger(amount, 'amount');
 
     return this.runWithOptimisticRetry(userId, async (tx) => {
@@ -127,6 +140,8 @@ export class PointsService {
     reason: string,
     metadata?: Prisma.InputJsonValue,
   ): Promise<PointsBalance> {
+    this.assertNonEmptyString(userId, 'userId');
+    this.assertNonEmptyString(reason, 'reason');
     this.assertPositiveInteger(amount, 'amount');
 
     return this.runWithOptimisticRetry(userId, async (tx) => {
@@ -170,6 +185,9 @@ export class PointsService {
     reason: string,
     metadata?: Prisma.InputJsonValue,
   ): Promise<TransferResult> {
+    this.assertNonEmptyString(fromUserId, 'fromUserId');
+    this.assertNonEmptyString(toUserId, 'toUserId');
+    this.assertNonEmptyString(reason, 'reason');
     this.assertPositiveInteger(amount, 'amount');
 
     if (fromUserId === toUserId) {
@@ -238,10 +256,16 @@ export class PointsService {
    * ban ghi se duoc tao "lazy" khi co giao dich dau tien qua addPoints/deductPoints).
    */
   public async getBalance(userId: string): Promise<PointsBalance> {
+    this.assertNonEmptyString(userId, 'userId');
+
     const record = await this.prisma.userPoints.findUnique({ where: { userId } });
 
     if (!record) {
-      return { userId, currentPoints: 0, version: 0, lastUpdated: new Date(0) };
+      // User chua tung co giao dich nao -> chua co ban ghi trong DB.
+      // Tra ve so du mac dinh = 0 thay vi nem loi, vi day la trang thai HOP LE
+      // (vi du user vua dang ky xong, chua lam bai nao). `lastUpdated = null`
+      // de phan biet ro voi "da co ban ghi nhung chua bao gio duoc cap nhat".
+      return { userId, currentPoints: 0, version: 0, lastUpdated: null };
     }
 
     return this.toBalanceDto(userId, record.currentPoints, record.version, record.lastUpdated);
@@ -255,6 +279,8 @@ export class PointsService {
    * @param offset Vi tri bat dau (mac dinh 0)
    */
   public async getHistory(userId: string, limit = 20, offset = 0): Promise<PaginatedHistory> {
+    this.assertNonEmptyString(userId, 'userId');
+
     if (!Number.isInteger(limit) || limit <= 0) {
       throw new InvalidPointsAmountError('Tham so "limit" phai la so nguyen duong.');
     }
@@ -392,12 +418,36 @@ export class PointsService {
     });
   }
 
-  /** Kiem tra `value` la so nguyen duong (> 0). Nem `InvalidPointsAmountError` neu khong hop le. */
+  /**
+   * Kiem tra `value` la so nguyen duong (> 0) va khong vuot qua `MAX_POINTS_AMOUNT`.
+   * Nem `InvalidPointsAmountError` neu khong hop le.
+   *
+   * Validate ca 2 chieu (qua nho / qua lon) giup chan:
+   *   - Gia tri khong hop le tu client (NaN, so thuc, so am, 0).
+   *   - Gia tri bat thuong co the gay tran so trong cot Postgres `Int`.
+   */
   private assertPositiveInteger(value: number, fieldName: string): void {
-    if (!Number.isInteger(value) || value <= 0) {
+    if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
       throw new InvalidPointsAmountError(
         `Tham so "${fieldName}" phai la so nguyen duong (nhan duoc: ${value}).`,
       );
+    }
+    if (value > MAX_POINTS_AMOUNT) {
+      throw new InvalidPointsAmountError(
+        `Tham so "${fieldName}" vuot qua gioi han cho phep (toi da ${MAX_POINTS_AMOUNT}, nhan duoc: ${value}).`,
+      );
+    }
+  }
+
+  /**
+   * Kiem tra `value` la chuoi khong rong (sau khi trim).
+   * Ap dung cho `userId`, `reason` - nhung tham so bat buoc phai co gia tri y nghia,
+   * tranh truong hop client vo y (hoac co y) gui chuoi rong / chi co khoang trang
+   * lam "ban gio rac" trong DB (vi du ban ghi user_points voi userId = "").
+   */
+  private assertNonEmptyString(value: string, fieldName: string): void {
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      throw new InvalidPointsAmountError(`Tham so "${fieldName}" khong duoc de trong.`);
     }
   }
 
@@ -409,7 +459,15 @@ export class PointsService {
     return {};
   }
 
-  /** Dung de dong goi ket qua tra ve thanh `PointsBalance` DTO thong nhat. */
+  /**
+   * Dung de dong goi ket qua tra ve thanh `PointsBalance` DTO thong nhat.
+   *
+   * Luu y: khi goi tu addPoints/deductPoints/transferPoints (ngay sau khi update),
+   * ta dung `new Date()` lam gia tri xap xi cho `lastUpdated` thay vi truy van lai
+   * DB (tranh 1 query thua). Gia tri nay co the lech vai mili-giay so voi
+   * `lastUpdated` that su duoc Postgres ghi qua `@updatedAt` - khong anh huong
+   * nghiep vu (chi mang tinh hien thi/debug).
+   */
   private toBalanceDto(
     userId: string,
     currentPoints: number,
