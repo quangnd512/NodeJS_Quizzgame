@@ -23,6 +23,45 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// Bang luu thong tin nguoi dung (profile) - tao/dong bo khi user dang nhap
+/// lan dau qua Firebase Auth. Day la "nguon su that" (source of truth) ve
+/// danh tinh nguoi dung trong he thong, tach biet voi Firebase (chi dung de
+/// xac thuc dang nhap).
+model User {
+  id          String   @id @default(uuid())
+
+  /// UID do Firebase Auth cap - duy nhat, dung de doi chieu voi token sau khi xac thuc.
+  /// Day la "khoa lien ket" giua he thong cua chung ta va Firebase.
+  firebaseUid String   @unique
+
+  /// Ten hien thi (lay tu Firebase, hoac nguoi dung tu chinh sua sau).
+  displayName String?
+
+  /// Email - lay tu Firebase Auth (co the null neu dang nhap bang so dien thoai).
+  email       String?  @unique
+
+  /// So dien thoai - lay tu Firebase Auth (co the null neu dang nhap bang email).
+  phone       String?
+
+  /// Ten truong THPT - nguoi dung tu khai bao trong qua trinh onboarding.
+  school      String?
+
+  /// Tinh/thanh pho - phuc vu thong ke khu vuc & xep hang theo dia phuong (tinh nang sau).
+  province    String?
+
+  /// Danh sach MA mon hoc da dang ky on thi (vi du: ["TOAN", "VAN", "ANH"]).
+  /// Dung kieu mang String[] cua Postgres - Prisma ho tro truc tiep.
+  /// QUY UOC: chi luu MA mon (id), KHONG luu ten hien thi - tranh trung lap
+  /// du lieu; ten hien thi duoc tra ve tu danh sach hang so o tang ung dung
+  /// (xem `SUBJECT_CATALOG` trong `users.types.ts`).
+  subjects    String[] @default([])
+
+  /// Thoi diem tao tai khoan - khong doi sau khi tao.
+  createdAt   DateTime @default(now())
+
+  @@map("users")
+}
+
 /// Bang luu so du diem tich luy hien tai cua tung nguoi dung.
 /// Moi user chi co DUY NHAT 1 ban ghi (quan he 1-1 thong qua userId).
 model UserPoints {

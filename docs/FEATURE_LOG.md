@@ -277,3 +277,127 @@
 - TODO tiếp theo: viết unit test chính thức (Vitest/Jest) thay cho smoke test
   thủ công; thêm endpoint API (`/api/points/...`) bọc quanh service này; thêm
   middleware xác thực Firebase trước khi cho phép gọi.
+
+## 3. Auth + Onboarding – Đăng nhập Firebase, JWT nội bộ & chọn môn học
+
+**Trạng thái:** Hoàn thành, đang chờ review (branch `feature/auth-onboarding`)
+**Ngày:** 2026-06-08
+
+### Mục tiêu
+Cho phép người dùng đăng nhập bằng Firebase (Google/SĐT/email...), đồng bộ
+thông tin vào PostgreSQL, phát hành JWT nội bộ cho các request tiếp theo, và
+hoàn tất "onboarding" bằng cách chọn các môn học muốn ôn thi (1-7 môn).
+
+### Luồng hoạt động chi tiết
+
+**A. `POST /api/auth/login`**
+1. Client xác thực với Firebase (FE), lấy **Firebase ID Token**, gửi lên qua
+   header `Authorization: Bearer <token>`.
+2. Middleware `verifyFirebaseToken`:
+   - Trích token từ header (`extractBearerToken`), thiếu/sai định dạng →
+     `MissingAuthTokenError` (401).
+   - Gọi `getFirebaseAuth().verifyIdToken(token)` (Firebase Admin SDK) để xác
+     thực chữ ký, hạn dùng, đúng project... Lỗi → bọc thành
+     `InvalidFirebaseTokenError` (401), giữ `reason` (mã lỗi Firebase) để debug
+     nhưng không lộ chi tiết kỹ thuật nhạy cảm ra response.
+   - Gắn `req.firebaseUser` (uid, email, displayName...) và tra cứu thêm
+     `req.currentUser` từ bảng `users` (có thể `undefined` nếu lần đầu đăng nhập).
+3. `AuthService.login(firebaseUser)`:
+   - Tìm user theo `firebaseUid`. Nếu **chưa có** → tạo mới (đồng bộ
+     `displayName`, `email` từ Firebase). Có xử lý **race condition**: nếu 2
+     request đăng nhập đầu tiên xảy ra đồng thời, bắt lỗi Prisma `P2002`
+     (unique constraint trên `firebaseUid`/`email`) rồi **truy vấn lại** thay
+     vì coi là lỗi.
+   - Phát hành JWT nội bộ qua `signAppToken({ userId, firebaseUid })` (hết hạn
+     sau 7 ngày, ký bằng `JWT_SECRET`).
+   - Trả về `{ token, isNewUser, user }`.
+4. Client lưu JWT này dùng cho các lần gọi API/Socket.io tiếp theo (giảm phụ
+   thuộc Firebase ở backend).
+
+**B. `POST /api/users/subjects`** (yêu cầu đã đăng nhập – xem mục D)
+1. Body: `{ "subjects": [{ "id": "TOAN", "name": "Toán" }, ...] }`.
+2. Validate qua `usersService.updateSubjects`:
+   - Số lượng môn: tối thiểu `MIN_SUBJECTS = 1`, tối đa `MAX_SUBJECTS = 7`.
+   - Mỗi `id` phải nằm trong `SUBJECT_CATALOG` (danh mục 9 môn thi THPT chính
+     thức: TOAN, VAN, ANH, LY, HOA, SINH, SU, DIA, GDCD) — chặn dữ liệu rác/typo.
+   - Không được trùng lặp.
+   - **Chỉ lưu mã môn (`id`) vào DB** (`subjects: String[]`); tên hiển thị
+     luôn được tra cứu lại từ `SUBJECT_CATALOG` khi trả về — đảm bảo nhất quán,
+     không tin dữ liệu `name` do client gửi lên.
+3. Cập nhật `users.subjects`, trả về danh sách môn đã lưu (kèm tên hiển thị).
+
+**C. `GET /api/users/me`** (yêu cầu đã đăng nhập – xem mục D)
+1. `usersService.getProfile(userId)`: lấy bản ghi `users` + gọi
+   `pointsService.getBalance(firebaseUid)` để lấy số điểm tích lũy hiện tại.
+2. Kết hợp thành `UserMeDto`: đầy đủ thông tin hồ sơ + `subjects` (id + tên
+   hiển thị) + `points`.
+
+**D. Cơ chế bảo vệ route — 2 lớp middleware tách biệt rõ trách nhiệm**
+- `verifyFirebaseToken`: xác thực token hợp lệ + (nếu có) gắn `currentUser`.
+  Không bắt buộc user đã có trong DB — phù hợp cho `/login` (lần đầu chưa có).
+- `requireRegisteredUser`: đặt SAU `verifyFirebaseToken`, chặn các endpoint
+  bắt buộc user đã hoàn tất `/login` (`/me`, `/subjects`). Thiếu `currentUser`
+  → `UserNotRegisteredError` (403), hướng dẫn gọi `/login` trước.
+- `users.route.ts` áp dụng cả 2 middleware ở cấp router (`usersRouter.use(...)`)
+  — mọi route trong file đều được bảo vệ, tránh quên áp dụng ở từng endpoint.
+
+**E. Ánh xạ lỗi nghiệp vụ → HTTP status (tập trung tại `app.ts`)**
+- Bổ sung bảng `ERROR_CODE_TO_HTTP_STATUS` ánh xạ `code` của các custom error
+  (`AuthError`, `UsersError`, `PointsError`...) sang status code phù hợp:
+  `MISSING_AUTH_TOKEN`/`INVALID_FIREBASE_TOKEN` → 401,
+  `USER_NOT_REGISTERED` → 403, `INVALID_SUBJECTS`/`INVALID_REQUEST_BODY` → 400,
+  `USER_NOT_FOUND` → 404, `POINTS_INSUFFICIENT`/`OPTIMISTIC_LOCK_CONFLICT` → 409.
+- Lỗi không xác định (không có `code` hợp lệ) → 500, có log `console.error`
+  để dễ truy vết, nhưng **không** lộ chi tiết kỹ thuật cho client ở mức 5xx.
+
+### Các file chính liên quan
+- `backend/prisma/schema.prisma` – thêm model `User` (`firebaseUid` unique,
+  `email` unique, `subjects: String[]`...). Migration:
+  `prisma/migrations/20260608033940_add_users_table/`.
+- `backend/.env.example` – thêm biến môi trường `FIREBASE_PROJECT_ID`,
+  `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `JWT_SECRET`.
+- `backend/src/lib/firebase-admin.ts` – khởi tạo Firebase Admin SDK (lazy
+  singleton), đọc service account từ biến môi trường.
+- `backend/src/lib/jwt.ts` – `signAppToken` / `verifyAppToken` (JWT nội bộ).
+- `backend/src/types/express.d.ts` – mở rộng `Express.Request` với
+  `firebaseUser?` và `currentUser?`.
+- `backend/src/middleware/auth.middleware.ts` – `verifyFirebaseToken`,
+  `requireRegisteredUser`.
+- `backend/src/services/auth/*` – `AuthService`, types (`LoginResult`,
+  `toUserProfileDto`), errors (`AuthError`, `MissingAuthTokenError`,
+  `InvalidFirebaseTokenError`, `UserNotRegisteredError`).
+- `backend/src/services/users/*` – `UsersService` (`updateSubjects`,
+  `getProfile`), `SUBJECT_CATALOG` (danh mục môn học chuẩn), errors
+  (`UsersError`, `InvalidSubjectsError`, `UserNotFoundError`).
+- `backend/src/routes/auth.route.ts` – `POST /api/auth/login`.
+- `backend/src/routes/users.route.ts` – `POST /api/users/subjects`,
+  `GET /api/users/me`.
+- `backend/src/app.ts` – đăng ký `authRouter`/`usersRouter`, bổ sung
+  `ERROR_CODE_TO_HTTP_STATUS` cho middleware xử lý lỗi tập trung.
+
+### Cách tự kiểm thử (manual test)
+1. `cd backend && npx prisma migrate dev` → áp dụng migration tạo bảng `users`.
+2. Cấu hình `.env`: cần **Firebase Service Account** thật (`FIREBASE_PROJECT_ID`,
+   `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`) và `JWT_SECRET`.
+3. Kiểm tra "đường ống" lỗi (không cần Firebase token thật):
+   - `GET /api/users/me` (không header) → `401 MISSING_AUTH_TOKEN`
+   - `POST /api/auth/login` (không header) → `401 MISSING_AUTH_TOKEN`
+   - `POST /api/auth/login -H "Authorization: Bearer faketoken"` →
+     `401 INVALID_FIREBASE_TOKEN`
+   - `POST /api/users/subjects` (không header) → `401 MISSING_AUTH_TOKEN`
+   → đã chạy thực tế, server trả đúng status/code như trên.
+4. Để test luồng đầy đủ (tạo user, JWT, chọn môn, lấy profile) cần **Firebase
+   ID Token thật** từ ứng dụng client (FE) đăng nhập qua Firebase Auth — môi
+   trường hiện tại chưa có service account thật nên chưa chạy được smoke test
+   end-to-end; cần bổ sung khi tích hợp FE hoặc có service account test.
+
+### Lưu ý / rủi ro / TODO tiếp theo
+- **Chưa có smoke test end-to-end với Firebase thật** — do cần service account
+  JSON (thông tin nhạy cảm). Khuyến nghị: tạo project Firebase riêng cho môi
+  trường test, hoặc viết test có "stub" thay thế `getFirebaseAuth()`.
+- `email` trong bảng `users` là `unique` nhưng **nullable** — Postgres cho phép
+  nhiều `NULL` nên không xung đột, tuy nhiên cần lưu ý khi user đổi email.
+- Khi cần thêm trường hồ sơ (ví dụ `school`, `province`) cho FE chỉnh sửa,
+  nên có thêm endpoint `PATCH /api/users/me` riêng (hiện chưa có trong yêu cầu).
+- TODO: viết unit test chính thức (Vitest/Jest) cho `AuthService`/`UsersService`
+  với Prisma + Firebase Admin được mock, thay vì chỉ kiểm tra "đường ống" lỗi.
