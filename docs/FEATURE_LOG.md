@@ -278,192 +278,643 @@
   thủ công; thêm endpoint API (`/api/points/...`) bọc quanh service này; thêm
   middleware xác thực Firebase trước khi cho phép gọi.
 
-## 3. Auth + Onboarding – Đăng nhập Firebase, JWT nội bộ & chọn môn học
 
-**Trạng thái:** Hoàn thành, đang chờ review (branch `feature/auth-onboarding`)
-**Ngày:** 2026-06-08
+## 3. Auth + Onboarding – Đăng nhập Firebase, JWT nội bộ & Quản lý hồ sơ
 
-### Mục tiêu
-Cho phép người dùng đăng nhập bằng Firebase (Google/SĐT/email...), đồng bộ
-thông tin vào PostgreSQL, phát hành JWT nội bộ cho các request tiếp theo, và
-hoàn tất "onboarding" bằng cách chọn các môn học muốn ôn thi (1-7 môn).
+**Trạng thái:** ✅ Hoàn thành, đang chờ review lần cuối (branch `feature/auth-onboarding`)
+**Ngày hoàn thành:** 2026-06-08
+**Commit:** `f4c3555`
 
-### Luồng hoạt động chi tiết
+---
 
-**A. `POST /api/auth/login`**
-1. Client xác thực với Firebase (FE), lấy **Firebase ID Token**, gửi lên qua
-   header `Authorization: Bearer <token>`.
-2. Middleware `verifyFirebaseToken`:
-   - Trích token từ header (`extractBearerToken`), thiếu/sai định dạng →
-     `MissingAuthTokenError` (401).
-   - Gọi `getFirebaseAuth().verifyIdToken(token)` (Firebase Admin SDK) để xác
-     thực chữ ký, hạn dùng, đúng project... Lỗi → bọc thành
-     `InvalidFirebaseTokenError` (401), giữ `reason` (mã lỗi Firebase) để debug
-     nhưng không lộ chi tiết kỹ thuật nhạy cảm ra response.
-   - Gắn `req.firebaseUser` (uid, email, displayName...) và tra cứu thêm
-     `req.currentUser` từ bảng `users` (có thể `undefined` nếu lần đầu đăng nhập).
-3. `AuthService.login(firebaseUser)`:
-   - Tìm user theo `firebaseUid`. Nếu **chưa có** → tạo mới (đồng bộ
-     `displayName`, `email` từ Firebase). Có xử lý **race condition**: nếu 2
-     request đăng nhập đầu tiên xảy ra đồng thời, bắt lỗi Prisma `P2002`
-     (unique constraint trên `firebaseUid`/`email`) rồi **truy vấn lại** thay
-     vì coi là lỗi.
-   - Phát hành JWT nội bộ qua `signAppToken({ userId, firebaseUid })` (hết hạn
-     sau 7 ngày, ký bằng `JWT_SECRET`).
-   - Trả về `{ token, isNewUser, user }`.
-4. Client lưu JWT này dùng cho các lần gọi API/Socket.io tiếp theo (giảm phụ
-   thuộc Firebase ở backend).
+### Tổng quan
 
-**B. `POST /api/users/subjects`** (yêu cầu đã đăng nhập – xem mục D)
-1. Body: `{ "subjects": [{ "id": "TOAN", "name": "Toán" }, ...] }`.
-2. Validate qua `usersService.updateSubjects`:
-   - Số lượng môn: tối thiểu `MIN_SUBJECTS = 1`, tối đa `MAX_SUBJECTS = 7`.
-   - Mỗi `id` phải nằm trong `SUBJECT_CATALOG` (danh mục 9 môn thi THPT chính
-     thức: TOAN, VAN, ANH, LY, HOA, SINH, SU, DIA, GDCD) — chặn dữ liệu rác/typo.
-   - Không được trùng lặp.
-   - **Chỉ lưu mã môn (`id`) vào DB** (`subjects: String[]`); tên hiển thị
-     luôn được tra cứu lại từ `SUBJECT_CATALOG` khi trả về — đảm bảo nhất quán,
-     không tin dữ liệu `name` do client gửi lên.
-3. Cập nhật `users.subjects`, trả về danh sách môn đã lưu (kèm tên hiển thị).
+Module này là nền tảng xác thực cho toàn bộ ứng dụng — **mọi module nghiệp vụ
+tiếp theo (Ôn tập, Thi thử, PvP) đều phụ thuộc vào đây**. Luồng tổng quát:
 
-**C. `GET /api/users/me`** (yêu cầu đã đăng nhập – xem mục D)
-1. `usersService.getProfile(userId)`: lấy bản ghi `users` + gọi
-   `pointsService.getBalance(firebaseUid)` để lấy số điểm tích lũy hiện tại.
-2. Kết hợp thành `UserMeDto`: đầy đủ thông tin hồ sơ + `subjects` (id + tên
-   hiển thị) + `points`.
+```
+[FE] Đăng nhập Firebase  →  POST /api/auth/login  →  Nhận session token (JWT)
+                                                            │
+                              ┌─────────────────────────────┘
+                              ▼
+[FE] Gọi mọi API sau đó  →  Authorization: Bearer <session-token>
+                          →  verifyAppToken middleware  →  req.currentUser
+```
 
-**D. Cơ chế bảo vệ route — 2 lớp middleware tách biệt rõ trách nhiệm**
-- `verifyFirebaseToken`: xác thực token hợp lệ + (nếu có) gắn `currentUser`.
-  Không bắt buộc user đã có trong DB — phù hợp cho `/login` (lần đầu chưa có).
-- `requireRegisteredUser`: đặt SAU `verifyFirebaseToken`, chặn các endpoint
-  bắt buộc user đã hoàn tất `/login` (`/me`, `/subjects`). Thiếu `currentUser`
-  → `UserNotRegisteredError` (403), hướng dẫn gọi `/login` trước.
-- `users.route.ts` áp dụng cả 2 middleware ở cấp router (`usersRouter.use(...)`)
-  — mọi route trong file đều được bảo vệ, tránh quên áp dụng ở từng endpoint.
+**Thiết kế then chốt:**
+- **Firebase ID Token** (do Firebase cấp): chỉ dùng MỘT LẦN tại `/login` để
+  xác minh danh tính.
+- **Session Token (JWT nội bộ)**: được phát hành sau khi đăng nhập thành công,
+  dùng cho MỌI request tiếp theo (HTTP API + Socket.io PvP sau này). Không cần
+  gọi lại Firebase mỗi request — giảm độ trễ và chi phí.
 
-**E. Ánh xạ lỗi nghiệp vụ → HTTP status (tập trung tại `app.ts`)**
-- Bổ sung bảng `ERROR_CODE_TO_HTTP_STATUS` ánh xạ `code` của các custom error
-  (`AuthError`, `UsersError`, `PointsError`...) sang status code phù hợp:
-  `MISSING_AUTH_TOKEN`/`INVALID_FIREBASE_TOKEN` → 401,
-  `USER_NOT_REGISTERED` → 403, `INVALID_SUBJECTS`/`INVALID_REQUEST_BODY` → 400,
-  `USER_NOT_FOUND` → 404, `POINTS_INSUFFICIENT`/`OPTIMISTIC_LOCK_CONFLICT` → 409.
-- Lỗi không xác định (không có `code` hợp lệ) → 500, có log `console.error`
-  để dễ truy vết, nhưng **không** lộ chi tiết kỹ thuật cho client ở mức 5xx.
+---
 
-### Các file chính liên quan
-- `backend/prisma/schema.prisma` – thêm model `User` (`firebaseUid` unique,
-  `email` unique, `subjects: String[]`...). Migration:
-  `prisma/migrations/20260608033940_add_users_table/`.
-- `backend/.env.example` – thêm biến môi trường `FIREBASE_PROJECT_ID`,
-  `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `JWT_SECRET`.
-- `backend/src/lib/firebase-admin.ts` – khởi tạo Firebase Admin SDK (lazy
-  singleton), đọc service account từ biến môi trường.
-- `backend/src/lib/jwt.ts` – `signAppToken` / `verifyAppToken` (JWT nội bộ).
-- `backend/src/types/express.d.ts` – mở rộng `Express.Request` với
-  `firebaseUser?` và `currentUser?`.
-- `backend/src/middleware/auth.middleware.ts` – `verifyFirebaseToken`,
-  `requireRegisteredUser`.
-- `backend/src/services/auth/*` – `AuthService`, types (`LoginResult`,
-  `toUserProfileDto`), errors (`AuthError`, `MissingAuthTokenError`,
-  `InvalidFirebaseTokenError`, `UserNotRegisteredError`).
-- `backend/src/services/users/*` – `UsersService` (`updateSubjects`,
-  `getProfile`), `SUBJECT_CATALOG` (danh mục môn học chuẩn), errors
-  (`UsersError`, `InvalidSubjectsError`, `UserNotFoundError`).
-- `backend/src/routes/auth.route.ts` – `POST /api/auth/login`.
-- `backend/src/routes/users.route.ts` – `POST /api/users/subjects`,
-  `GET /api/users/me`.
-- `backend/src/app.ts` – đăng ký `authRouter`/`usersRouter`, bổ sung
-  `ERROR_CODE_TO_HTTP_STATUS` cho middleware xử lý lỗi tập trung.
+### Mô hình dữ liệu — Bảng `users`
 
-### Cách tự kiểm thử (manual test)
-1. `cd backend && npx prisma migrate dev` → áp dụng migration tạo bảng `users`.
-2. Cấu hình `.env`: cần **Firebase Service Account** thật (`FIREBASE_PROJECT_ID`,
-   `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`) và `JWT_SECRET`.
-3. Kiểm tra "đường ống" lỗi (không cần Firebase token thật):
-   - `GET /api/users/me` (không header) → `401 MISSING_AUTH_TOKEN`
-   - `POST /api/auth/login` (không header) → `401 MISSING_AUTH_TOKEN`
-   - `POST /api/auth/login -H "Authorization: Bearer faketoken"` →
-     `401 INVALID_FIREBASE_TOKEN`
-   - `POST /api/users/subjects` (không header) → `401 MISSING_AUTH_TOKEN`
-   → đã chạy thực tế, server trả đúng status/code như trên.
-4. Để test luồng đầy đủ (tạo user, JWT, chọn môn, lấy profile) cần **Firebase
-   ID Token thật** từ ứng dụng client (FE) đăng nhập qua Firebase Auth — môi
-   trường hiện tại chưa có service account thật nên chưa chạy được smoke test
-   end-to-end; cần bổ sung khi tích hợp FE hoặc có service account test.
+```sql
+CREATE TABLE users (
+  id           TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
+  firebaseUid  TEXT UNIQUE NOT NULL,   -- UID từ Firebase Auth (khoá liên kết)
+  displayName  TEXT,                   -- Tên hiển thị (từ Firebase lúc tạo, user tự sửa sau)
+  email        TEXT UNIQUE,            -- Email (nullable — user đăng nhập bằng SĐT không có)
+  phone        TEXT,                   -- SĐT (nullable — user đăng nhập bằng email không có)
+  school       TEXT,                   -- Trường THPT (user tự khai báo)
+  province     TEXT,                   -- Tỉnh/thành (user tự khai báo)
+  subjects     TEXT[] DEFAULT '{}',    -- Mảng mã môn học đã chọn: ["TOAN","VAN",...]
+  lastLoginAt  TIMESTAMP,              -- Lần đăng nhập gần nhất (auto-update mỗi /login)
+  createdAt    TIMESTAMP DEFAULT now() -- Thời điểm tạo tài khoản (bất biến)
+);
+```
 
-### Lưu ý / rủi ro / TODO tiếp theo
-- **Chưa có smoke test end-to-end với Firebase thật** — do cần service account
-  JSON (thông tin nhạy cảm). Khuyến nghị: tạo project Firebase riêng cho môi
-  trường test, hoặc viết test có "stub" thay thế `getFirebaseAuth()`.
-- `email` trong bảng `users` là `unique` nhưng **nullable** — Postgres cho phép
-  nhiều `NULL` nên không xung đột, tuy nhiên cần lưu ý khi user đổi email.
-- Khi cần thêm trường hồ sơ (ví dụ `school`, `province`) cho FE chỉnh sửa,
-  nên có thêm endpoint `PATCH /api/users/me` riêng (hiện chưa có trong yêu cầu).
-- TODO: viết unit test chính thức (Vitest/Jest) cho `AuthService`/`UsersService`
-  với Prisma + Firebase Admin được mock, thay vì chỉ kiểm tra "đường ống" lỗi.
+**Phân loại trường theo "ai quản lý":**
 
-### Cập nhật sau review (2026-06-08) — Quyết định kiến trúc & mở rộng
+| Trường | Nguồn dữ liệu | Cập nhật khi nào |
+|--------|--------------|-----------------|
+| `firebaseUid` | Firebase (bất biến) | Chỉ lúc tạo |
+| `email` | Firebase (đồng bộ) | Mỗi lần `/login` nếu Firebase trả giá trị khác |
+| `lastLoginAt` | Hệ thống | Mỗi lần `/login` thành công |
+| `displayName` | Firebase (lúc tạo) → User (sau onboarding) | Chỉ qua `PUT /profile` |
+| `phone` | Firebase (lúc tạo) → User (sau onboarding) | Chỉ qua `PUT /profile` |
+| `school` | User | Chỉ qua `PUT /profile` |
+| `province` | User | Chỉ qua `PUT /profile` |
+| `subjects` | User | Chỉ qua `POST /subjects` |
+| `createdAt` | Hệ thống | Không bao giờ thay đổi |
 
-Theo phản hồi review (xem `docs/CODE_REVIEW_LOG.md` mục "Vấn đề còn mở"),
-người dùng đã chốt 2 quyết định kiến trúc và yêu cầu triển khai ngay (vì mọi
-module tiếp theo đều cần xác thực):
+---
 
-**1. `verifyAppToken` — middleware xác thực bằng JWT nội bộ (PHƯƠNG THỨC CHÍNH cho mọi request sau khi đăng nhập)**
-- Thêm middleware mới `verifyAppToken` (`auth.middleware.ts`): đọc JWT nội bộ
-  từ header `Authorization: Bearer <token>`, giải mã + xác thực qua
-  `verifyAppToken` (lib `jwt.ts`, import alias `decodeAppToken` để tránh trùng
-  tên), tra cứu `User` trực tiếp theo `userId` trong payload (không cần "vòng"
-  qua `firebaseUid` như `verifyFirebaseToken`), gán `req.currentUser`.
-- Lỗi token sai/hết hạn → `InvalidSessionTokenError` (401, code
-  `INVALID_SESSION_TOKEN`); token hợp lệ nhưng tài khoản đã bị xoá →
-  `SessionUserNotFoundError` (401, code `SESSION_USER_NOT_FOUND`) — phân biệt
-  rõ 2 nguyên nhân để debug & log chính xác.
-- **Đã loại bỏ `requireRegisteredUser`** (middleware cũ, nay dư thừa vì
-  `verifyAppToken` luôn đảm bảo `currentUser` tồn tại hoặc nem lỗi trước đó).
-- `users.route.ts` chuyển từ `verifyFirebaseToken + requireRegisteredUser`
-  sang **chỉ `verifyAppToken`** — áp dụng ở cấp router (`usersRouter.use(...)`).
-- `verifyFirebaseToken` (xác thực bằng Firebase ID Token) **chỉ còn dùng cho
-  `POST /api/auth/login`** — đúng vai trò "cửa ngõ" trao đổi Firebase token
-  lấy session token nội bộ. Các request sau đó (kể cả Socket.io PvP sau này)
-  đều dùng `verifyAppToken`, giảm phụ thuộc + độ trễ gọi lại Firebase.
+### Biến môi trường
 
-**2. Đồng bộ có chọn lọc (selective sync) khi đăng nhập + endpoint `PUT /api/users/profile`**
-- `AuthService.login` (qua `findCreateOrSyncUser` + `syncExistingUser` mới):
-  - User MỚI: tạo với đầy đủ thông tin từ Firebase + `lastLoginAt = hiện tại`.
-  - User ĐÃ CÓ: **CHỈ** đồng bộ lại `email` (nếu Firebase trả về giá trị khác
-    — vì email là "nguồn sự thật" của danh tính đăng nhập) và `lastLoginAt`
-    (luôn cập nhật = thời điểm hiện tại). **KHÔNG** ghi đè `displayName`/`phone`
-    — tránh xoá mất tuỳ chỉnh cá nhân của người dùng.
-  - Xung đột UNIQUE khi đồng bộ `email` (email đã thuộc tài khoản khác) →
-    `AccountConflictError` (409) — nhất quán với luồng tạo mới.
-- Thêm trường `lastLoginAt: DateTime?` vào model `User`
-  (migration `20260608064453_add_last_login_at`).
-- **Endpoint mới: `PUT /api/users/profile`** — cho phép người dùng tự quản lý
-  `displayName`, `phone`, `school`, `province`:
-  - Theo kiểu "PATCH bán phần": trường vắng mặt trong body → giữ nguyên,
-    trường gửi `null` → xoá (set về `null`), trường gửi chuỗi → validate độ
-    dài (`MAX_PROFILE_FIELD_LENGTH = 100`) rồi `trim()`.
-  - **KHÔNG** cho sửa `email` (đồng bộ tự động từ Firebase) hay `subjects`
-    (có endpoint + luật validate riêng) — tách trách nhiệm rõ ràng.
-  - Lỗi `InvalidProfileInputError` (code `INVALID_PROFILE_INPUT`, HTTP 400)
-    khi dữ liệu không hợp lệ.
-- `UserMeDto`/`UserProfileDto` bổ sung trường `lastLoginAt` để FE hiển thị.
+| Biến | Bắt buộc | Mô tả |
+|------|----------|-------|
+| `FIREBASE_PROJECT_ID` | ✅ | Project ID trong Firebase Console |
+| `FIREBASE_CLIENT_EMAIL` | ✅ | `client_email` trong file Service Account JSON |
+| `FIREBASE_PRIVATE_KEY` | ✅ | `private_key` trong file Service Account JSON (dấu xuống dòng dạng `\n`) |
+| `JWT_SECRET` | ✅ | Chuỗi bí mật ký JWT (≥ 32 ký tự ngẫu nhiên) |
 
-### Đã kiểm thử lại (sau khi sửa)
-- `npx tsc --noEmit` ✅ pass.
-- Tạo user test trực tiếp trong DB + tự ký JWT nội bộ bằng `JWT_SECRET` thật
-  (không qua Firebase) để kiểm thử toàn bộ luồng mới — **chạy thực tế trên
-  server thật**, kết quả đúng như kỳ vọng:
-  - `GET /me` không token / token rác → `401 MISSING_AUTH_TOKEN` /
-    `401 INVALID_SESSION_TOKEN`
-  - `GET /me` với session token hợp lệ → trả đúng profile + `lastLoginAt` + điểm
-  - `POST /subjects` với `[{id:"toan"}, {id:"VAN", name:"hacked-name"}]` →
-    chuẩn hoá đúng thành `[{id:"TOAN", name:"Toán"}, {id:"VAN", name:"Ngữ văn"}]`
-    (tự viết hoa, **bỏ qua `name` giả mạo từ client**, tra cứu lại tên chuẩn)
-  - `PUT /profile` set `displayName`/`school`/`province` → lưu đúng, trả về
-    profile đầy đủ
-  - `PUT /profile` với `{"school": null}` → xoá đúng trường `school`, **giữ
-    nguyên** `displayName`/`province` đã set trước đó (đúng ngữ nghĩa "PATCH
-    bán phần")
-  - `PUT /profile` với chuỗi 200 ký tự → `400 INVALID_PROFILE_INPUT`
-  - Đã xoá user test sau khi kiểm thử xong (không để lại rác trong DB).
+> Lấy `FIREBASE_*` từ: Firebase Console → Project Settings → Service accounts
+> → "Generate new private key" → tải file JSON về.
+
+---
+
+### Kiến trúc middleware xác thực
+
+Module định nghĩa **2 middleware riêng biệt** với mục đích khác nhau:
+
+#### `verifyFirebaseToken` — Chỉ dùng cho `POST /api/auth/login`
+
+```
+Request  →  Trích Bearer token từ header Authorization
+         →  getFirebaseAuth().verifyIdToken(token)   [Firebase Admin SDK]
+         →  Gắn req.firebaseUser {uid, email, displayName, phoneNumber}
+         →  Tra cứu req.currentUser từ DB (best-effort — lỗi DB không fail request)
+         →  next()
+```
+
+- Mục đích: là "cửa ngõ" xác minh danh tính với Firebase, đổi lấy session token.
+- Lỗi tra cứu DB tạm thời sẽ được **bỏ qua** (log ra console, `currentUser =
+  undefined`), không làm fail request — đây là bước làm giàu dữ liệu tùy chọn.
+- Lỗi xác thực Firebase → `InvalidFirebaseTokenError` (401).
+- Thiếu token → `MissingAuthTokenError` (401).
+
+#### `verifyAppToken` — Dùng cho **mọi route khác** cần đăng nhập
+
+```
+Request  →  Trích Bearer token từ header Authorization
+         →  decodeAppToken(token)   [lib/jwt.ts — xác thực chữ ký & hạn dùng]
+         →  prisma.user.findUnique({ id: payload.userId })
+         →  Gắn req.currentUser = user
+         →  next()
+```
+
+- Mục đích: xác thực nhanh bằng JWT nội bộ, không cần gọi lại Firebase.
+- Token sai/hết hạn/sai định dạng → `InvalidSessionTokenError` (401).
+- Token hợp lệ nhưng user đã bị xoá khỏi DB → `SessionUserNotFoundError` (401).
+- Đảm bảo `req.currentUser` luôn tồn tại sau khi middleware chạy xong.
+- Tương thích với Socket.io (truyền token qua `auth.token` khi kết nối, xử lý
+  ở tầng Socket.io middleware sau này).
+
+---
+
+### API Reference
+
+#### `POST /api/auth/login`
+
+**Mục đích:** Đổi Firebase ID Token (ngắn hạn, phụ thuộc Firebase) lấy session
+token nội bộ (7 ngày, tự quản lý).
+
+**Request:**
+```
+Authorization: Bearer <firebase-id-token>
+```
+*(Không có body)*
+
+**Luồng xử lý chi tiết:**
+
+```
+1. verifyFirebaseToken middleware
+   ├─ Trích token từ header
+   ├─ Firebase Admin SDK xác thực token
+   │    ├─ Lỗi → InvalidFirebaseTokenError (401)
+   │    └─ OK → giải mã payload (uid, email, displayName, phoneNumber)
+   └─ Gắn req.firebaseUser
+
+2. AuthService.login(firebaseUser)
+   └─ findCreateOrSyncUser(firebaseUser)
+        │
+        ├─ Tìm theo firebaseUid trong bảng users
+        │
+        ├─ [CHƯA CÓ — lần đầu đăng nhập]
+        │   └─ prisma.user.create({ firebaseUid, displayName, email, phone, lastLoginAt: now() })
+        │        ├─ Thành công → { user, isNewUser: true }
+        │        └─ Lỗi P2002 (race condition — 2 thiết bị đăng nhập cùng lúc)
+        │             ├─ Đọc lại theo firebaseUid
+        │             │   ├─ Tìm thấy → syncExistingUser + { user, isNewUser: false }
+        │             │   └─ Không tìm thấy → xung đột email thật → AccountConflictError (409)
+        │             └─ (Xem phần "Xử lý Race Condition" bên dưới)
+        │
+        └─ [ĐÃ CÓ — đăng nhập lại]
+            └─ syncExistingUser(existing, firebaseUser)
+                 ├─ Luôn cập nhật: lastLoginAt = now()
+                 ├─ Chỉ cập nhật email nếu Firebase trả giá trị KHÁC DB
+                 │   (tránh ghi DB không cần thiết)
+                 ├─ KHÔNG cập nhật: displayName, phone (do user tự quản lý)
+                 └─ Lỗi P2002 khi update email → AccountConflictError (409)
+
+3. signAppToken({ userId: user.id, firebaseUid: user.firebaseUid })
+   └─ JWT nội bộ, ký bằng JWT_SECRET, hết hạn sau 7 ngày
+
+4. Trả về LoginResult
+```
+
+**Response thành công (200):**
+```json
+{
+  "token": "eyJhbGci...",
+  "isNewUser": true,
+  "user": {
+    "id": "uuid",
+    "firebaseUid": "firebase-uid",
+    "displayName": "Nguyễn Văn A",
+    "email": "user@example.com",
+    "phone": null,
+    "school": null,
+    "province": null,
+    "subjects": [],
+    "createdAt": "2026-06-08T...",
+    "lastLoginAt": "2026-06-08T..."
+  }
+}
+```
+
+> `isNewUser = true` → FE điều hướng tới màn hình chọn môn học (onboarding).
+> `isNewUser = false` → FE vào thẳng màn hình chính.
+
+**Lỗi có thể xảy ra:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 401 | `MISSING_AUTH_TOKEN` | Không có / sai định dạng header |
+| 401 | `INVALID_FIREBASE_TOKEN` | Token Firebase hết hạn, sai chữ ký, bị thu hồi, sai project |
+| 409 | `ACCOUNT_CONFLICT` | Email từ Firebase đã thuộc về một tài khoản khác trong hệ thống |
+
+---
+
+#### `POST /api/users/subjects`
+
+**Mục đích:** Lưu danh sách môn học muốn ôn thi — bước hoàn tất onboarding.
+Có thể gọi lại nhiều lần để thay đổi danh sách.
+
+**Auth:** `verifyAppToken` (cần session token từ `/login`)
+
+**Request:**
+```json
+{
+  "subjects": [
+    { "id": "TOAN" },
+    { "id": "VAN", "name": "Ngữ văn" }
+  ]
+}
+```
+> Trường `name` là tùy chọn và **hoàn toàn bị bỏ qua** — server luôn tra cứu
+> tên từ `SUBJECT_CATALOG` server-side, không tin dữ liệu `name` từ client.
+
+**Danh mục môn hợp lệ (`SUBJECT_CATALOG`):**
+
+| Mã | Tên |
+|----|-----|
+| `TOAN` | Toán |
+| `VAN` | Ngữ văn |
+| `ANH` | Tiếng Anh |
+| `LY` | Vật lý |
+| `HOA` | Hóa học |
+| `SINH` | Sinh học |
+| `SU` | Lịch sử |
+| `DIA` | Địa lý |
+| `GDCD` | Giáo dục công dân |
+
+**Luồng xử lý chi tiết:**
+
+```
+1. verifyAppToken → req.currentUser
+
+2. Validate sơ bộ tại route layer (assertSubjectInputShape)
+   ├─ subjects phải là mảng
+   └─ Mỗi phần tử phải có dạng { id: string, name?: string }
+
+3. UsersService.updateSubjects(userId, subjects)
+   ├─ Validate số lượng: 1 ≤ length ≤ 7
+   ├─ Với mỗi môn:
+   │   ├─ id.trim().toUpperCase()  (normalize — "toan" → "TOAN")
+   │   ├─ Kiểm tra id có trong SUBJECT_CATALOG
+   │   └─ Kiểm tra không trùng lặp (dùng Set<string>)
+   ├─ prisma.user.update({ subjects: [mảng mã đã normalize] })
+   └─ Map mã → { id, name } từ SUBJECT_CATALOG rồi trả về
+```
+
+**Response thành công (200):**
+```json
+{
+  "subjects": [
+    { "id": "TOAN", "name": "Toán" },
+    { "id": "VAN",  "name": "Ngữ văn" }
+  ]
+}
+```
+
+**Lỗi có thể xảy ra:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 401 | `MISSING_AUTH_TOKEN` | Không có / sai định dạng header |
+| 401 | `INVALID_SESSION_TOKEN` | Session token hết hạn hoặc sai |
+| 401 | `SESSION_USER_NOT_FOUND` | Tài khoản đã bị xoá sau khi token phát hành |
+| 400 | `INVALID_REQUEST_BODY` | `subjects` không phải mảng, hoặc phần tử thiếu `id` |
+| 400 | `INVALID_SUBJECTS` | Số lượng < 1 hoặc > 7, mã môn không tồn tại, hoặc trùng lặp |
+
+---
+
+#### `GET /api/users/me`
+
+**Mục đích:** Lấy thông tin hồ sơ đầy đủ + số điểm tích lũy hiện tại.
+
+**Auth:** `verifyAppToken`
+
+**Luồng xử lý:**
+
+```
+1. verifyAppToken → req.currentUser (đã có đầy đủ thông tin user)
+
+2. UsersService.getProfile(userId)
+   ├─ prisma.user.findUnique({ id: userId })
+   │   └─ Không tìm thấy → UserNotFoundError (404) [hi hữu]
+   ├─ pointsService.getBalance(user.firebaseUid)  [truy vấn bảng user_points]
+   └─ Kết hợp thành UserMeDto:
+       profile + subjects (map mã → { id, name }) + points
+```
+
+**Response thành công (200):**
+```json
+{
+  "id": "uuid",
+  "firebaseUid": "firebase-uid",
+  "displayName": "Nguyễn Văn A",
+  "email": "user@example.com",
+  "phone": "0901234567",
+  "school": "THPT Chu Văn An",
+  "province": "Hà Nội",
+  "subjects": [
+    { "id": "TOAN", "name": "Toán" },
+    { "id": "VAN",  "name": "Ngữ văn" }
+  ],
+  "createdAt": "2026-06-08T...",
+  "lastLoginAt": "2026-06-08T...",
+  "points": 150
+}
+```
+
+**Lỗi có thể xảy ra:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 401 | `MISSING_AUTH_TOKEN` | Không có / sai định dạng header |
+| 401 | `INVALID_SESSION_TOKEN` | Session token hết hạn hoặc sai |
+| 401 | `SESSION_USER_NOT_FOUND` | Tài khoản đã bị xoá sau khi token phát hành |
+| 404 | `USER_NOT_FOUND` | User tồn tại trong token nhưng không còn trong DB (rất hi hữu) |
+
+---
+
+#### `PUT /api/users/profile`
+
+**Mục đích:** Cho phép người dùng tự cập nhật thông tin hồ sơ cá nhân sau
+onboarding.
+
+**Auth:** `verifyAppToken`
+
+**Ngữ nghĩa "PATCH bán phần" (partial patch):**
+- Trường **vắng mặt** trong body → **giữ nguyên** giá trị cũ trong DB.
+- Trường gửi `null` → **xoá** (set về `null`).
+- Trường gửi chuỗi → **trim()** rồi lưu (chuỗi trắng sau trim → coi như `null`).
+- Không cần gửi toàn bộ hồ sơ — phù hợp với React Query / SWR cập nhật từng
+  trường trong màn hình Settings.
+
+**Các trường được phép cập nhật:**
+
+| Trường | Kiểu | Ràng buộc |
+|--------|------|-----------|
+| `displayName` | `string \| null` | Tối đa 100 ký tự |
+| `phone` | `string \| null` | Tối đa 100 ký tự |
+| `school` | `string \| null` | Tối đa 100 ký tự |
+| `province` | `string \| null` | Tối đa 100 ký tự |
+
+> **Không thể cập nhật qua đây:** `email` (đồng bộ tự động từ Firebase mỗi lần
+> đăng nhập), `subjects` (có endpoint riêng với luật validate khác), `firebaseUid`
+> / `createdAt` (bất biến).
+
+**Request (ví dụ — chỉ cần gửi trường muốn sửa):**
+```json
+{ "displayName": "Nguyễn Thị B", "school": "THPT Lê Hồng Phong" }
+```
+
+**Ví dụ xoá trường school:**
+```json
+{ "school": null }
+```
+
+**Luồng xử lý:**
+
+```
+1. verifyAppToken → req.currentUser
+
+2. Route layer — assertNullableStringField cho mỗi trường có trong body
+   ├─ null / undefined → null (cho phép xoá)
+   ├─ Không phải string → InvalidRequestBodyError (400)
+   └─ String → trim()
+
+3. UsersService.updateProfile(userId, update)
+   ├─ validateProfileField: độ dài > 100 ký tự → InvalidProfileInputError (400)
+   ├─ Chuỗi rỗng sau trim → null (tránh lưu chuỗi trắng vô nghĩa)
+   ├─ prisma.user.update({ data: chỉ các trường có trong update })
+   └─ Gọi lại getProfile() để trả về profile đầy đủ (kem điểm)
+```
+
+**Response thành công (200):** Giống `GET /me` — trả về `UserMeDto` đầy đủ
+sau khi cập nhật (tiện cho FE cập nhật cache mà không cần gọi thêm `/me`).
+
+**Lỗi có thể xảy ra:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 401 | `MISSING_AUTH_TOKEN` | Không có / sai định dạng header |
+| 401 | `INVALID_SESSION_TOKEN` | Session token hết hạn hoặc sai |
+| 401 | `SESSION_USER_NOT_FOUND` | Tài khoản đã bị xoá sau khi token phát hành |
+| 400 | `INVALID_REQUEST_BODY` | Trường gửi lên không phải string hoặc null |
+| 400 | `INVALID_PROFILE_INPUT` | Chuỗi quá 100 ký tự |
+| 404 | `USER_NOT_FOUND` | User không còn trong DB (rất hi hữu) |
+
+---
+
+### Catalogue lỗi đầy đủ
+
+Tất cả custom error đều có trường `code` (string) được ánh xạ tập trung tại
+`app.ts` (`ERROR_CODE_TO_HTTP_STATUS`). Response body luôn có dạng:
+```json
+{ "error": "<CODE>", "message": "<mô tả rõ ràng bằng tiếng Việt>" }
+```
+
+| Class | Code | HTTP | Thuộc module |
+|-------|------|------|-------------|
+| `MissingAuthTokenError` | `MISSING_AUTH_TOKEN` | 401 | Auth |
+| `InvalidFirebaseTokenError` | `INVALID_FIREBASE_TOKEN` | 401 | Auth |
+| `InvalidSessionTokenError` | `INVALID_SESSION_TOKEN` | 401 | Auth |
+| `SessionUserNotFoundError` | `SESSION_USER_NOT_FOUND` | 401 | Auth |
+| `UserNotRegisteredError` | `USER_NOT_REGISTERED` | 403 | Auth |
+| `AccountConflictError` | `ACCOUNT_CONFLICT` | 409 | Auth |
+| `InvalidSubjectsError` | `INVALID_SUBJECTS` | 400 | Users |
+| `InvalidProfileInputError` | `INVALID_PROFILE_INPUT` | 400 | Users |
+| `UserNotFoundError` | `USER_NOT_FOUND` | 404 | Users |
+| `UsersError` (generic) | `INVALID_REQUEST_BODY` | 400 | Users |
+| `JwtConfigError` | *(không có code)* | 500 | Lib/JWT |
+
+---
+
+### Xử lý Race Condition
+
+**Kịch bản:** User mở app đồng thời trên 2 thiết bị, cả 2 gọi `/login` gần
+như cùng một lúc, và đây là LẦN ĐẦU đăng nhập (chưa có bản ghi trong DB).
+
+```
+Thiết bị A:  findUnique → null  ──┐
+Thiết bị B:  findUnique → null  ──┤  Cả 2 cùng thấy "chưa có"
+                                  ▼
+Thiết bị A:  CREATE user  ──→  Thành công (giành được lock trước)
+Thiết bị B:  CREATE user  ──→  Lỗi P2002 (vi phạm UNIQUE firebaseUid)
+                                  │
+                                  ▼
+             findUnique lại theo firebaseUid
+             ├─ Tìm thấy (do A vừa tạo)
+             │   └─ syncExistingUser (cập nhật lastLoginAt) → trả về user, isNewUser: false
+             └─ Không tìm thấy (P2002 từ cột khác, ví dụ email)
+                 └─ AccountConflictError (409) — xung đột dữ liệu thật
+```
+
+**Tại sao không dùng `$transaction` với `SELECT FOR UPDATE`?**
+Hai request đến từ 2 connection DB khác nhau — ngay cả trong transaction, thao
+tác `SELECT FOR UPDATE` cũng không ngăn được việc cả 2 cùng đọc thấy "chưa có
+bản ghi". Pattern catch-then-refetch là cách đúng và được dùng rộng rãi trong
+PostgreSQL (tương tự `INSERT ... ON CONFLICT DO NOTHING` nhưng tương thích
+hơn với Prisma ORM).
+
+---
+
+### Cấu trúc file & trách nhiệm
+
+```
+backend/
+├── prisma/
+│   ├── schema.prisma                          Model User (tất cả trường)
+│   └── migrations/
+│       ├── 20260608033940_add_users_table/    Migration tạo bảng users
+│       └── 20260608064453_add_last_login_at/  Migration thêm cột lastLoginAt
+│
+├── src/
+│   ├── lib/
+│   │   ├── firebase-admin.ts    Khởi tạo Firebase Admin SDK (lazy singleton,
+│   │   │                        đọc service account từ env vars, cache Auth instance)
+│   │   └── jwt.ts               signAppToken / verifyAppToken (JWT nội bộ 7 ngày)
+│   │
+│   ├── types/
+│   │   └── express.d.ts         Mở rộng Express.Request:
+│   │                            req.firebaseUser? (FirebaseAuthenticatedUser)
+│   │                            req.currentUser?  (User từ Prisma)
+│   │
+│   ├── middleware/
+│   │   └── auth.middleware.ts   verifyFirebaseToken   ← chỉ POST /auth/login
+│   │                            verifyAppToken        ← mọi route khác cần auth
+│   │
+│   ├── services/
+│   │   ├── auth/
+│   │   │   ├── auth.errors.ts   MissingAuthTokenError, InvalidFirebaseTokenError,
+│   │   │   │                    InvalidSessionTokenError, SessionUserNotFoundError,
+│   │   │   │                    UserNotRegisteredError, AccountConflictError
+│   │   │   ├── auth.types.ts    FirebaseAuthenticatedUser, UserProfileDto,
+│   │   │   │                    LoginResult, toUserProfileDto()
+│   │   │   └── auth.service.ts  AuthService.login()
+│   │   │                        ├─ findCreateOrSyncUser()
+│   │   │                        └─ syncExistingUser()
+│   │   │
+│   │   └── users/
+│   │       ├── users.errors.ts  InvalidSubjectsError, InvalidProfileInputError,
+│   │       │                    UserNotFoundError
+│   │       ├── users.types.ts   SUBJECT_CATALOG (9 môn), SubjectCatalogEntry,
+│   │       │                    UserMeDto, MAX_PROFILE_FIELD_LENGTH = 100
+│   │       └── users.service.ts UsersService
+│   │                            ├─ updateSubjects()   → POST /subjects
+│   │                            ├─ updateProfile()    → PUT /profile
+│   │                            └─ getProfile()       → GET /me
+│   │
+│   ├── routes/
+│   │   ├── auth.route.ts        POST /api/auth/login
+│   │   └── users.route.ts       POST /api/users/subjects
+│   │                            GET  /api/users/me
+│   │                            PUT  /api/users/profile
+│   │
+│   └── app.ts                   Đăng ký authRouter (/api/auth)
+│                                Đăng ký usersRouter (/api/users)
+│                                ERROR_CODE_TO_HTTP_STATUS (ánh xạ lỗi → status)
+│
+└── .env.example                 FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL,
+                                 FIREBASE_PRIVATE_KEY, JWT_SECRET
+```
+
+---
+
+### Luồng onboarding đầy đủ từ góc nhìn FE
+
+```
+1. Màn hình đăng nhập
+   └─ Firebase Auth SDK (FE) → đăng nhập Google / SĐT / Email
+   └─ firebase.currentUser.getIdToken()  → Firebase ID Token (ngắn hạn)
+
+2. POST /api/auth/login
+   └─ Header: Authorization: Bearer <firebase-id-token>
+   └─ Response: { token, isNewUser, user }
+   └─ FE lưu token vào SecureStorage (không lưu vào localStorage — ứng dụng mobile)
+
+3. Nếu isNewUser === true:
+   └─ Điều hướng tới màn hình "Chọn môn học"
+   └─ POST /api/users/subjects
+      Header: Authorization: Bearer <session-token>
+      Body: { subjects: [{ id: "TOAN" }, { id: "VAN" }, ...] }
+   └─ Điều hướng vào app chính
+
+4. Nếu isNewUser === false:
+   └─ Vào thẳng màn hình chính
+
+5. Mọi request sau đó:
+   └─ Header: Authorization: Bearer <session-token>
+   └─ Token hết hạn (7 ngày) → API trả 401 INVALID_SESSION_TOKEN
+      → FE tự động refresh: gọi lại Firebase getIdToken() → POST /login lấy token mới
+```
+
+---
+
+### Cách thiết lập & kiểm thử
+
+**1. Cấu hình môi trường:**
+```bash
+cd backend
+cp .env.example .env
+# Điền FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
+# (lấy từ file Service Account JSON của Firebase Console)
+# Điền JWT_SECRET: bất kỳ chuỗi ngẫu nhiên dài ≥ 32 ký tự
+```
+
+**2. Chạy migration:**
+```bash
+npx prisma migrate dev
+# Áp dụng 2 migration:
+#   20260608033940_add_users_table
+#   20260608064453_add_last_login_at
+```
+
+**3. Khởi động server:**
+```bash
+npm run dev   # hoặc: npx tsx src/server.ts
+```
+
+**4. Kiểm tra "đường ống" lỗi (không cần Firebase token thật):**
+```bash
+# Thiếu token → 401 MISSING_AUTH_TOKEN
+curl http://localhost:4000/api/users/me
+
+# Sai Firebase token → 401 INVALID_FIREBASE_TOKEN
+curl -X POST http://localhost:4000/api/auth/login \
+  -H "Authorization: Bearer garbage_firebase_token"
+
+# Sai session token → 401 INVALID_SESSION_TOKEN
+curl http://localhost:4000/api/users/me \
+  -H "Authorization: Bearer garbage_session_token"
+
+# POST subjects — thiếu body → 400 INVALID_REQUEST_BODY
+# (cần session token hợp lệ trước)
+```
+
+**5. Test luồng đầy đủ (cần Firebase token thật từ FE):**
+Khi FE được phát triển, lấy Firebase ID Token từ console trình duyệt:
+```js
+firebase.auth().currentUser.getIdToken(true).then(console.log)
+```
+Rồi dùng token đó gọi `POST /api/auth/login` để lấy session token, sau đó
+test các endpoint còn lại.
+
+**6. (Tùy chọn) Test nhanh bằng script Node — không cần FE:**
+```js
+// Tạo user test trực tiếp trong DB + tự ký session token
+require('dotenv').config();
+const { PrismaClient } = require('@prisma/client');
+const jwt = require('jsonwebtoken');
+const prisma = new PrismaClient();
+
+const user = await prisma.user.create({
+  data: { firebaseUid: 'test-uid', email: 'test@example.com', lastLoginAt: new Date() }
+});
+const token = jwt.sign(
+  { userId: user.id, firebaseUid: user.firebaseUid },
+  process.env.JWT_SECRET,
+  { expiresIn: '1h' }
+);
+console.log('Session token:', token);
+// Dùng token này để test GET /me, POST /subjects, PUT /profile
+// Xoá khi xong: await prisma.user.delete({ where: { id: user.id } })
+```
+
+---
+
+### Lưu ý bảo mật
+
+- `FIREBASE_PRIVATE_KEY` và `JWT_SECRET` là **thông tin nhạy cảm cao** — KHÔNG
+  bao giờ commit vào Git (đã được `.gitignore` loại trừ). Lưu vào trình quản lý
+  secret khi deploy (AWS Secrets Manager, Heroku Config Vars, Render Environment...).
+- File `Service Account JSON` gốc nên được lưu ở nơi an toàn (không để trên
+  Desktop), hoặc thu hồi (revoke) sau khi đã đưa vào biến môi trường.
+- JWT nội bộ có hạn 7 ngày — nếu nghi ngờ bị lộ, thay đổi `JWT_SECRET` sẽ
+  vô hiệu hóa tất cả token cũ ngay lập tức (tất cả user phải đăng nhập lại).
+- `email` nullable + `@unique`: PostgreSQL cho phép nhiều `NULL` (không vi phạm
+  UNIQUE), nhưng chỉ một bản ghi có thể có một email cụ thể.
+
+---
+
+### TODO / Cải thiện trong tương lai
+
+- [ ] Viết unit test chính thức (Vitest) cho `AuthService` / `UsersService` với
+  Prisma và Firebase Admin SDK được mock — thay vì chỉ smoke test thủ công.
+- [ ] Token refresh tự động — hiện tại FE phải tự phát hiện 401 và gọi lại
+  `/login`; có thể chuẩn hoá thêm endpoint `POST /api/auth/refresh` nhận
+  refresh token (hoặc dùng lại Firebase refresh token) trả về session token mới.
+- [ ] Thêm `DELETE /api/auth/logout` để thu hồi session (cần blacklist token
+  trong Redis nếu muốn thực sự vô hiệu hóa trước khi hết hạn 7 ngày).
+- [ ] Đồng bộ `phone` từ Firebase khi user đổi số điện thoại (hiện tại phone
+  chỉ được đồng bộ lúc TẠO MỚI, không cập nhật lại khi đổi phương thức đăng nhập).
+- [ ] Middleware `verifyAppToken` sẽ được tái dùng nguyên vẹn cho Socket.io
+  (truyền `token` qua `socket.handshake.auth.token`).
