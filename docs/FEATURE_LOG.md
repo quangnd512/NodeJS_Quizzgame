@@ -918,3 +918,578 @@ console.log('Session token:', token);
   chỉ được đồng bộ lúc TẠO MỚI, không cập nhật lại khi đổi phương thức đăng nhập).
 - [ ] Middleware `verifyAppToken` sẽ được tái dùng nguyên vẹn cho Socket.io
   (truyền `token` qua `socket.handshake.auth.token`).
+
+---
+
+## 4. Practice Module – Chế độ Ôn tập
+
+**Trạng thái:** ✅ Hoàn thành  
+**Ngày hoàn thành:** 2026-06-09  
+**Branch / commit liên quan:** `feature/practice-module`
+
+---
+
+### Tổng quan
+
+Module Ôn tập là chế độ chơi đầu tiên của QuizzGame. Người dùng chọn môn học,
+nhận 15 câu hỏi ngẫu nhiên (5 dễ + 5 trung bình + 5 khó), trả lời trong 17 phút,
+và nhận điểm tích lũy bằng số câu đúng. Thiết kế ưu tiên câu "chưa làm trong 24h"
+để tránh lặp lại, hỗ trợ resume phiên đang dở, và có cơ chế báo cáo câu hỏi sai.
+
+**Tính năng chính:**
+- Rút câu ngẫu nhiên theo độ khó, ưu tiên câu chưa làm trong 24h
+- Idempotent answer submission (gọi lại cùng câu → kết quả cũ, không insert thêm)
+- Hoàn thành phiên: tính điểm + cộng điểm tích lũy trong 1 transaction atomic
+- Rate limit: tối đa 10 phiên/giờ/user qua Redis (Redis down → bỏ qua, không crash)
+- Báo cáo câu sai: ≥5 báo cáo PENDING → tự động ẩn câu
+- Admin CRUD câu hỏi, bulk import, quản lý báo cáo
+- Cleanup cron: đóng phiên hết hạn lúc 3:00 AM
+
+---
+
+### Data Model
+
+#### Bảng `questions` — Ngân hàng câu hỏi
+
+| Field | Kiểu | Mô tả |
+|-------|------|-------|
+| `id` | UUID | Primary key |
+| `subject` | String | Mã môn (`TOAN`, `VAN`, ...) |
+| `chapter` | String? | Tên chương (tùy chọn) |
+| `difficulty` | Int | Độ khó: 1=dễ, 2=trung bình, 3=khó |
+| `question` | String | Nội dung câu hỏi |
+| `options` | Json | Mảng 4 đáp án `[string, string, string, string]` |
+| `correctAnswer` | Int | Chỉ số đáp án đúng (0–3) |
+| `explanation` | String? | Giải thích (hiện sau khi nộp bài) |
+| `examYear` | Int? | Năm đề (2023, 2024...) |
+| `examCode` | String? | Mã đề thi |
+| `isActive` | Boolean | false = ẩn (soft delete hoặc bị báo cáo nhiều) |
+| `createdAt` | DateTime | Thời điểm tạo |
+
+Index: `(subject, difficulty, isActive)` — tối ưu query rút câu.
+
+#### Bảng `practice_sessions` — Phiên ôn tập
+
+| Field | Kiểu | Mô tả |
+|-------|------|-------|
+| `id` | UUID | Primary key |
+| `userId` | String | ID user |
+| `subjectId` | String | Mã môn học |
+| `questions` | Json | Mảng 15 questionId đã rút |
+| `score` | Int | Số câu đúng (mặc định 0) |
+| `pointsEarned` | Int | Điểm tích lũy được (= score) |
+| `startedAt` | DateTime | Thời điểm bắt đầu |
+| `completedAt` | DateTime? | null = chưa xong; có giá trị = đã hoàn thành |
+
+Index: `(userId, completedAt)`.
+
+#### Bảng `practice_answers` — Đáp án từng câu
+
+| Field | Kiểu | Mô tả |
+|-------|------|-------|
+| `id` | UUID | Primary key |
+| `sessionId` | String | Liên kết phiên |
+| `questionId` | String | Liên kết câu hỏi |
+| `selectedOption` | Int? | Lựa chọn của user (0–3) |
+| `isCorrect` | Boolean | Đúng hay sai |
+| `answeredAt` | DateTime | Thời điểm trả lời |
+
+**UNIQUE(`sessionId`, `questionId`)** — đảm bảo idempotency: gọi lại → trả kết quả cũ.
+
+#### Bảng `user_question_history` — Lịch sử câu hỏi đã làm
+
+| Field | Kiểu | Mô tả |
+|-------|------|-------|
+| `id` | UUID | Primary key |
+| `userId` | String | ID user |
+| `questionId` | String | ID câu hỏi |
+| `attemptedAt` | DateTime | Lần làm gần nhất (upsert khi làm lại) |
+
+**UNIQUE(`userId`, `questionId`)** — mỗi user 1 bản ghi/câu; upsert khi làm lại.
+
+#### Bảng `question_reports` — Báo cáo câu hỏi
+
+| Field | Kiểu | Mô tả |
+|-------|------|-------|
+| `id` | UUID | Primary key |
+| `questionId` | String | Câu hỏi bị báo cáo |
+| `userId` | String | User báo cáo |
+| `reason` | String | `WRONG_ANSWER` \| `BAD_CONTENT` \| `TYPO` \| `OTHER` |
+| `description` | String? | Mô tả thêm (tối đa 500 ký tự) |
+| `status` | String | `PENDING` \| `REVIEWED` \| `FIXED` \| `DISMISSED` |
+| `createdAt` | DateTime | Thời điểm báo cáo |
+
+**UNIQUE(`userId`, `questionId`)** — mỗi user chỉ báo cáo 1 lần/câu.
+
+---
+
+### Biến môi trường mới
+
+| Biến | Bắt buộc | Mô tả |
+|------|----------|-------|
+| `REDIS_URL` | Không | URL Redis cho rate limit (mặc định `redis://localhost:6379`) |
+| `ADMIN_SECRET` | ✅ (cho admin API) | Chuỗi bí mật cho header `X-Admin-Secret` |
+
+---
+
+### API Reference
+
+#### Người dùng — `/api/practice/*` (cần `Authorization: Bearer <session-token>`)
+
+| Method | Path | Mô tả |
+|--------|------|-------|
+| GET | `/api/practice/start?subject=TOAN` | Bắt đầu phiên ôn tập mới |
+| POST | `/api/practice/answer` | Nộp đáp án 1 câu |
+| POST | `/api/practice/complete` | Hoàn thành phiên, nhận điểm |
+| GET | `/api/practice/session/:id` | Lấy chi tiết phiên đang dở (resume) |
+| GET | `/api/practice/history` | Lịch sử phiên đã hoàn thành |
+| GET | `/api/practice/stats?subject=` | Thống kê theo môn học |
+| GET | `/api/practice/questions/:id/explain` | Xem giải thích (cần đã làm câu đó) |
+| POST | `/api/practice/questions/:id/report` | Báo cáo câu hỏi sai |
+
+#### Admin — `/api/admin/*` (cần `X-Admin-Secret: <ADMIN_SECRET>`)
+
+| Method | Path | Mô tả |
+|--------|------|-------|
+| POST | `/api/admin/questions` | Tạo 1 câu hỏi |
+| POST | `/api/admin/questions/bulk` | Import hàng loạt (tối đa 500 câu, all-or-nothing) |
+| PUT | `/api/admin/questions/:id` | Cập nhật câu hỏi |
+| DELETE | `/api/admin/questions/:id` | Ẩn câu hỏi (soft delete) |
+| GET | `/api/admin/questions` | Danh sách câu hỏi (có phân trang, lọc) |
+| GET | `/api/admin/questions/reports` | Danh sách báo cáo |
+| GET | `/api/admin/questions/reports/summary` | Thống kê báo cáo |
+| PATCH | `/api/admin/questions/reports/:id` | Cập nhật trạng thái báo cáo |
+
+---
+
+#### GET /api/practice/start?subject=TOAN
+
+**Request:** Query param `subject` là mã môn (bắt buộc).
+
+**Response (201):**
+```json
+{
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+  "subjectId": "TOAN",
+  "questions": [
+    {
+      "id": "q-uuid-1",
+      "subject": "TOAN",
+      "chapter": "Hàm số",
+      "difficulty": 1,
+      "question": "Tập xác định của hàm số y = √(x−1) là?",
+      "options": ["[1;+∞)", "(1;+∞)", "[-1;+∞)", "(-∞;1]"]
+    }
+  ],
+  "timeLimitSeconds": 1020,
+  "startedAt": "2026-06-09T10:00:00.000Z"
+}
+```
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 400 | `INVALID_REQUEST_BODY` | Thiếu query param `subject` |
+| 403 | `SUBJECT_NOT_REGISTERED` | Môn không hợp lệ hoặc user chưa đăng ký |
+| 404 | `SUBJECT_HAS_NO_QUESTIONS` | Không có câu hỏi nào trong DB |
+| 429 | `PRACTICE_RATE_LIMIT_EXCEEDED` | Vượt 10 phiên/giờ |
+
+---
+
+#### POST /api/practice/answer
+
+**Request:**
+```json
+{
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+  "questionId": "q-uuid-1",
+  "selectedOption": 0
+}
+```
+
+**Response (200):**
+```json
+{
+  "isCorrect": true,
+  "correctAnswer": 0,
+  "explanation": "Điều kiện: x−1 ≥ 0 ⟺ x ≥ 1 → TXĐ: [1;+∞)",
+  "answeredCount": 1,
+  "totalQuestions": 15
+}
+```
+
+**Luồng xử lý:**
+```
+1. Kiểm tra phiên tồn tại + thuộc user + chưa complete + chưa hết giờ
+2. Kiểm tra questionId nằm trong phiên
+3. Kiểm tra idempotency (đã trả lời rồi → trả kết quả cũ)
+4. Lấy correctAnswer từ DB, tính isCorrect
+5. Transaction: INSERT practice_answer + UPSERT user_question_history
+6. Catch P2002 (race condition) → xử lý như idempotent
+```
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 400 | `INVALID_REQUEST_BODY` | selectedOption ngoài 0-3, hoặc sessionId/questionId không phải UUID |
+| 400 | `QUESTION_NOT_IN_SESSION` | questionId không thuộc phiên này |
+| 403 | `PRACTICE_SESSION_NOT_OWNED` | Phiên của user khác |
+| 404 | `PRACTICE_SESSION_NOT_FOUND` | sessionId không tồn tại |
+| 409 | `PRACTICE_SESSION_ALREADY_COMPLETED` | Phiên đã hoàn thành |
+| 410 | `PRACTICE_SESSION_EXPIRED` | Phiên đã quá 17 phút |
+
+---
+
+#### POST /api/practice/complete
+
+**Request:**
+```json
+{ "sessionId": "550e8400-e29b-41d4-a716-446655440000" }
+```
+
+**Response (200):**
+```json
+{
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+  "score": 12,
+  "pointsEarned": 12,
+  "totalQuestions": 15,
+  "answers": [
+    {
+      "questionId": "q-uuid-1",
+      "selectedOption": 0,
+      "isCorrect": true,
+      "correctAnswer": 0,
+      "explanation": "Điều kiện: x−1 ≥ 0 ⟺ x ≥ 1 → TXĐ: [1;+∞)"
+    }
+  ]
+}
+```
+
+**Luồng xử lý:**
+```
+1. Transaction:
+   a. Tìm phiên, kiểm tra ownership, chưa complete
+   b. Đếm câu đúng → score = pointsEarned
+   c. UPDATE practice_session: score, pointsEarned, completedAt = now()
+   d. Nếu score > 0: addPointsInTx(userId, score, 'ON_TAP_CORRECT')
+2. Retry tối đa 10 lần nếu gặp OptimisticLockRetryableError (conflict cộng điểm)
+```
+
+---
+
+#### GET /api/practice/session/:id
+
+**Response (200):**
+```json
+{
+  "sessionId": "550e8400-...",
+  "subjectId": "TOAN",
+  "questions": [ ...15 câu (QuestionPublicDto, không có correctAnswer)... ],
+  "answers": [
+    { "questionId": "q-uuid-1", "selectedOption": 0, "isCorrect": true }
+  ],
+  "timeRemainingSeconds": 754,
+  "startedAt": "2026-06-09T10:00:00.000Z"
+}
+```
+
+---
+
+#### GET /api/practice/history?limit=20&offset=0
+
+**Response (200):**
+```json
+{
+  "items": [
+    {
+      "sessionId": "...",
+      "subjectId": "TOAN",
+      "score": 12,
+      "pointsEarned": 12,
+      "totalQuestions": 15,
+      "startedAt": "2026-06-09T10:00:00.000Z",
+      "completedAt": "2026-06-09T10:14:00.000Z"
+    }
+  ],
+  "total": 1,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+---
+
+#### GET /api/practice/stats?subject=TOAN
+
+**Response (200):**
+```json
+[
+  {
+    "subject": "TOAN",
+    "totalSessions": 5,
+    "avgScore": 10.6,
+    "bestScore": 13,
+    "accuracyByDifficulty": { "1": 0.96, "2": 0.74, "3": 0.52 }
+  }
+]
+```
+
+---
+
+#### POST /api/admin/questions/bulk
+
+**Request (`X-Admin-Secret: <ADMIN_SECRET>`):**
+```json
+{
+  "questions": [
+    {
+      "subject": "TOAN",
+      "chapter": "Hàm số",
+      "difficulty": 2,
+      "question": "Hàm số y = x³ − 3x đồng biến trên khoảng nào?",
+      "options": ["(-1;1)", "(-∞;-1)", "(1;+∞)", "(-∞;-1) và (1;+∞)"],
+      "correctAnswer": 3,
+      "explanation": "y' = 3x² − 3 = 3(x−1)(x+1); y' > 0 khi x < -1 hoặc x > 1",
+      "examYear": 2024,
+      "examCode": "Mã đề 101"
+    }
+  ]
+}
+```
+
+**Response (201):**
+```json
+{ "inserted": 1, "questions": [ { ...QuestionFullDto... } ] }
+```
+
+---
+
+### Luồng chạy (Flow)
+
+#### Luồng ôn tập đầy đủ (happy path)
+
+```
+[User]                          [Backend]                        [DB/Redis]
+  │                                 │                                 │
+  ├─ GET /practice/start?subject=TOAN ─►                              │
+  │                                 ├─ Validate môn + user đã đăng ký ─► DB
+  │                                 ├─ checkRateLimit ──────────────► Redis
+  │                                 ├─ Lấy 24h history ─────────────► DB
+  │                                 ├─ Rút 5+5+5 câu (song song) ───► DB
+  │                                 ├─ CREATE practice_session ──────► DB
+  │                                 ├─ incrementRateLimit ──────────► Redis
+  │◄─ 201 { sessionId, questions } ─┘                                 │
+  │                                 │                                 │
+  ├─ POST /practice/answer ─────────►                                 │
+  │  { sessionId, questionId, selectedOption: 0 }                     │
+  │                                 ├─ Validate session + ownership   │
+  │                                 ├─ Kiểm tra idempotency ─────────► DB
+  │                                 ├─ Lấy correctAnswer ────────────► DB
+  │                                 ├─ TX: INSERT answer              │
+  │                                 │      UPSERT history ───────────► DB
+  │◄─ 200 { isCorrect, correctAnswer, explanation } ─┘                │
+  │  (lặp lại cho 15 câu)           │                                 │
+  │                                 │                                 │
+  ├─ POST /practice/complete ───────►                                 │
+  │  { sessionId }                  │                                 │
+  │                                 ├─ TX:                            │
+  │                                 │   ├─ Đếm câu đúng → score      │
+  │                                 │   ├─ UPDATE session (completedAt)►DB
+  │                                 │   └─ addPointsInTx(score) ─────► DB
+  │◄─ 200 { score, pointsEarned, answers } ─┘                        │
+```
+
+#### Luồng báo cáo câu hỏi
+
+```
+[User]                          [Backend]                        [DB]
+  │                                 │                               │
+  ├─ POST /practice/questions/:id/report ─►                         │
+  │  { reason: "WRONG_ANSWER" }     │                               │
+  │                                 ├─ Kiểm tra câu tồn tại ──────► DB
+  │                                 ├─ Kiểm tra đã báo cáo chưa ──► DB
+  │                                 ├─ CREATE question_report ─────► DB
+  │                                 ├─ Đếm PENDING reports ────────► DB
+  │                                 │   ├─ < 5 → không làm gì      │
+  │                                 │   └─ ≥ 5 → UPDATE isActive=false ► DB
+  │◄─ 201 { message: "Đã gửi báo cáo thành công." }                 │
+```
+
+---
+
+### Cấu trúc file
+
+```
+backend/
+├── prisma/
+│   ├── schema.prisma                          +4 model mới: Question, PracticeSession,
+│   │                                           PracticeAnswer, UserQuestionHistory,
+│   │                                           QuestionReport
+│   └── migrations/
+│       └── 20260609112442_add_practice_module/ Migration thêm 5 bảng mới
+│
+├── src/
+│   ├── lib/
+│   │   └── redis.ts                           ioredis client (lazy connect, graceful degradation)
+│   │
+│   ├── middleware/
+│   │   ├── admin.middleware.ts                verifyAdminSecret (header X-Admin-Secret)
+│   │   └── validate.middleware.ts             validateBody(zodSchema) — wrapper Zod
+│   │
+│   ├── services/
+│   │   └── practice/
+│   │       ├── practice.types.ts              DTOs, hằng số (SESSION_TIMEOUT, QUESTIONS_PER_SESSION...)
+│   │       ├── practice.errors.ts             12 custom error class cho module Ôn tập
+│   │       └── practice.service.ts            PracticeService — toàn bộ business logic
+│   │
+│   ├── routes/
+│   │   ├── practice.route.ts                  /api/practice/* (7 endpoint cho user)
+│   │   └── admin.route.ts                     /api/admin/* (8 endpoint cho admin)
+│   │
+│   └── app.ts                                 +đăng ký practiceRouter, adminRouter
+│                                              +ánh xạ error codes mới vào HTTP status
+```
+
+---
+
+### Hằng số thiết kế quan trọng
+
+| Hằng số | Giá trị | Ý nghĩa |
+|---------|---------|---------|
+| `SESSION_TIMEOUT_SECONDS` | 1020 (17 phút) | 15 phút làm bài + 2 phút buffer |
+| `QUESTIONS_PER_SESSION` | 15 | Tổng câu mỗi phiên |
+| `QUESTIONS_PER_DIFFICULTY` | 5 | Câu mỗi nhóm độ khó |
+| `MAX_SESSIONS_PER_HOUR` | 10 | Rate limit phiên/giờ/user |
+| `MAX_COMPLETE_RETRY` | 10 | Retry tối đa khi cộng điểm conflict |
+| `AUTO_HIDE_REPORT_THRESHOLD` | 5 | Số báo cáo PENDING để auto-ẩn câu |
+
+---
+
+### Ghi chú kỹ thuật
+
+**1. Tại sao tách `practice_answers` thành bảng riêng thay vì JSON trong session?**
+Nếu lưu đáp án trong mảng JSON của `practice_sessions`, mỗi POST `/answer` sẽ
+phải đọc-sửa-ghi toàn bộ mảng JSON → race condition khi 2 request submit cùng
+lúc → mất dữ liệu. Bảng riêng + `@@unique([sessionId, questionId])` giải quyết
+sạch vấn đề này.
+
+**2. Idempotency qua `@@unique` + catch P2002:**
+- Kiểm tra "đã trả lời chưa" trước khi insert (tránh write thừa).
+- Nếu 2 request song song cùng vượt qua check → 1 insert thành công, 1 bị P2002
+  → bắt lỗi P2002 và xử lý như idempotent response. Không dùng SELECT FOR UPDATE
+  vì cost cao không cần thiết.
+
+**3. Redis graceful degradation:**
+Redis client dùng `enableOfflineQueue: false` + `maxRetriesPerRequest: 1`.
+Khi Redis down: checkRateLimit bắt lỗi → log warning → **không throw** → user
+vẫn tạo được phiên. Rate limit là "nice to have", không phải tính năng critical.
+
+**4. `addPointsInTx` — cộng điểm trong transaction ngoài:**
+`completeSession` mở 1 Prisma transaction bao trùm toàn bộ (update session +
+cộng điểm). `PointsService.addPointsInTx(tx, ...)` nhận transaction client từ
+ngoài vào thay vì mở transaction mới → đảm bảo "cập nhật phiên" và "cộng điểm"
+là 1 thao tác atomic duy nhất.
+
+**5. Thứ tự câu hỏi:**
+`questions` JSON trong `practice_sessions` lưu mảng questionId theo thứ tự
+xác định lúc `startSession`. `getSessionDetail` tái tạo đúng thứ tự này khi
+query lại — không phụ thuộc vào thứ tự DB trả về.
+
+---
+
+### Catalogue lỗi
+
+| Class | Code | HTTP |
+|-------|------|------|
+| `PracticeSessionNotFoundError` | `PRACTICE_SESSION_NOT_FOUND` | 404 |
+| `PracticeSessionExpiredError` | `PRACTICE_SESSION_EXPIRED` | 410 |
+| `PracticeSessionAlreadyCompletedError` | `PRACTICE_SESSION_ALREADY_COMPLETED` | 409 |
+| `PracticeSessionNotOwnedError` | `PRACTICE_SESSION_NOT_OWNED` | 403 |
+| `PracticeRateLimitError` | `PRACTICE_RATE_LIMIT_EXCEEDED` | 429 |
+| `SubjectNotRegisteredError` | `SUBJECT_NOT_REGISTERED` | 403 |
+| `SubjectHasNoQuestionsError` | `SUBJECT_HAS_NO_QUESTIONS` | 404 |
+| `QuestionNotFoundError` | `QUESTION_NOT_FOUND` | 404 |
+| `QuestionNotAttemptedError` | `QUESTION_NOT_ATTEMPTED` | 403 |
+| `QuestionNotInSessionError` | `QUESTION_NOT_IN_SESSION` | 400 |
+| `ReportAlreadySubmittedError` | `REPORT_ALREADY_SUBMITTED` | 409 |
+| `AdminUnauthorizedError` | `ADMIN_UNAUTHORIZED` | 401 |
+
+---
+
+### Cách thiết lập & kiểm thử
+
+**1. Thêm biến môi trường vào `.env`:**
+```bash
+REDIS_URL=redis://localhost:6379
+ADMIN_SECRET=your-secret-string-min-16-chars
+```
+
+**2. Chạy migration:**
+```bash
+cd backend
+npx prisma migrate dev
+# Áp dụng migration: 20260609112442_add_practice_module
+# Tạo 5 bảng: questions, practice_sessions, practice_answers,
+#             user_question_history, question_reports
+```
+
+**3. Seed câu hỏi mẫu (nếu có):**
+```bash
+npx tsx prisma/seed.ts
+```
+
+**4. Khởi động Redis (nếu muốn test rate limit):**
+```bash
+redis-server
+```
+
+**5. Khởi động server:**
+```bash
+npm run dev
+```
+
+**6. Test nhanh bằng curl:**
+
+```bash
+# Lấy session token (giả định đã có — xem Mục 3)
+TOKEN="eyJhbGci..."
+
+# Bắt đầu phiên ôn tập
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:4000/api/practice/start?subject=TOAN"
+
+# Nộp đáp án (thay sessionId và questionId thực tế)
+curl -X POST http://localhost:4000/api/practice/answer \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"sessionId":"<session-id>","questionId":"<question-id>","selectedOption":0}'
+
+# Hoàn thành phiên
+curl -X POST http://localhost:4000/api/practice/complete \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"sessionId":"<session-id>"}'
+
+# Admin: import câu hỏi mẫu
+curl -X POST http://localhost:4000/api/admin/questions/bulk \
+  -H "X-Admin-Secret: $ADMIN_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"questions":[{"subject":"TOAN","difficulty":1,"question":"1+1=?","options":["1","2","3","4"],"correctAnswer":1}]}'
+```
+
+---
+
+### Lưu ý / TODO tiếp theo
+
+- **Chưa có cron job thực sự:** `cleanupExpiredSessions()` đã viết nhưng chưa
+  tích hợp vào `node-cron` — cần thêm scheduler trong `server.ts`.
+- **Thứ tự câu hỏi là random tại thời điểm tạo phiên** — nếu muốn ổn định hơn
+  (ví dụ: luôn dễ → khó), có thể sắp xếp lại trước khi lưu vào JSON.
+- **Thiếu index** trên `question_reports` cho `questionId` — khi có nhiều báo
+  cáo, `COUNT WHERE questionId = ?` có thể chậm. Nên thêm index nếu cần.
+- **Điểm thưởng hiện là 1 điểm/câu đúng** — GDD có thể điều chỉnh công thức
+  (ví dụ điểm theo độ khó: dễ=1, trung=2, khó=3) trong phiên bản sau.
+- TODO: Viết unit test cho `PracticeService` với Prisma mock.

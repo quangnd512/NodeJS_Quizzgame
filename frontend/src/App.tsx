@@ -1,8 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { firebaseAuth, googleProvider } from './lib/firebase.js';
-import { loginWithFirebaseToken, getMyProfile, updateSubjects, updateProfile, ApiError } from './lib/api.js';
-import type { UserProfile } from './lib/api.js';
+import {
+  loginWithFirebaseToken, getMyProfile, updateSubjects, updateProfile, ApiError,
+  startPracticeSession, answerQuestion, completeSession, reportQuestion,
+  getPracticeHistory, getPracticeStats,
+} from './lib/api.js';
+import type {
+  UserProfile, PracticeQuestion, StartSessionResult, AnswerResult, CompleteResult,
+  HistoryItem, SubjectStat,
+} from './lib/api.js';
 import './App.css';
 
 // ─── Danh muc mon hoc ────────────────────────────────────────────────────────
@@ -19,7 +26,7 @@ const SUBJECTS = [
   { id: 'GDCD', name: 'Giáo dục công dân', emoji: '⚖️' },
 ];
 
-type Screen = 'loading' | 'login' | 'onboarding' | 'profile';
+type Screen = 'loading' | 'login' | 'onboarding' | 'profile' | 'practice';
 
 function getInitials(name: string | null, email: string | null): string {
   const src = name ?? email ?? '?';
@@ -105,8 +112,18 @@ export default function App() {
           sessionToken={sessionToken}
           onProfileUpdate={setProfile}
           onChangeSubjects={() => setScreen('onboarding')}
+          onPractice={() => setScreen('practice')}
           onError={handleApiError}
           onLogout={() => void signOut(firebaseAuth)}
+        />
+      )}
+      {screen === 'practice' && profile && (
+        <PracticePage
+          profile={profile}
+          sessionToken={sessionToken}
+          onBack={() => setScreen('profile')}
+          onProfileUpdate={setProfile}
+          onError={handleApiError}
         />
       )}
     </div>
@@ -241,12 +258,13 @@ function OnboardingPage({
 // ─── ProfilePage ──────────────────────────────────────────────────────────────
 
 function ProfilePage({
-  profile, sessionToken, onProfileUpdate, onChangeSubjects, onError, onLogout,
+  profile, sessionToken, onProfileUpdate, onChangeSubjects, onPractice, onError, onLogout,
 }: {
   profile: UserProfile;
   sessionToken: string;
   onProfileUpdate: (p: UserProfile) => void;
   onChangeSubjects: () => void;
+  onPractice: () => void;
   onError: (e: unknown) => void;
   onLogout: () => void;
 }) {
@@ -307,6 +325,13 @@ function ProfilePage({
         <span className="pts-label">Điểm tích lũy</span>
         <span className="pts-num">{profile.points.toLocaleString('vi-VN')}</span>
         <span className="pts-unit">điểm</span>
+      </div>
+
+      {/* Practice CTA */}
+      <div style={{ padding: '0 1.25rem .75rem' }}>
+        <button className="btn-primary btn-lg" onClick={onPractice}>
+          Bắt đầu ôn tập 📚
+        </button>
       </div>
 
       {/* Subjects */}
@@ -374,6 +399,398 @@ function ProfilePage({
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+// ─── PracticePage ─────────────────────────────────────────────────────────────
+
+const SUBJECTS_MAP: Record<string, { name: string; emoji: string }> = {
+  TOAN: { name: 'Toán', emoji: '📐' },
+  VAN:  { name: 'Ngữ văn', emoji: '📖' },
+  ANH:  { name: 'Tiếng Anh', emoji: '🌐' },
+  LY:   { name: 'Vật lý', emoji: '⚛️' },
+  HOA:  { name: 'Hóa học', emoji: '🧪' },
+  SINH: { name: 'Sinh học', emoji: '🧬' },
+  SU:   { name: 'Lịch sử', emoji: '🏛️' },
+  DIA:  { name: 'Địa lý', emoji: '🗺️' },
+  GDCD: { name: 'GDCD', emoji: '⚖️' },
+};
+
+const DIFF_LABEL: Record<number, string> = { 1: 'Dễ', 2: 'Trung bình', 3: 'Khó' };
+const SESSION_SECONDS = 17 * 60;
+const OPTION_LABELS = ['A', 'B', 'C', 'D'];
+const REPORT_REASONS = [
+  { value: 'WRONG_ANSWER', label: 'Đáp án sai' },
+  { value: 'BAD_CONTENT',  label: 'Nội dung không phù hợp' },
+  { value: 'TYPO',         label: 'Lỗi chính tả' },
+  { value: 'OTHER',        label: 'Lý do khác' },
+] as const;
+
+type PracticeSub = 'hub' | 'session' | 'result';
+
+interface ActiveSession {
+  data: StartSessionResult;
+  startedAt: number;
+  currentIndex: number;
+  answers: Map<string, AnswerResult & { selected: number }>;
+}
+
+function PracticePage({
+  profile, sessionToken, onBack, onProfileUpdate, onError,
+}: {
+  profile: UserProfile;
+  sessionToken: string;
+  onBack: () => void;
+  onProfileUpdate: (p: UserProfile) => void;
+  onError: (e: unknown) => void;
+}) {
+  const [sub, setSub]           = useState<PracticeSub>('hub');
+  const [stats, setStats]       = useState<SubjectStat[]>([]);
+  const [history, setHistory]   = useState<HistoryItem[]>([]);
+  const [session, setSession]   = useState<ActiveSession | null>(null);
+  const [result, setResult]     = useState<CompleteResult | null>(null);
+  const [loadingSubj, setLoadingSubj] = useState('');
+  const [completing, setCompleting]   = useState(false);
+
+  useEffect(() => {
+    void getPracticeStats(sessionToken).then(setStats).catch(() => {});
+    void getPracticeHistory(sessionToken).then((r) => setHistory(r.items)).catch(() => {});
+  }, [sessionToken]);
+
+  async function handleStartSession(subject: string) {
+    setLoadingSubj(subject);
+    try {
+      const data = await startPracticeSession(sessionToken, subject);
+      setSession({ data, startedAt: Date.now(), currentIndex: 0, answers: new Map() });
+      setSub('session');
+    } catch (err) { onError(err); }
+    finally { setLoadingSubj(''); }
+  }
+
+  async function handleAnswer(questionId: string, selected: number) {
+    if (!session) return;
+    try {
+      const res = await answerQuestion(sessionToken, session.data.sessionId, questionId, selected);
+      setSession((s) => {
+        if (!s) return s;
+        const next = new Map(s.answers);
+        next.set(questionId, { ...res, selected });
+        return { ...s, answers: next };
+      });
+    } catch (err) { onError(err); }
+  }
+
+  function handleNextQuestion() {
+    setSession((s) => s ? { ...s, currentIndex: s.currentIndex + 1 } : s);
+  }
+
+  async function handleComplete() {
+    if (!session || completing) return;
+    setCompleting(true);
+    try {
+      const res = await completeSession(sessionToken, session.data.sessionId);
+      setResult(res);
+      void getPracticeStats(sessionToken).then(setStats).catch(() => {});
+      void getPracticeHistory(sessionToken).then((r) => setHistory(r.items)).catch(() => {});
+      void getMyProfile(sessionToken).then(onProfileUpdate).catch(() => {});
+      setSub('result');
+    } catch (err) { onError(err); }
+    finally { setCompleting(false); }
+  }
+
+  if (sub === 'session' && session) {
+    return (
+      <PracticeSessionScreen
+        session={session}
+        sessionToken={sessionToken}
+        onAnswer={handleAnswer}
+        onNext={handleNextQuestion}
+        onComplete={handleComplete}
+        completing={completing}
+        onError={onError}
+      />
+    );
+  }
+
+  if (sub === 'result' && result) {
+    return (
+      <PracticeResultScreen
+        result={result}
+        onAgain={() => { setResult(null); setSub('hub'); }}
+        onHome={onBack}
+      />
+    );
+  }
+
+  // Hub
+  const subjects = profile.subjects;
+  const statsMap = new Map(stats.map((s) => [s.subject, s]));
+
+  return (
+    <div className="screen practice-hub">
+      <div className="practice-hub-header">
+        <button className="btn-icon-back" onClick={onBack}>←</button>
+        <h2 className="page-title" style={{ flex: 1 }}>Ôn tập</h2>
+      </div>
+
+      <div className="practice-subjects">
+        {subjects.map((s) => {
+          const info  = SUBJECTS_MAP[s.id] ?? { name: s.name, emoji: '📘' };
+          const stat  = statsMap.get(s.id);
+          const busy  = loadingSubj === s.id;
+          return (
+            <button
+              key={s.id}
+              className="practice-subject-card"
+              onClick={() => void handleStartSession(s.id)}
+              disabled={!!loadingSubj}
+            >
+              <span className="ps-emoji">{info.emoji}</span>
+              <div className="ps-info">
+                <span className="ps-name">{info.name}</span>
+                {stat
+                  ? <span className="ps-stat">{stat.totalSessions} phiên · Cao nhất {stat.bestScore}/15</span>
+                  : <span className="ps-stat ps-new">Chưa ôn lần nào</span>}
+              </div>
+              {busy ? <Spinner /> : <span className="ps-arrow">▶</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      {history.length > 0 && (
+        <section className="card-section" style={{ margin: '0 1.25rem .75rem' }}>
+          <h3 className="section-title" style={{ marginBottom: '.75rem' }}>Lịch sử gần đây</h3>
+          {history.slice(0, 5).map((h) => {
+            const info = SUBJECTS_MAP[h.subjectId] ?? { name: h.subjectId, emoji: '📘' };
+            return (
+              <div key={h.sessionId} className="history-row">
+                <span className="hist-emoji">{info.emoji}</span>
+                <span className="hist-name">{info.name}</span>
+                <span className="hist-score">{h.score}/{h.totalQuestions}</span>
+                <span className="hist-pts">+{h.pointsEarned} pts</span>
+              </div>
+            );
+          })}
+        </section>
+      )}
+    </div>
+  );
+}
+
+// ─── PracticeSessionScreen ────────────────────────────────────────────────────
+
+function PracticeSessionScreen({
+  session, sessionToken, onAnswer, onNext, onComplete, completing, onError,
+}: {
+  session: ActiveSession;
+  sessionToken: string;
+  onAnswer: (qId: string, opt: number) => Promise<void>;
+  onNext: () => void;
+  onComplete: () => Promise<void>;
+  completing: boolean;
+  onError: (e: unknown) => void;
+}) {
+  const { data, startedAt, currentIndex, answers } = session;
+  const question = data.questions[currentIndex];
+  const answered = question ? answers.get(question.id) : undefined;
+  const isLast   = currentIndex >= data.questions.length - 1;
+  const total    = data.questions.length;
+
+  const [timeLeft, setTimeLeft] = useState(() => {
+    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+    return Math.max(0, SESSION_SECONDS - elapsed);
+  });
+  const [answerBusy, setAnswerBusy] = useState(false);
+  const [showReport, setShowReport] = useState(false);
+  const [reportSent, setReportSent] = useState(false);
+
+  useEffect(() => {
+    if (timeLeft <= 0) return;
+    const id = setInterval(() => {
+      setTimeLeft((t) => {
+        if (t <= 1) { clearInterval(id); return 0; }
+        return t - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleOptionClick(idx: number) {
+    if (answered || answerBusy || !question) return;
+    setAnswerBusy(true);
+    await onAnswer(question.id, idx);
+    setAnswerBusy(false);
+  }
+
+  async function sendReport(reason: typeof REPORT_REASONS[number]['value']) {
+    if (!question) return;
+    try {
+      await reportQuestion(sessionToken, question.id, reason, data.sessionId);
+      setReportSent(true);
+      setShowReport(false);
+    } catch (err) { onError(err); }
+  }
+
+  const mins = String(Math.floor(timeLeft / 60)).padStart(2, '0');
+  const secs = String(timeLeft % 60).padStart(2, '0');
+  const timerDanger = timeLeft < 120;
+  const progress = ((currentIndex + (answered ? 1 : 0)) / total) * 100;
+
+  if (!question) {
+    return (
+      <div className="screen screen-center">
+        <p style={{ marginBottom: '1rem', color: 'var(--muted)' }}>Phiên ôn tập kết thúc.</p>
+        <button className="btn-primary" disabled={completing} onClick={() => void onComplete()}>
+          {completing ? <Spinner /> : null} Xem kết quả
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="screen practice-session">
+      {/* Top bar */}
+      <div className="ps-topbar">
+        <span className="ps-progress-text">Câu {currentIndex + 1}/{total}</span>
+        <span className={`ps-timer ${timerDanger ? 'danger' : ''}`}>{mins}:{secs}</span>
+      </div>
+
+      {/* Progress bar */}
+      <div className="ps-progress-bar">
+        <div className="ps-progress-fill" style={{ width: `${progress}%` }} />
+      </div>
+
+      {/* Difficulty badge */}
+      <div style={{ padding: '1rem 1.25rem .5rem' }}>
+        <span className={`diff-badge diff-${question.difficulty}`}>
+          {DIFF_LABEL[question.difficulty] ?? 'N/A'}
+        </span>
+      </div>
+
+      {/* Question */}
+      <div className="ps-question">{question.question}</div>
+
+      {/* Options */}
+      <div className="ps-options">
+        {question.options.map((opt, idx) => {
+          let cls = 'ps-option';
+          if (answered) {
+            if (idx === answered.correctAnswer) cls += ' correct';
+            else if (idx === answered.selected && !answered.isCorrect) cls += ' wrong';
+            else cls += ' dimmed';
+          }
+          return (
+            <button
+              key={idx}
+              className={cls}
+              onClick={() => void handleOptionClick(idx)}
+              disabled={!!answered || answerBusy}
+            >
+              <span className="opt-label">{OPTION_LABELS[idx]}</span>
+              <span className="opt-text">{opt}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Explanation */}
+      {answered && (
+        <div className={`ps-feedback ${answered.isCorrect ? 'correct' : 'wrong'}`}>
+          <span className="fb-icon">{answered.isCorrect ? '✓' : '✗'}</span>
+          <span className="fb-msg">{answered.isCorrect ? 'Chính xác!' : 'Chưa đúng'}</span>
+          {answered.explanation && (
+            <p className="fb-explain">{answered.explanation}</p>
+          )}
+        </div>
+      )}
+
+      {/* Report */}
+      {answered && !reportSent && (
+        <div style={{ padding: '0 1.25rem .5rem' }}>
+          {showReport ? (
+            <div className="report-box">
+              <p className="report-title">Báo lỗi câu hỏi</p>
+              {REPORT_REASONS.map((r) => (
+                <button key={r.value} className="report-reason" onClick={() => void sendReport(r.value)}>
+                  {r.label}
+                </button>
+              ))}
+              <button className="btn-link" onClick={() => setShowReport(false)}>Huỷ</button>
+            </div>
+          ) : (
+            <button className="btn-link" style={{ fontSize: '.78rem', color: 'var(--muted)' }}
+              onClick={() => setShowReport(true)}>
+              Báo lỗi câu hỏi
+            </button>
+          )}
+        </div>
+      )}
+      {reportSent && (
+        <p style={{ padding: '0 1.25rem .5rem', fontSize: '.78rem', color: 'var(--success)' }}>
+          ✓ Đã gửi báo lỗi
+        </p>
+      )}
+
+      {/* Footer actions */}
+      <div className="ps-footer">
+        {answered ? (
+          isLast ? (
+            <button className="btn-primary btn-lg" disabled={completing} onClick={() => void onComplete()}>
+              {completing ? <Spinner /> : null} Kết thúc phiên
+            </button>
+          ) : (
+            <button className="btn-primary btn-lg" onClick={onNext}>
+              Câu tiếp theo →
+            </button>
+          )
+        ) : (
+          <button className="btn-secondary" style={{ width: '100%' }} disabled={completing}
+            onClick={() => void onComplete()}>
+            {completing ? <Spinner /> : null} Kết thúc sớm
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── PracticeResultScreen ─────────────────────────────────────────────────────
+
+function PracticeResultScreen({
+  result, onAgain, onHome,
+}: {
+  result: CompleteResult;
+  onAgain: () => void;
+  onHome: () => void;
+}) {
+  const pct = result.totalQuestions > 0 ? Math.round((result.score / result.totalQuestions) * 100) : 0;
+
+  return (
+    <div className="screen screen-center practice-result">
+      <div className="result-card">
+        <div className="result-icon">{pct >= 70 ? '🎉' : pct >= 40 ? '💪' : '📖'}</div>
+        <h2 className="result-title">Kết quả phiên ôn tập</h2>
+
+        <div className="result-score">
+          <span className="rs-num">{result.score}</span>
+          <span className="rs-denom">/{result.totalQuestions}</span>
+        </div>
+
+        <div className="result-pct" style={{ color: pct >= 70 ? 'var(--success)' : pct >= 40 ? '#d97706' : 'var(--danger)' }}>
+          {pct}% chính xác
+        </div>
+
+        <div className="result-pts">
+          +{result.pointsEarned} điểm tích lũy
+        </div>
+
+        <div className="result-btns">
+          <button className="btn-secondary" onClick={onHome}>Về trang chủ</button>
+          <button className="btn-primary" onClick={onAgain}>Ôn tiếp 📚</button>
+        </div>
+      </div>
     </div>
   );
 }

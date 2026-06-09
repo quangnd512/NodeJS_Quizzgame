@@ -107,3 +107,101 @@ export async function updateProfile(
     body: JSON.stringify(data),
   });
 }
+
+// ─── Practice Module ──────────────────────────────────────────────────────────
+
+export interface PracticeQuestion {
+  id: string;
+  subject: string;
+  chapter: string | null;
+  difficulty: number;
+  question: string;
+  options: string[];
+}
+
+export interface StartSessionResult {
+  sessionId: string;
+  subject: string;
+  questions: PracticeQuestion[];
+}
+
+export interface AnswerResult {
+  isCorrect: boolean;
+  correctAnswer: number;
+  explanation: string | null;
+  answeredCount: number;
+  totalQuestions: number;
+}
+
+export interface CompleteResult {
+  sessionId: string;
+  score: number;
+  pointsEarned: number;
+  totalQuestions: number;
+}
+
+export interface HistoryItem {
+  sessionId: string;
+  subjectId: string;
+  score: number;
+  pointsEarned: number;
+  totalQuestions: number;
+  startedAt: string;
+  completedAt: string;
+}
+
+export interface SubjectStat {
+  subject: string;
+  totalSessions: number;
+  avgScore: number;
+  bestScore: number;
+}
+
+/** GET /api/practice/start?subject=TOAN */
+export async function startPracticeSession(token: string, subject: string): Promise<StartSessionResult> {
+  return request(`/api/practice/start?subject=${subject}`, token);
+}
+
+/** POST /api/practice/answer */
+export async function answerQuestion(
+  token: string,
+  sessionId: string,
+  questionId: string,
+  selectedOption: number,
+): Promise<AnswerResult> {
+  return request('/api/practice/answer', token, {
+    method: 'POST',
+    body: JSON.stringify({ sessionId, questionId, selectedOption }),
+  });
+}
+
+/** POST /api/practice/complete */
+export async function completeSession(token: string, sessionId: string): Promise<CompleteResult> {
+  return request('/api/practice/complete', token, {
+    method: 'POST',
+    body: JSON.stringify({ sessionId }),
+  });
+}
+
+/** POST /api/practice/questions/:id/report */
+export async function reportQuestion(
+  token: string,
+  questionId: string,
+  reason: 'WRONG_ANSWER' | 'BAD_CONTENT' | 'TYPO' | 'OTHER',
+  sessionId: string,
+): Promise<{ message: string }> {
+  return request(`/api/practice/questions/${questionId}/report`, token, {
+    method: 'POST',
+    body: JSON.stringify({ reason, sessionId }),
+  });
+}
+
+/** GET /api/practice/history */
+export async function getPracticeHistory(token: string): Promise<{ items: HistoryItem[]; total: number }> {
+  return request('/api/practice/history', token);
+}
+
+/** GET /api/practice/stats */
+export async function getPracticeStats(token: string): Promise<SubjectStat[]> {
+  return request('/api/practice/stats', token);
+}

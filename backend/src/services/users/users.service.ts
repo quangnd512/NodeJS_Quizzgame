@@ -155,7 +155,7 @@ export class UsersService {
 
     // Goi PointsService de lay so du diem - tach biet ro rang trach nhiem
     // (UsersService khong tu truy van bang user_points truc tiep).
-    const balance = await this.pointsService.getBalance(user.firebaseUid);
+    const balance = await this.pointsService.getBalance(user.id);
 
     return {
       id: user.id,

@@ -70,3 +70,20 @@ export class UserPointsNotFoundError extends PointsError {
 
   public readonly userId: string;
 }
+
+/**
+ * Nem ra boi `addPointsInTx` khi optimistic lock that bai ben trong outer transaction.
+ * EXPORTED de PracticeService co the catch va retry toan bo giao dich ben ngoai.
+ *
+ * Phan biet voi OptimisticLockError (het so lan retry) — day la "tin hieu retry"
+ * nen khong extends PointsError, tranh nham lua ERROR_CODE_TO_HTTP_STATUS xu ly.
+ */
+export class OptimisticLockRetryableError extends Error {
+  public readonly code = 'OPTIMISTIC_LOCK_RETRYABLE';
+
+  constructor() {
+    super('Optimistic lock that bai trong addPointsInTx — can thu lai outer transaction.');
+    this.name = 'OptimisticLockRetryableError';
+    Object.setPrototypeOf(this, OptimisticLockRetryableError.prototype);
+  }
+}
