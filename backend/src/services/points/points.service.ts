@@ -16,6 +16,7 @@ import { prisma as defaultPrismaClient } from '../../lib/prisma.js';
 import {
   InvalidPointsAmountError,
   OptimisticLockError,
+  OptimisticLockRetryableError,
   PointsInsufficientError,
 } from './points.errors.js';
 import type {
@@ -302,6 +303,55 @@ export class PointsService {
     ]);
 
     return { items, total, limit: safeLimit, offset };
+  }
+
+  /**
+   * Cong diem trong 1 outer transaction do caller quan ly (khong tu tao $transaction).
+   *
+   * Dung khi nhieu thao tac can atomic trong cung 1 giao dich - vi du:
+   * PracticeService.completeSession vua update PracticeSession vua cong diem.
+   *
+   * NEU optimistic lock that bai (version da bi thay doi boi request khac):
+   * → Nem `OptimisticLockRetryableError` (exported) de caller co the catch va
+   *   retry toan bo outer transaction tu dau.
+   *
+   * @param tx     Prisma TransactionClient tu outer $transaction
+   * @param userId ID nguoi dung nhan diem
+   * @param amount So diem can cong (phai > 0)
+   * @param reason Ly do giao dich
+   * @param metadata Du lieu bo sung (tuy chon)
+   *
+   * @throws InvalidPointsAmountError neu amount khong hop le
+   * @throws OptimisticLockRetryableError neu version conflict → caller can retry
+   */
+  public async addPointsInTx(
+    tx: PrismaTx,
+    userId: string,
+    amount: number,
+    reason: string,
+    metadata?: Prisma.InputJsonValue,
+  ): Promise<void> {
+    this.assertNonEmptyString(userId, 'userId');
+    this.assertNonEmptyString(reason, 'reason');
+    this.assertPositiveInteger(amount, 'amount');
+
+    const current = await this.ensureUserPointsRecord(tx, userId);
+    const newBalance = current.currentPoints + amount;
+
+    // Thuc hien optimistic update truc tiep (khong qua applyOptimisticUpdate
+    // vi method do nem OptimisticLockRetrySignal noi bo — ta can nem
+    // OptimisticLockRetryableError (exported) de caller bat duoc).
+    const result = await tx.userPoints.updateMany({
+      where: { userId, version: current.version },
+      data: { currentPoints: newBalance, version: { increment: 1 } },
+    });
+
+    if (result.count === 0) {
+      // Version da thay doi — bao hieu caller can retry outer transaction.
+      throw new OptimisticLockRetryableError();
+    }
+
+    await this.writeTransactionLog(tx, userId, amount, reason, metadata);
   }
 
   // --------------------------------------------------------------------

@@ -125,3 +125,110 @@ model PointTransaction {
   @@index([userId, createdAt])
   @@map("point_transactions")
 }
+
+// ============================================================================
+// MODULE ON TAP (Practice Module)
+// ============================================================================
+
+/// Bang cau hoi on thi THPT - nguon du lieu chinh cho che do On tap va Thi thu.
+model Question {
+  id            String   @id @default(uuid())
+  /// Ma mon hoc (vi du: "TOAN", "VAN", "ANH") - khop voi SUBJECT_CATALOG.
+  subject       String
+  /// Ten chuong/chu de (tuy chon) - dung de nhom cau hoi khi thong ke.
+  chapter       String?
+  /// Do kho: 1=de, 2=trung binh, 3=kho.
+  difficulty    Int
+  /// Noi dung cau hoi.
+  question      String
+  /// 4 lua chon tra loi dang JSON mang 4 phan tu string.
+  options       Json
+  /// Chi so dap an dung (0-3) tuong ung voi vi tri trong mang options.
+  correctAnswer Int
+  /// Giai thich sau khi tra loi (tuy chon) - hien thi sau khi user nop dap an.
+  explanation   String?
+  /// Nam de thi (tuy chon) - vi du 2023, 2024.
+  examYear      Int?
+  /// Ma de thi (tuy chon) - vi du "De 1", "Ma de 101".
+  examCode      String?
+  /// Trang thai kich hoat - false neu bi an (soft delete hoac bi bao cao nhieu).
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  @@index([subject, difficulty, isActive])
+  @@map("questions")
+}
+
+/// Bang luu thong tin tung phien on tap (moi lan user nhan "Bat dau on tap").
+model PracticeSession {
+  id           String    @id @default(uuid())
+  /// ID cua user thuc hien phien on tap.
+  userId       String
+  /// Ma mon hoc da chon on tap.
+  subjectId    String
+  /// Danh sach 15 questionId da rut ngau nhien cho phien nay.
+  questions    Json
+  /// So cau dung sau khi hoan thanh (mac dinh 0 truoc khi complete).
+  score        Int       @default(0)
+  /// So diem tich luy duoc trong phien nay (= score vi moi cau dung = 1 diem).
+  pointsEarned Int       @default(0)
+  startedAt    DateTime  @default(now())
+  /// null = chua hoan thanh; co gia tri = da hoan thanh (hoac het gio).
+  completedAt  DateTime?
+
+  @@index([userId, completedAt])
+  @@map("practice_sessions")
+}
+
+/// Bang luu tung cau tra loi cua user trong 1 phien on tap.
+/// Tach rieng kho JSON tren PracticeSession de tranh race condition
+/// khi nhieu request cung update mang JSON dong thoi.
+model PracticeAnswer {
+  id             String   @id @default(uuid())
+  sessionId      String
+  questionId     String
+  /// Chi so lua chon (0-3). null = chua tra loi (dat cho du lieu tuong lai).
+  selectedOption Int?
+  isCorrect      Boolean
+  answeredAt     DateTime @default(now())
+
+  /// Rang buoc UNIQUE dam bao idempotency: goi lai POST /practice/answer
+  /// cung sessionId + questionId se tra ve ket qua cu, KHONG insert them.
+  @@unique([sessionId, questionId])
+  @@map("practice_answers")
+}
+
+/// Bang lich su cau hoi da lam cua tung user - dung de filter cau "chua lam
+/// trong 24h" khi rut cau hoi cho phien moi. Tach rieng de query nhanh bang index.
+model UserQuestionHistory {
+  id          String   @id @default(uuid())
+  userId      String
+  questionId  String
+  /// Thoi diem lam cau hoi gan nhat (cap nhat neu lam lai).
+  attemptedAt DateTime @default(now())
+
+  @@index([userId, attemptedAt])
+  /// Moi user chi co 1 ban ghi moi cau hoi; khi lam lai thi update attemptedAt.
+  @@unique([userId, questionId])
+  @@map("user_question_history")
+}
+
+/// Bang bao cao cau hoi sai/co van de tu phia nguoi dung.
+/// Khi >= 5 bao cao PENDING cung 1 cau thi tu dong an cau do (isActive = false).
+model QuestionReport {
+  id          String   @id @default(uuid())
+  questionId  String
+  userId      String
+  /// Ly do bao cao: WRONG_ANSWER | BAD_CONTENT | TYPO | OTHER
+  reason      String
+  /// Mo ta them (tuy chon) do user nhap.
+  description String?
+  /// Trang thai xu ly: PENDING | REVIEWED | FIXED | DISMISSED
+  status      String   @default("PENDING")
+  createdAt   DateTime @default(now())
+
+  /// Moi user chi bao cao 1 lan moi cau hoi.
+  @@unique([userId, questionId])
+  @@index([status, createdAt])
+  @@map("question_reports")
+}

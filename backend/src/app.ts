@@ -4,6 +4,9 @@ import cors from 'cors';
 import { helloRouter } from './routes/hello.route.js';
 import { authRouter } from './routes/auth.route.js';
 import { usersRouter } from './routes/users.route.js';
+import { practiceRouter } from './routes/practice.route.js';
+import { adminRouter } from './routes/admin.route.js';
+import type { ZodIssue } from 'zod';
 
 /**
  * Anh xa ma loi nghiep vu (`code` tren cac custom error class) sang HTTP status
@@ -23,16 +26,43 @@ const ERROR_CODE_TO_HTTP_STATUS: Readonly<Record<string, number>> = {
   INVALID_SUBJECTS: 400,
   INVALID_PROFILE_INPUT: 400,
   USER_NOT_FOUND: 404,
-  // Points (du phong cho cac route su dung sau nay)
+  // Points
   POINTS_INSUFFICIENT: 409,
   INVALID_POINTS_AMOUNT: 400,
   OPTIMISTIC_LOCK_CONFLICT: 409,
+  // Practice (On tap)
+  PRACTICE_SESSION_NOT_FOUND: 404,
+  PRACTICE_SESSION_EXPIRED: 410,
+  PRACTICE_SESSION_ALREADY_COMPLETED: 409,
+  PRACTICE_SESSION_NOT_OWNED: 403,
+  PRACTICE_RATE_LIMIT_EXCEEDED: 429,
+  SUBJECT_NOT_REGISTERED: 403,
+  SUBJECT_HAS_NO_QUESTIONS: 404,
+  QUESTION_NOT_FOUND: 404,
+  QUESTION_NOT_ATTEMPTED: 403,
+  QUESTION_NOT_IN_SESSION: 400,
+  // Admin
+  ADMIN_UNAUTHORIZED: 401,
+  // Reports
+  REPORT_ALREADY_SUBMITTED: 409,
 };
 
 /** Kiem tra 1 gia tri loi co phai la "custom error" co truong `code` (string) hay khong. */
 function getErrorCode(err: unknown): string | null {
   if (err instanceof Error && 'code' in err && typeof (err as { code?: unknown }).code === 'string') {
     return (err as { code: string }).code;
+  }
+  return null;
+}
+
+/** Lay chi tiet loi validate Zod neu co (truong `details: ZodIssue[]`). */
+function getValidationDetails(err: unknown): ZodIssue[] | null {
+  if (
+    err instanceof Error &&
+    'details' in err &&
+    Array.isArray((err as { details?: unknown }).details)
+  ) {
+    return (err as { details: ZodIssue[] }).details;
   }
   return null;
 }
@@ -52,6 +82,8 @@ export function createApp(): Application {
   app.use('/api/hello', helloRouter);
   app.use('/api/auth', authRouter);
   app.use('/api/users', usersRouter);
+  app.use('/api/practice', practiceRouter);
+  app.use('/api/admin', adminRouter);
 
   // Route kiem tra suc khoe server
   app.get('/api/health', (_req: Request, res: Response) => {
@@ -78,9 +110,9 @@ export function createApp(): Application {
       return;
     }
 
-    // Loi nghiep vu (4xx): tra ve `code` cu the de client/FE xu ly chinh xac
-    // (vi du: hien thi thong bao rieng cho "het han token" vs "chua dang ky").
-    res.status(status).json({ error: code, message });
+    // Loi validate body (Zod): tra ve them `details` de client hien thi loi cu the theo field.
+    const details = getValidationDetails(err);
+    res.status(status).json({ error: code, message, ...(details ? { details } : {}) });
   });
 
   return app;
