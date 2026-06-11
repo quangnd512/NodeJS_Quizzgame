@@ -40,6 +40,7 @@ Với mỗi TASK trong danh sách, theo đúng thứ tự và phụ thuộc:
 4. Đánh dấu task hoàn thành trước khi sang task tiếp theo
 
 Tuân thủ nghiêm ngặt:
+<!-- STACK_BLOCK_START -->
 - **Stack**: React 18 + Vite + TypeScript (FE), Node.js + Express + TypeScript (BE)
 - **ORM**: Prisma v6 (KHÔNG dùng v7)
 - **Auth**: Firebase Admin SDK (BE) + Firebase Web SDK (FE)
@@ -48,6 +49,7 @@ Tuân thủ nghiêm ngặt:
 - **TypeScript**: strict mode, KHÔNG dùng `any`
 - **Error**: dùng custom error class + ERROR_CODE_TO_HTTP_STATUS pattern
 - **Middleware**: verifyAppToken cho mọi route sau /login
+<!-- STACK_BLOCK_END -->
 
 Viết đầy đủ:
 - Migration Prisma (nếu thay đổi schema)

@@ -19,6 +19,43 @@ Người dùng **không rành lập trình** — nhiệm vụ của bạn là:
 
 ## QUY TRÌNH LÀM VIỆC
 
+### Bước 0 — Khởi tạo dự án mới (CHỈ chạy lần đầu tiên)
+
+Trước khi làm bất cứ việc gì, kiểm tra xem `docs/PROJECT_OVERVIEW.md` đã tồn tại chưa.
+
+**Nếu file này CHƯA tồn tại** (workflow vừa được copy sang dự án mới), thực hiện khởi tạo:
+
+1. Hỏi người dùng (ngôn ngữ đời thường, từng câu một):
+   > "Đây có vẻ là lần đầu workflow này chạy trong dự án này. Tôi cần hỏi vài thông tin để cấu hình:
+   > 1. Tên dự án là gì?
+   > 2. Dự án này làm gì, dành cho ai?
+   > 3. Bạn dự định dùng công nghệ gì? (Frontend, Backend, Database, ORM, Auth — nếu chưa biết, tôi có thể đề xuất)"
+
+2. Nếu người dùng không chắc về công nghệ, đề xuất 1 bộ stack hợp lý dựa trên loại dự án
+   (web app, mobile, game...) và xác nhận lại.
+
+3. Tạo `docs/PROJECT_OVERVIEW.md` theo mẫu (xem cấu trúc trong file tương ứng của QuizzGame
+   để tham khảo format), điền thông tin dự án mới.
+
+4. Tạo `docs/TASKS.md` với bảng rỗng (chưa có tính năng nào Done).
+
+5. Cập nhật khối thông tin stack trong `workflow/roles/session-2-tho-code.md`:
+   tìm đoạn nằm giữa `<!-- STACK_BLOCK_START -->` và `<!-- STACK_BLOCK_END -->`,
+   thay toàn bộ nội dung bằng stack của dự án mới (giữ đúng định dạng danh sách `- **Tên**: giá trị`).
+
+6. Thay mọi chỗ ghi "QuizzGame" trong các file `workflow/roles/session-*.md` và
+   `docs/WORKFLOW.md` bằng tên dự án mới (dùng lệnh `sed` hoặc sửa từng file).
+
+7. Báo người dùng:
+   > "Đã cấu hình xong workflow cho dự án **<tên dự án>**. Từ giờ tôi sẽ làm việc theo
+   > stack và thông tin bạn vừa cung cấp."
+
+8. Tiếp tục sang Bước 1 như bình thường.
+
+**Nếu file `docs/PROJECT_OVERVIEW.md` đã tồn tại** → bỏ qua Bước 0, vào thẳng Bước 1.
+
+---
+
 ### Bước 1 — Hỏi yêu cầu bằng ngôn ngữ đời thường
 
 Bắt đầu bằng:
