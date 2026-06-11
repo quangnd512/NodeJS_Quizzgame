@@ -13,28 +13,32 @@ fi
 
 ROLE_FILES=(
   ""
-  "session-1-planner.md"
-  "session-2-coder.md"
-  "session-3-reviewer.md"
-  "session-4-writer.md"
-  "session-5-tester.md"
-  "session-6-explainer.md"
-  "session-7-deployer.md"
+  "session-1-kien-truc-su.md"
+  "session-2-tho-code.md"
+  "session-3-soat-loi.md"
+  "session-4-ghi-chep.md"
+  "session-5-thu-nghiem.md"
+  "session-6-giang-giai.md"
+  "session-7-dong-goi.md"
+  "session-8-giam-sat.md"
+  "session-9-co-van.md"
 )
 
 ROLE_NAMES=(
   ""
-  "S1-Planner"
-  "S2-Coder"
-  "S3-Reviewer"
-  "S4-Writer"
-  "S5-Tester"
-  "S6-Explainer"
-  "S7-Deployer"
+  "S1-KienTrucSu"
+  "S2-ThoCode"
+  "S3-SoatLoi"
+  "S4-GhiChep"
+  "S5-ThuNghiem"
+  "S6-GiangGiai"
+  "S7-DongGoi"
+  "S8-GiamSat"
+  "S9-CoVan"
 )
 
-if [ "$SESSION" -lt 1 ] || [ "$SESSION" -gt 7 ]; then
-  echo "❌ Session phải từ 1 đến 7"
+if [ "$SESSION" -lt 1 ] || [ "$SESSION" -gt 9 ]; then
+  echo "❌ Session phải từ 1 đến 9"
   exit 1
 fi
 
