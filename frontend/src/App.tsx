@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
+import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import { firebaseAuth, googleProvider } from './lib/firebase.js';
 import {
   loginWithFirebaseToken, getMyProfile, updateSubjects, updateProfile, ApiError,
@@ -40,7 +40,6 @@ export default function App() {
   const [screen, setScreen]             = useState<Screen>(() =>
     window.location.hash === '#admin' ? 'admin' : 'loading',
   );
-  const [_firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [sessionToken, setSessionToken] = useState('');
   const [profile, setProfile]           = useState<UserProfile | null>(null);
   const [globalError, setGlobalError]   = useState('');
@@ -49,7 +48,6 @@ export default function App() {
     // Trang Admin chay doc lap, khong can dang nhap Firebase
     if (screen === 'admin') return;
     const unsub = onAuthStateChanged(firebaseAuth, async (user) => {
-      setFirebaseUser(user);
       if (!user) {
         setScreen('login');
         setSessionToken('');
