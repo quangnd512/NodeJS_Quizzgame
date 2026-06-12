@@ -10,7 +10,8 @@
     "start": "node dist/server.js",
     "smoke:points": "tsx src/scripts/smoke-test-points.ts",
     "smoke:points:concurrency": "tsx src/scripts/smoke-test-points-concurrency.ts",
-    "smoke:points:transfer-race": "tsx src/scripts/smoke-test-points-transfer-race.ts"
+    "smoke:points:transfer-race": "tsx src/scripts/smoke-test-points-transfer-race.ts",
+    "smoke:reports": "tsx src/scripts/smoke-test-question-reports.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

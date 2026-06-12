@@ -97,3 +97,13 @@ export class QuestionNotAttemptedError extends PracticeError {
     );
   }
 }
+
+/** User chua lam cau hoi nay (khong duoc bao cao cau chua tung lam). */
+export class QuestionNotAttemptedForReportError extends PracticeError {
+  constructor(questionId: string) {
+    super(
+      `Ban chi co the bao cao cau hoi da tung lam. Ban chua lam cau hoi '${questionId}'.`,
+      'QUESTION_NOT_ATTEMPTED_FOR_REPORT',
+    );
+  }
+}

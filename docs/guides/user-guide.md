@@ -316,6 +316,9 @@ Content-Type: application/json
 }
 ```
 
+> ⚠️ Chỉ báo cáo được câu hỏi user **đã từng làm** (đã trả lời trong ít nhất
+> 1 phiên — có bản ghi `user_question_history`, giống điều kiện ở mục 2.5).
+
 **Lý do báo cáo:**
 
 | Mã | Ý nghĩa |
@@ -333,7 +336,21 @@ Content-Type: application/json
 ```
 
 **Lỗi:**
-- `409 REPORT_ALREADY_SUBMITTED`: Đã báo cáo câu này rồi (1 lần/câu).
+
+| Lỗi | Nguyên nhân | Cách xử lý trên UI |
+|-----|-------------|---------------------|
+| `409 REPORT_ALREADY_SUBMITTED` | Đã báo cáo câu này rồi (1 lần/câu) | Hiện "✓ Bạn đã báo cáo câu này rồi" — coi như thành công, đóng hộp báo lỗi |
+| `403 QUESTION_NOT_ATTEMPTED_FOR_REPORT` | Chưa từng làm câu hỏi này | Hiện "Bạn cần làm câu hỏi này trước khi báo cáo." ngay trong hộp báo lỗi, **không** đóng hộp |
+| `404 QUESTION_NOT_FOUND` | questionId không tồn tại | Bug FE — kiểm tra lại |
+
+**Lưu ý FE (UI hộp báo lỗi trong `PracticeSessionScreen`):**
+- Hộp báo lỗi có 1 ô `<textarea>` nhập mô tả thêm (tuỳ chọn, tối đa 500 ký
+  tự) phía trên 4 nút lý do — bấm 1 nút lý do là gửi báo cáo ngay (mô tả đi
+  kèm nếu có nhập).
+- Vì `PracticeSessionScreen` không unmount giữa các câu (chỉ đổi
+  `currentIndex`), toàn bộ state của hộp báo lỗi (hiện/ẩn hộp, đã gửi chưa,
+  nội dung mô tả, thông báo, lỗi) được **reset mỗi khi chuyển sang câu khác**
+  — tránh hiện nhầm "Đã gửi báo lỗi" của câu trước cho câu hiện tại.
 
 ---
 
@@ -519,6 +536,16 @@ phiên. Nếu bạn bắt đầu phiên mới nhưng thoát trước khi nộp c
 A: Câu hỏi chỉ bị ẩn tự động khi có **≥ 5 báo cáo PENDING**. Admin cũng có thể
 ẩn câu thủ công sau khi xem xét báo cáo của bạn. Cảm ơn vì đã đóng góp để cải
 thiện chất lượng đề thi!
+
+---
+
+**Q: Tại sao tôi bấm "Báo lỗi" mà bị báo "Bạn cần làm câu hỏi này trước khi
+báo cáo"?**
+
+A: Bạn chỉ có thể báo cáo câu hỏi mà bạn **đã từng trả lời** trong ít nhất 1
+phiên ôn tập (tương tự điều kiện xem giải thích ở câu hỏi phía trên). Đây là
+cơ chế chống spam báo cáo câu hỏi bạn chưa từng thấy. Hãy làm câu hỏi đó
+trước, rồi báo cáo lại sau.
 
 ---
 

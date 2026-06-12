@@ -11,7 +11,8 @@
 2. [Xác thực Admin](#2-xác-thực-admin)
 3. [Quản lý câu hỏi](#3-quản-lý-câu-hỏi)
 4. [Xử lý báo cáo câu hỏi](#4-xử-lý-báo-cáo-câu-hỏi)
-5. [Xử lý sự cố thường gặp](#5-xử-lý-sự-cố-thường-gặp)
+5. [Admin Dashboard (Giao diện Web)](#5-admin-dashboard-giao-diện-web)
+6. [Xử lý sự cố thường gặp](#6-xử-lý-sự-cố-thường-gặp)
 
 ---
 
@@ -248,7 +249,9 @@ Content-Type: application/json
 
 ## 4. Xử lý báo cáo câu hỏi
 
-Người dùng có thể báo cáo câu hỏi sai/có vấn đề. Hệ thống tự động ẩn câu khi
+Người dùng có thể báo cáo câu hỏi sai/có vấn đề — nhưng **chỉ với câu hỏi họ
+đã từng làm** (hệ thống kiểm tra `user_question_history`; nếu chưa từng làm,
+API trả `403 QUESTION_NOT_ATTEMPTED_FOR_REPORT`). Hệ thống tự động ẩn câu khi
 nhận **≥ 5 báo cáo PENDING**.
 
 ### 4.1 Xem danh sách báo cáo
@@ -290,18 +293,21 @@ GET /api/admin/questions/reports/summary
 **Response mẫu:**
 ```json
 {
-  "byStatus": {
-    "PENDING": 12,
-    "REVIEWED": 5,
-    "FIXED": 3,
-    "DISMISSED": 2
-  },
+  "pending": 12,
+  "reviewed": 5,
+  "fixed": 3,
+  "dismissed": 2,
   "topReportedQuestions": [
     { "questionId": "q-uuid-1", "count": 7 },
     { "questionId": "q-uuid-2", "count": 4 }
   ]
 }
 ```
+
+> ⚠️ **Đã đổi response shape (2026-06-12):** trước đây là dạng lồng
+> `{ byStatus: { PENDING, REVIEWED, FIXED, DISMISSED }, topReportedQuestions }`.
+> Shape cũ **không còn được trả về** — đọc trực tiếp `pending`, `reviewed`,
+> `fixed`, `dismissed` ở root object.
 
 **Quy trình xử lý báo cáo được khuyến nghị:**
 1. Xem `topReportedQuestions` để ưu tiên câu bị báo cáo nhiều nhất.
@@ -339,7 +345,67 @@ Content-Type: application/json
 
 ---
 
-## 5. Xử lý sự cố thường gặp
+## 5. Admin Dashboard (Giao diện Web)
+
+Thay vì gọi `curl`/Postman như mục 4, admin có thể dùng giao diện web để xem
+thống kê và xử lý báo cáo trực quan hơn.
+
+### 5.1 Truy cập
+
+Mở frontend và thêm `#admin` vào cuối URL:
+
+```
+http://localhost:5173/#admin
+```
+
+Trang Admin Dashboard **tách biệt hoàn toàn** với app chính — không cần đăng
+nhập Firebase/tài khoản người dùng.
+
+### 5.2 Đăng nhập
+
+Lần đầu truy cập, màn hình yêu cầu nhập **Mã bí mật (Admin Secret)** — chính
+là giá trị `ADMIN_SECRET` trong `backend/.env`:
+
+1. Nhập `ADMIN_SECRET` vào ô "Mã bí mật (Admin Secret)".
+2. Nhấn **Đăng nhập** (hoặc Enter).
+3. Nếu đúng → vào thẳng trang quản lý báo cáo.
+4. Nếu sai → hiện thông báo "Mã bí mật không đúng."
+
+> Mã bí mật được lưu trong `sessionStorage` của trình duyệt — chỉ tồn tại
+> trong tab hiện tại, **mất khi đóng tab**. Nhấn **Đăng xuất** ở góc trên để
+> xoá ngay.
+
+### 5.3 Trang quản lý báo cáo
+
+Sau khi đăng nhập, màn hình hiển thị:
+
+- **4 thẻ thống kê** ở đầu trang: *Chờ xử lý* / *Đã xem* / *Đã sửa* / *Đã bỏ
+  qua* — lấy từ `GET /api/admin/questions/reports/summary` (xem mục 4.2).
+- **Bộ lọc trạng thái** (dropdown "Tất cả trạng thái" / `PENDING` / `REVIEWED`
+  / `FIXED` / `DISMISSED`) — đổi filter sẽ load lại danh sách từ trang 1.
+- **Danh sách báo cáo**, mỗi dòng gồm: nhãn trạng thái, lý do báo cáo, mã câu
+  hỏi (`questionId`), mô tả (nếu có), thời gian gửi, và 3 nút hành động **Đã
+  xem** / **Đã sửa** / **Bỏ qua**.
+- **Phân trang** 20 báo cáo/trang ở cuối danh sách.
+
+**Đổi trạng thái 1 báo cáo:**
+1. Nhấn nút trạng thái mong muốn (ví dụ **Đã sửa**) trên dòng báo cáo.
+2. Hệ thống gọi `PATCH /api/admin/questions/reports/:id` (xem mục 4.3) và tải
+   lại cả 4 thẻ thống kê + danh sách.
+3. Nếu thao tác này khiến câu hỏi liên quan đạt ≥ 5 báo cáo `PENDING`, một
+   banner màu xanh sẽ hiện: **"Câu hỏi liên quan đã bị tự động ẩn do vượt
+   ngưỡng báo cáo."** — xem mục 4.3 để khôi phục thủ công nếu cần.
+
+### 5.4 Khi nào dùng Dashboard, khi nào dùng API trực tiếp?
+
+| Tình huống | Dùng |
+|------------|------|
+| Xử lý báo cáo hàng ngày, xem nhanh thống kê | Dashboard (`/#admin`) |
+| Import/sửa hàng loạt câu hỏi, debug, script tự động | API trực tiếp (mục 3, 4) |
+
+---
+
+## 6. Xử lý sự cố thường gặp
 
 ### Lỗi "ADMIN_UNAUTHORIZED" dù đã gửi header
 
@@ -350,6 +416,26 @@ grep ADMIN_SECRET backend/.env
 ```
 
 **Nguyên nhân 2:** Header sai tên — phải là `X-Admin-Secret` (phân biệt hoa/thường).
+
+---
+
+### Admin Dashboard (`/#admin`) báo "Mã bí mật không đúng"
+
+Trang đăng nhập xác thực bằng cách gọi thử `GET /api/admin/questions/reports/summary`
+với giá trị vừa nhập — nếu API trả `401`/`403` thì hiện thông báo này. Nguyên
+nhân giống lỗi `ADMIN_UNAUTHORIZED` ở trên: kiểm tra `ADMIN_SECRET` trong
+`backend/.env` có khớp với giá trị đang nhập, và backend đã được khởi động
+lại sau khi đổi `.env` chưa.
+
+---
+
+### Người dùng báo lỗi "Bạn cần làm câu hỏi này trước khi báo cáo"
+
+Đây là lỗi `403 QUESTION_NOT_ATTEMPTED_FOR_REPORT` — hệ thống chỉ cho phép báo
+cáo câu hỏi người dùng **đã từng trả lời** (có bản ghi `user_question_history`).
+Đây là hành vi **mong muốn** (chống spam báo cáo câu chưa từng thấy), không
+phải lỗi hệ thống. Hướng dẫn người dùng làm câu hỏi đó trong 1 phiên ôn tập
+trước, sau đó báo cáo lại.
 
 ---
 

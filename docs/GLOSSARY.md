@@ -101,6 +101,94 @@ Request B ──────────────────────► 
 
 ---
 
+## Admin Dashboard – Quản lý báo cáo câu hỏi — Thuật ngữ kỹ thuật
+
+### Anti-spam qua `user_question_history` (chặn báo cáo câu chưa làm)
+**Định nghĩa**: Trước khi cho phép tạo báo cáo, kiểm tra user đã từng có bản ghi
+lịch sử làm bài cho câu hỏi đó chưa. Chưa làm → không cho báo cáo.
+
+**Trong dự án này**: `reportQuestion()` gọi
+`prisma.userQuestionHistory.findUnique({ where: { userId_questionId: { userId, questionId } } })`.
+Nếu `null` → throw `QuestionNotAttemptedForReportError` (`403 QUESTION_NOT_ATTEMPTED_FOR_REPORT`).
+Đây là cùng composite key đã dùng để chống trùng lặp ở `POST /practice/answer`,
+nên không cần thêm bảng/cột mới.
+
+**Ví dụ**:
+```
+User chưa từng làm câu Q5
+  → POST /practice/questions/Q5/report { reason: "BAD_CONTENT" }
+  → userQuestionHistory.findUnique({ userId, questionId: "Q5" }) === null
+  → 403 QUESTION_NOT_ATTEMPTED_FOR_REPORT
+```
+
+**Tại sao cần?**: Nếu không chặn, 1 user có thể gửi nhiều báo cáo cho các câu
+họ chưa từng thấy để cố tình đẩy số PENDING của 1 câu vượt
+`AUTO_HIDE_REPORT_THRESHOLD` (xem [[Auto-Hide]]) → ẩn câu hỏi của người khác
+một cách ác ý. Xem chi tiết quyết định ở `docs/adr/001-chan-bao-cao-cau-chua-lam.md`.
+
+---
+
+### Helper dùng chung `autoHideIfThresholdExceeded`
+**Định nghĩa**: Refactor — gộp logic "đếm báo cáo PENDING rồi tự ẩn câu hỏi nếu
+vượt ngưỡng" thành 1 method `private` dùng chung, thay vì lặp lại ở nhiều nơi.
+
+**Trong dự án này**: Cả `reportQuestion()` (user gửi báo cáo mới) và
+`updateReport()` (admin đổi trạng thái 1 báo cáo, có thể đưa nó về lại
+`PENDING`) đều gọi `this.autoHideIfThresholdExceeded(questionId)` ở cuối. Helper
+này còn `console.warn` mỗi lần auto-hide xảy ra, giúp dễ trace trong log.
+
+**Tại sao gộp lại?**: Trước đây 2 nơi tự viết cùng đoạn `count` + `update`
+giống nhau — nếu sau này đổi ngưỡng hoặc thêm log, dễ sửa thiếu 1 chỗ.
+
+---
+
+### Response shape "flatten" vs "nested" (breaking change)
+**Định nghĩa**: Cách tổ chức field trong JSON response — "nested" là gom các
+field liên quan vào 1 object con (`{ byStatus: { PENDING: 1, ... } }`),
+"flatten" là đưa thẳng ra ngoài cùng cấp (`{ pending: 1, reviewed: 2, ... }`).
+
+**Trong dự án này**: `GET /api/admin/questions/reports/summary` đổi từ
+`{ byStatus: {...}, topReportedQuestions }` sang
+`{ pending, reviewed, fixed, dismissed, topReportedQuestions }`. Đây là
+**breaking change** — bất kỳ client cũ đọc `result.byStatus.PENDING` sẽ nhận
+`undefined` sau khi đổi.
+
+**Tại sao đổi?**: Dashboard FE cần đúng 4 số cho 4 thẻ thống kê — đọc
+`summary.pending` trực tiếp gọn hơn `summary.byStatus.PENDING` và khớp với
+`ReportStatus` đã định nghĩa (luôn đủ 4 khóa, không cần optional-check).
+
+---
+
+### Admin Dashboard dùng `sessionStorage` + `ADMIN_SECRET` (không qua Firebase)
+**Định nghĩa**: Trang `/#admin` xác thực bằng một secret tĩnh gửi qua header
+`X-Admin-Secret`, lưu ở `sessionStorage` (mất khi đóng tab) — hoàn toàn tách
+biệt với luồng đăng nhập Firebase của user thường.
+
+**Trong dự án này**: `App` đọc `window.location.hash === '#admin'` ngay lúc
+khởi tạo state (`useState(() => ...)`) để bỏ qua `onAuthStateChanged` của
+Firebase. `AdminLoginPage` không có endpoint "verify secret" riêng — nó gọi
+thử `GET /reports/summary`; nếu trả `401`/`403` thì coi là sai secret.
+`AdminReportsPage` cũng tự đăng xuất nếu bất kỳ request nào trả `401`/`403`
+giữa phiên (secret bị thu hồi).
+
+**Tại sao `sessionStorage` không phải `localStorage`?**: `sessionStorage` tự
+xoá khi đóng tab — giảm rủi ro lộ secret trên máy dùng chung (máy tính công ty,
+phòng net...).
+
+---
+
+### `parseJsonBody` — đọc response rỗng an toàn
+**Định nghĩa**: Helper đọc `response.text()` trước, nếu rỗng thì trả `{}`,
+nếu không thì `JSON.parse()`. Tránh lỗi khi gọi trực tiếp `response.json()`
+trên body rỗng (ví dụ `204 No Content`, hoặc lỗi proxy trả body trống).
+
+**Trong dự án này**: `frontend/src/lib/api.ts` — dùng trong `request()`,
+`loginWithFirebaseToken()`, và `adminRequest()`. Trước đây gọi trực tiếp
+`await res.json()` sẽ throw `SyntaxError: Unexpected end of JSON input` nếu
+body rỗng, che mất lỗi HTTP thật (vd. `401`) bằng một lỗi parse JSON gây nhiễu.
+
+---
+
 ## Bug đã phát hiện và fix trong quá trình review
 
 ### Bug: ID không nhất quán giữa lưu điểm và đọc điểm
