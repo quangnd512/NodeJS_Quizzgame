@@ -466,6 +466,9 @@ function PracticePage({
     setLoadingSubj(subject);
     try {
       const data = await startPracticeSession(sessionToken, subject);
+      // Date.now() ghi nhan moc thoi gian bat dau session trong event handler
+      // (khong phai luc render), can de tinh thoi gian lam bai.
+      // eslint-disable-next-line react-hooks/purity
       setSession({ data, startedAt: Date.now(), currentIndex: 0, answers: new Map() });
       setSub('session');
     } catch (err) { onError(err); }
@@ -628,6 +631,10 @@ function PracticeSessionScreen({
   // tu reset trang thai bao loi moi khi sang cau khac, tranh hien thi nham
   // thong bao "Da gui bao loi" cua cau truoc cho cau hien tai.
   useEffect(() => {
+    // reset 5 state UI cuc bo theo question.id, khong co nguon "external
+    // system" nao de dong bo, can chay dong bo de tranh nhap nhay UI giua
+    // cac cau.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setShowReport(false);
     setReportSent(false);
     setReportMessage('Đã gửi báo lỗi');
@@ -982,7 +989,8 @@ function AdminReportsPage({ secret, onLogout }: { secret: string; onLogout: () =
     }
   }
 
-  useEffect(() => { void load(); }, [statusFilter, page]);  // eslint-disable-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- load() goi API va setState de dong bo voi statusFilter/page
+  useEffect(() => { void load(); }, [statusFilter, page]);
 
   async function handleStatusChange(reportId: string, status: ReportStatus) {
     setBusyId(reportId);
