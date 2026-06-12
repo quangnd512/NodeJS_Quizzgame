@@ -5,10 +5,11 @@ import {
   loginWithFirebaseToken, getMyProfile, updateSubjects, updateProfile, ApiError,
   startPracticeSession, answerQuestion, completeSession, reportQuestion,
   getPracticeHistory, getPracticeStats,
+  adminListReports, adminUpdateReportStatus, adminGetReportsSummary,
 } from './lib/api.js';
 import type {
-  UserProfile, PracticeQuestion, StartSessionResult, AnswerResult, CompleteResult,
-  HistoryItem, SubjectStat,
+  UserProfile, StartSessionResult, AnswerResult, CompleteResult,
+  HistoryItem, SubjectStat, QuestionReportDto, ReportsSummary, ReportStatus,
 } from './lib/api.js';
 import './App.css';
 
@@ -26,7 +27,7 @@ const SUBJECTS = [
   { id: 'GDCD', name: 'Giáo dục công dân', emoji: '⚖️' },
 ];
 
-type Screen = 'loading' | 'login' | 'onboarding' | 'profile' | 'practice';
+type Screen = 'loading' | 'login' | 'onboarding' | 'profile' | 'practice' | 'admin';
 
 function getInitials(name: string | null, email: string | null): string {
   const src = name ?? email ?? '?';
@@ -36,13 +37,17 @@ function getInitials(name: string | null, email: string | null): string {
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [screen, setScreen]             = useState<Screen>('loading');
+  const [screen, setScreen]             = useState<Screen>(() =>
+    window.location.hash === '#admin' ? 'admin' : 'loading',
+  );
   const [_firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [sessionToken, setSessionToken] = useState('');
   const [profile, setProfile]           = useState<UserProfile | null>(null);
   const [globalError, setGlobalError]   = useState('');
 
   useEffect(() => {
+    // Trang Admin chay doc lap, khong can dang nhap Firebase
+    if (screen === 'admin') return;
     const unsub = onAuthStateChanged(firebaseAuth, async (user) => {
       setFirebaseUser(user);
       if (!user) {
@@ -69,7 +74,7 @@ export default function App() {
       }
     });
     return unsub;
-  }, []);
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleApiError(err: unknown) {
     if (err instanceof ApiError && err.status === 401) {
@@ -97,6 +102,7 @@ export default function App() {
         </div>
       )}
 
+      {screen === 'admin'      && <AdminPage />}
       {screen === 'loading'    && <LoadingScreen />}
       {screen === 'login'      && <LoginPage onError={(m) => setGlobalError(m)} />}
       {screen === 'onboarding' && (
@@ -605,6 +611,9 @@ function PracticeSessionScreen({
   const [answerBusy, setAnswerBusy] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [reportSent, setReportSent] = useState(false);
+  const [reportMessage, setReportMessage] = useState('Đã gửi báo lỗi');
+  const [reportError, setReportError] = useState('');
+  const [reportDesc, setReportDesc] = useState('');
 
   useEffect(() => {
     if (timeLeft <= 0) return;
@@ -617,6 +626,17 @@ function PracticeSessionScreen({
     return () => clearInterval(id);
   }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Component khong unmount giua cac cau hoi (chi doi currentIndex) nen phai
+  // tu reset trang thai bao loi moi khi sang cau khac, tranh hien thi nham
+  // thong bao "Da gui bao loi" cua cau truoc cho cau hien tai.
+  useEffect(() => {
+    setShowReport(false);
+    setReportSent(false);
+    setReportMessage('Đã gửi báo lỗi');
+    setReportError('');
+    setReportDesc('');
+  }, [question?.id]);
+
   async function handleOptionClick(idx: number) {
     if (answered || answerBusy || !question) return;
     setAnswerBusy(true);
@@ -626,11 +646,25 @@ function PracticeSessionScreen({
 
   async function sendReport(reason: typeof REPORT_REASONS[number]['value']) {
     if (!question) return;
+    setReportError('');
     try {
-      await reportQuestion(sessionToken, question.id, reason, data.sessionId);
+      await reportQuestion(sessionToken, question.id, reason, reportDesc.trim() || undefined);
+      setReportMessage('Đã gửi báo lỗi');
       setReportSent(true);
       setShowReport(false);
-    } catch (err) { onError(err); }
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'REPORT_ALREADY_SUBMITTED') {
+        setReportMessage('Bạn đã báo cáo câu này rồi');
+        setReportSent(true);
+        setShowReport(false);
+        return;
+      }
+      if (err instanceof ApiError && err.code === 'QUESTION_NOT_ATTEMPTED_FOR_REPORT') {
+        setReportError('Bạn cần làm câu hỏi này trước khi báo cáo.');
+        return;
+      }
+      onError(err);
+    }
   }
 
   const mins = String(Math.floor(timeLeft / 60)).padStart(2, '0');
@@ -712,11 +746,19 @@ function PracticeSessionScreen({
           {showReport ? (
             <div className="report-box">
               <p className="report-title">Báo lỗi câu hỏi</p>
+              <textarea
+                className="report-desc"
+                placeholder="Mô tả thêm (không bắt buộc)"
+                value={reportDesc}
+                onChange={(e) => setReportDesc(e.target.value)}
+                maxLength={500}
+              />
               {REPORT_REASONS.map((r) => (
                 <button key={r.value} className="report-reason" onClick={() => void sendReport(r.value)}>
                   {r.label}
                 </button>
               ))}
+              {reportError && <p className="report-error">{reportError}</p>}
               <button className="btn-link" onClick={() => setShowReport(false)}>Huỷ</button>
             </div>
           ) : (
@@ -729,7 +771,7 @@ function PracticeSessionScreen({
       )}
       {reportSent && (
         <p style={{ padding: '0 1.25rem .5rem', fontSize: '.78rem', color: 'var(--success)' }}>
-          ✓ Đã gửi báo lỗi
+          ✓ {reportMessage}
         </p>
       )}
 
@@ -809,5 +851,238 @@ function GoogleIcon() {
       <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
       <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
     </svg>
+  );
+}
+
+// ─── Admin: Quan ly bao cao cau hoi ────────────────────────────────────────────
+
+const ADMIN_PAGE_SIZE = 20;
+const ADMIN_REPORT_STATUSES: ReportStatus[] = ['PENDING', 'REVIEWED', 'FIXED', 'DISMISSED'];
+
+const REPORT_STATUS_LABEL: Record<string, string> = {
+  PENDING:   'Chờ xử lý',
+  REVIEWED:  'Đã xem',
+  FIXED:     'Đã sửa',
+  DISMISSED: 'Đã bỏ qua',
+};
+
+const REPORT_REASON_LABEL: Record<string, string> = Object.fromEntries(
+  REPORT_REASONS.map((r) => [r.value, r.label]),
+);
+
+function AdminPage() {
+  const [secret, setSecret] = useState(() => sessionStorage.getItem('adminSecret') ?? '');
+
+  function handleLoginSuccess(value: string) {
+    sessionStorage.setItem('adminSecret', value);
+    setSecret(value);
+  }
+
+  function handleLogout() {
+    sessionStorage.removeItem('adminSecret');
+    setSecret('');
+  }
+
+  if (!secret) {
+    return <AdminLoginPage onSuccess={handleLoginSuccess} />;
+  }
+  return <AdminReportsPage secret={secret} onLogout={handleLogout} />;
+}
+
+// ─── AdminLoginPage ─────────────────────────────────────────────────────────────
+
+function AdminLoginPage({ onSuccess }: { onSuccess: (secret: string) => void }) {
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleSubmit() {
+    const value = input.trim();
+    if (!value || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await adminGetReportsSummary(value);
+      onSuccess(value);
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        setError('Mã bí mật không đúng.');
+      } else {
+        setError(err instanceof Error ? err.message : 'Lỗi không xác định');
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="screen screen-center screen-login">
+      <div className="login-card">
+        <div className="brand">
+          <div className="brand-icon">A</div>
+          <h1 className="brand-name">QuizzGame Admin</h1>
+          <p className="brand-sub">Quản lý báo cáo câu hỏi</p>
+        </div>
+
+        <hr className="divider" />
+
+        <p className="login-headline">Đăng nhập quản trị</p>
+        <label className="form-field">
+          <span className="field-label">Mã bí mật (Admin Secret)</span>
+          <input
+            className="field-input"
+            type="password"
+            value={input}
+            placeholder="Nhập mã bí mật"
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void handleSubmit(); }}
+          />
+        </label>
+
+        {error && <p className="report-error">{error}</p>}
+
+        <button className="btn-primary btn-lg" disabled={busy || !input.trim()} onClick={() => void handleSubmit()}>
+          {busy && <Spinner />}{busy ? 'Đang kiểm tra…' : 'Đăng nhập'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── AdminReportsPage ───────────────────────────────────────────────────────────
+
+function AdminReportsPage({ secret, onLogout }: { secret: string; onLogout: () => void }) {
+  const [summary, setSummary] = useState<ReportsSummary | null>(null);
+  const [items, setItems] = useState<QuestionReportDto[]>([]);
+  const [total, setTotal] = useState(0);
+  const [statusFilter, setStatusFilter] = useState('');
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [busyId, setBusyId] = useState('');
+
+  async function load() {
+    setLoading(true);
+    setError('');
+    try {
+      const [s, r] = await Promise.all([
+        adminGetReportsSummary(secret),
+        adminListReports(secret, { status: statusFilter || undefined, page, limit: ADMIN_PAGE_SIZE }),
+      ]);
+      setSummary(s);
+      setItems(r.items);
+      setTotal(r.total);
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        onLogout();
+        return;
+      }
+      setError(err instanceof Error ? err.message : 'Lỗi không xác định');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { void load(); }, [statusFilter, page]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleStatusChange(reportId: string, status: ReportStatus) {
+    setBusyId(reportId);
+    setNotice('');
+    try {
+      const result = await adminUpdateReportStatus(secret, reportId, status);
+      if (result.autoHidden) setNotice('Câu hỏi liên quan đã bị tự động ẩn do vượt ngưỡng báo cáo.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Lỗi không xác định');
+    } finally {
+      setBusyId('');
+    }
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / ADMIN_PAGE_SIZE));
+
+  return (
+    <div className="screen screen-admin">
+      <div className="admin-header">
+        <h2 className="page-title">Quản lý báo cáo câu hỏi</h2>
+        <button className="btn-link" onClick={onLogout}>Đăng xuất</button>
+      </div>
+
+      {summary && (
+        <div className="admin-stats">
+          <div className="admin-stat-card">
+            <span className="admin-stat-num">{summary.pending}</span>
+            <span className="admin-stat-label">Chờ xử lý</span>
+          </div>
+          <div className="admin-stat-card">
+            <span className="admin-stat-num">{summary.reviewed}</span>
+            <span className="admin-stat-label">Đã xem</span>
+          </div>
+          <div className="admin-stat-card">
+            <span className="admin-stat-num">{summary.fixed}</span>
+            <span className="admin-stat-label">Đã sửa</span>
+          </div>
+          <div className="admin-stat-card">
+            <span className="admin-stat-num">{summary.dismissed}</span>
+            <span className="admin-stat-label">Đã bỏ qua</span>
+          </div>
+        </div>
+      )}
+
+      <div className="admin-filter">
+        <select
+          className="field-input"
+          value={statusFilter}
+          onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+        >
+          <option value="">Tất cả trạng thái</option>
+          {ADMIN_REPORT_STATUSES.map((s) => (
+            <option key={s} value={s}>{REPORT_STATUS_LABEL[s]}</option>
+          ))}
+        </select>
+      </div>
+
+      {error && <p className="report-error admin-msg">{error}</p>}
+      {notice && <p className="admin-notice admin-msg">{notice}</p>}
+
+      {loading ? (
+        <div className="screen-center"><Spinner /></div>
+      ) : items.length === 0 ? (
+        <p className="empty admin-msg">Không có báo cáo nào.</p>
+      ) : (
+        <div className="admin-report-list">
+          {items.map((r) => (
+            <div key={r.id} className="admin-report-row">
+              <div className="admin-report-top">
+                <span className={`admin-status-badge status-${r.status.toLowerCase()}`}>
+                  {REPORT_STATUS_LABEL[r.status] ?? r.status}
+                </span>
+                <span className="admin-report-reason">{REPORT_REASON_LABEL[r.reason] ?? r.reason}</span>
+              </div>
+              <p className="admin-report-q">Câu hỏi: <code>{r.questionId}</code></p>
+              {r.description && <p className="admin-report-desc">{r.description}</p>}
+              <p className="admin-report-time">{new Date(r.createdAt).toLocaleString('vi-VN')}</p>
+              <div className="admin-report-actions">
+                <button className="btn-secondary" disabled={busyId === r.id || r.status === 'REVIEWED'}
+                  onClick={() => void handleStatusChange(r.id, 'REVIEWED')}>Đã xem</button>
+                <button className="btn-secondary" disabled={busyId === r.id || r.status === 'FIXED'}
+                  onClick={() => void handleStatusChange(r.id, 'FIXED')}>Đã sửa</button>
+                <button className="btn-secondary" disabled={busyId === r.id || r.status === 'DISMISSED'}
+                  onClick={() => void handleStatusChange(r.id, 'DISMISSED')}>Bỏ qua</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="admin-pagination">
+          <button className="btn-secondary" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>← Trước</button>
+          <span>Trang {page}/{totalPages}</span>
+          <button className="btn-secondary" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Sau →</button>
+        </div>
+      )}
+    </div>
   );
 }

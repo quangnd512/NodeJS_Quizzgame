@@ -131,6 +131,16 @@ export interface QuestionReportDto {
   createdAt: Date;
 }
 
+/** Tong hop thong ke bao cao cau hoi (GET /api/admin/questions/reports/summary). */
+export interface QuestionReportSummary {
+  pending: number;
+  reviewed: number;
+  fixed: number;
+  dismissed: number;
+  /** Top 10 cau hoi bi bao cao nhieu nhat (moi trang thai). */
+  topReportedQuestions: Array<{ questionId: string; count: number }>;
+}
+
 /** Ly do bao cao cau hoi — gia tri hop le. */
 export const REPORT_REASONS = ['WRONG_ANSWER', 'BAD_CONTENT', 'TYPO', 'OTHER'] as const;
 export type ReportReason = (typeof REPORT_REASONS)[number];

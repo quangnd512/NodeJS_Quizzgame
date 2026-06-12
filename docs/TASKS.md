@@ -7,6 +7,7 @@
 |----|-----------|-----------|--------|-----------------|
 | 001 | Auth + Onboarding | ✅ Done | feature/auth-onboarding | (trước khi áp dụng workflow 9-session) |
 | 002 | Practice Module (Ôn tập thích nghi) | ✅ Done | feature/practice-module | 2026-06-09 |
+| 003 | Admin Dashboard – Quản lý báo cáo câu hỏi | ✅ Done | feature/question-reports | 2026-06-13 |
 
 ---
 

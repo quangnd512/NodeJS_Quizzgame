@@ -1,0 +1,960 @@
+openapi: 3.0.3
+info:
+  title: QuizzGame API — Practice Module & Admin
+  version: "1.1.0"
+  description: >-
+    Contract cho module Ôn tập (Practice) và các endpoint Admin liên quan
+    (quản lý câu hỏi + xử lý báo cáo câu hỏi). Khớp với
+    `docs/FEATURE_LOG.md` Section 4 (Practice Module) và Section 5
+    (Admin Dashboard – Quản lý báo cáo câu hỏi).
+
+    Các endpoint khác của hệ thống (Auth, Onboarding, Points, Leaderboard...)
+    chưa được mô tả trong file này.
+
+servers:
+  - url: http://localhost:4000
+    description: Local dev
+
+tags:
+  - name: Practice
+    description: Endpoint cho người dùng đã đăng nhập (session token)
+  - name: Admin
+    description: Endpoint quản trị (X-Admin-Secret)
+
+security: []
+
+paths:
+  # ───────────────────────────── Practice ─────────────────────────────
+  /api/practice/start:
+    get:
+      tags: [Practice]
+      summary: Bắt đầu phiên ôn tập mới
+      security: [{ SessionToken: [] }]
+      parameters:
+        - name: subject
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/SubjectId'
+      responses:
+        '201':
+          description: Phiên ôn tập đã được tạo (15 câu hỏi)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartSessionResponse'
+        '400':
+          description: Thiếu query param `subject`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: INVALID_REQUEST_BODY
+                message: 'Thieu query param "subject".'
+        '403':
+          description: Môn không hợp lệ hoặc user chưa đăng ký
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: SUBJECT_NOT_REGISTERED
+                message: "Ban chua dang ky mon hoc 'TOAN'."
+        '404':
+          description: Môn chưa có câu hỏi nào trong DB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: SUBJECT_HAS_NO_QUESTIONS
+                message: "Mon hoc 'TOAN' chua co cau hoi nao."
+        '429':
+          description: Vượt quá 10 phiên/giờ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: PRACTICE_RATE_LIMIT_EXCEEDED
+                message: 'Ban da tao qua nhieu phien on tap trong 1 gio. Vui long thu lai sau.'
+
+  /api/practice/answer:
+    post:
+      tags: [Practice]
+      summary: Nộp đáp án cho 1 câu hỏi trong phiên (idempotent)
+      security: [{ SessionToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnswerRequest'
+            example:
+              sessionId: 550e8400-e29b-41d4-a716-446655440000
+              questionId: 6e1f2c3a-1111-4a3a-9b6e-9b6c1a2b3c4d
+              selectedOption: 0
+      responses:
+        '200':
+          description: Kết quả chấm câu (gọi lại cùng câu → trả lại kết quả cũ)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnswerResponse'
+        '400':
+          description: Body không hợp lệ hoặc câu hỏi không thuộc phiên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidBody:
+                  value: { error: INVALID_REQUEST_BODY, message: 'Du lieu khong hop le' }
+                notInSession:
+                  value: { error: QUESTION_NOT_IN_SESSION, message: "Cau hoi '...' khong nam trong phien on tap nay." }
+        '403':
+          description: Phiên thuộc về user khác
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: PRACTICE_SESSION_NOT_OWNED
+                message: "Phien on tap '...' khong thuoc ve ban."
+        '404':
+          description: Không tìm thấy phiên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: PRACTICE_SESSION_NOT_FOUND
+                message: "Khong tim thay phien on tap '...'."
+        '409':
+          description: Phiên đã hoàn thành
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: PRACTICE_SESSION_ALREADY_COMPLETED
+                message: "Phien on tap '...' da hoan thanh."
+        '410':
+          description: Phiên đã quá 17 phút
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: PRACTICE_SESSION_EXPIRED
+                message: "Phien on tap '...' da het thoi gian (qua 17 phut)."
+
+  /api/practice/complete:
+    post:
+      tags: [Practice]
+      summary: Hoàn thành phiên ôn tập, tính điểm và cộng điểm tích lũy
+      security: [{ SessionToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId]
+              properties:
+                sessionId:
+                  type: string
+                  format: uuid
+            example:
+              sessionId: 550e8400-e29b-41d4-a716-446655440000
+      responses:
+        '200':
+          description: Kết quả phiên (điểm, đáp án từng câu)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompleteSessionResponse'
+        '403':
+          description: Phiên thuộc về user khác
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Không tìm thấy phiên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Phiên đã hoàn thành trước đó
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/practice/session/{id}:
+    get:
+      tags: [Practice]
+      summary: Lấy chi tiết phiên đang dở (hỗ trợ resume)
+      security: [{ SessionToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      responses:
+        '200':
+          description: Chi tiết phiên + các câu đã trả lời
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionDetailResponse'
+        '403':
+          description: Phiên thuộc về user khác
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Không tìm thấy phiên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/practice/history:
+    get:
+      tags: [Practice]
+      summary: Lịch sử các phiên ôn tập đã hoàn thành
+      security: [{ SessionToken: [] }]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: Danh sách phiên đã hoàn thành (phân trang)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedHistory'
+
+  /api/practice/stats:
+    get:
+      tags: [Practice]
+      summary: Thống kê ôn tập theo môn học
+      security: [{ SessionToken: [] }]
+      parameters:
+        - name: subject
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/SubjectId'
+      responses:
+        '200':
+          description: Danh sách thống kê (1 phần tử/môn nếu không truyền `subject`)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PracticeStats'
+
+  /api/practice/questions/{id}/explain:
+    get:
+      tags: [Practice]
+      summary: Xem đáp án đúng + giải thích (chỉ cho câu đã từng làm)
+      security: [{ SessionToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      responses:
+        '200':
+          description: Đáp án đúng và giải thích
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  correctAnswer:
+                    type: integer
+                    example: 0
+                  explanation:
+                    type: string
+                    nullable: true
+                    example: 'Dieu kien: x-1 >= 0 <=> x >= 1 -> TXD: [1;+vc)'
+        '403':
+          description: Chưa từng làm câu hỏi này
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: QUESTION_NOT_ATTEMPTED
+                message: "Ban chua lam cau hoi '...' trong bat ky phien nao. Khong the xem giai thich."
+        '404':
+          description: questionId không tồn tại
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/practice/questions/{id}/report:
+    post:
+      tags: [Practice]
+      summary: Báo cáo câu hỏi sai/có vấn đề
+      description: >-
+        Chỉ cho phép báo cáo câu hỏi mà người dùng **đã từng làm** (có bản
+        ghi `user_question_history`). Mỗi user chỉ báo cáo được 1 lần/câu.
+        Khi 1 câu hỏi đạt `AUTO_HIDE_REPORT_THRESHOLD` (5) báo cáo `PENDING`,
+        câu hỏi sẽ tự động bị ẩn (`isActive = false`).
+      security: [{ SessionToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportQuestionRequest'
+            example:
+              reason: WRONG_ANSWER
+              description: 'Dap an C moi la dung vi y'' = 3x^2 - 3 > 0 khi x < -1 hoac x > 1'
+      responses:
+        '201':
+          description: Báo cáo đã được tạo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Da gui bao cao thanh cong.
+        '400':
+          description: '`reason` không hợp lệ hoặc `description` quá 500 ký tự'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: INVALID_REQUEST_BODY
+                message: 'Du lieu khong hop le'
+        '403':
+          description: User chưa từng làm câu hỏi này (mới thêm)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: QUESTION_NOT_ATTEMPTED_FOR_REPORT
+                message: "Ban chi co the bao cao cau hoi da tung lam. Ban chua lam cau hoi '...'."
+        '404':
+          description: questionId không tồn tại
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: QUESTION_NOT_FOUND
+                message: "Khong tim thay cau hoi '...'."
+        '409':
+          description: Đã báo cáo câu hỏi này trước đó
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: REPORT_ALREADY_SUBMITTED
+                message: 'Ban da bao cao cau hoi nay roi.'
+
+  # ───────────────────────────── Admin: câu hỏi ─────────────────────────────
+  /api/admin/questions:
+    get:
+      tags: [Admin]
+      summary: Danh sách câu hỏi (phân trang, lọc)
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - name: subject
+          in: query
+          schema: { $ref: '#/components/schemas/SubjectId' }
+        - name: difficulty
+          in: query
+          schema: { type: integer, enum: [1, 2, 3] }
+        - name: isActive
+          in: query
+          schema: { type: boolean }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Danh sách câu hỏi
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/QuestionFullDto' }
+                  total: { type: integer, example: 150 }
+                  page: { type: integer, example: 1 }
+                  limit: { type: integer, example: 20 }
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+    post:
+      tags: [Admin]
+      summary: Tạo 1 câu hỏi
+      security: [{ AdminSecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateQuestionInput'
+      responses:
+        '201':
+          description: Câu hỏi đã tạo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionFullDto'
+        '400':
+          description: Body không hợp lệ (xem `details`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+
+  /api/admin/questions/bulk:
+    post:
+      tags: [Admin]
+      summary: Import hàng loạt câu hỏi (all-or-nothing, tối đa 500 câu)
+      security: [{ AdminSecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [questions]
+              properties:
+                questions:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items:
+                    $ref: '#/components/schemas/CreateQuestionInput'
+            example:
+              questions:
+                - subject: TOAN
+                  chapter: Hàm số
+                  difficulty: 2
+                  question: 'Hàm số y = x^3 - 3x đồng biến trên khoảng nào?'
+                  options: ['(-1;1)', '(-∞;-1)', '(1;+∞)', '(-∞;-1) và (1;+∞)']
+                  correctAnswer: 3
+                  explanation: "y' = 3x^2 - 3 = 3(x-1)(x+1); y' > 0 khi x < -1 hoac x > 1"
+                  examYear: 2024
+                  examCode: 'Mã đề 101'
+      responses:
+        '201':
+          description: Đã import thành công
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  inserted: { type: integer, example: 1 }
+                  questions:
+                    type: array
+                    items: { $ref: '#/components/schemas/QuestionFullDto' }
+        '400':
+          description: 1 câu lỗi → toàn bộ batch không được insert
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: INVALID_REQUEST_BODY
+                message: 'Du lieu khong hop le'
+                details:
+                  - path: [questions, 2, options]
+                    message: 'Array must contain exactly 4 element(s)'
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+
+  /api/admin/questions/{id}:
+    put:
+      tags: [Admin]
+      summary: Cập nhật câu hỏi (partial update)
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateQuestionInput'
+            example:
+              explanation: 'Giai thich da duoc cap nhat ro hon...'
+      responses:
+        '200':
+          description: Câu hỏi sau khi cập nhật
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionFullDto'
+        '400':
+          description: Body không hợp lệ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+        '404':
+          description: questionId không tồn tại
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [Admin]
+      summary: Ẩn câu hỏi (soft delete — set isActive=false)
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      responses:
+        '200':
+          description: Đã ẩn câu hỏi
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: 'Da an cau hoi thanh cong.' }
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+        '404':
+          description: questionId không tồn tại
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ───────────────── Admin: báo cáo câu hỏi (Admin Dashboard) ─────────────────
+  /api/admin/questions/reports:
+    get:
+      tags: [Admin]
+      summary: Danh sách báo cáo câu hỏi
+      description: >-
+        Được dùng bởi Admin Dashboard (`/#admin`) để hiển thị danh sách báo
+        cáo, có lọc theo trạng thái và phân trang 20/trang.
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - name: status
+          in: query
+          description: >-
+            Lọc theo trạng thái. ⚠️ Hiện chưa được validate theo
+            `REPORT_STATUSES` — giá trị không khớp sẽ trả `items: []` thay
+            vì lỗi 400 (xem `docs/FEATURE_LOG.md` Section 5).
+          schema:
+            $ref: '#/components/schemas/ReportStatus'
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Danh sách báo cáo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/QuestionReportDto' }
+                  total: { type: integer, example: 12 }
+              example:
+                items:
+                  - id: 7c1f0e7a-7e3b-4a3a-9b6e-9b6c1a2b3c4d
+                    questionId: 6e1f2c3a-1111-4a3a-9b6e-9b6c1a2b3c4d
+                    userId: 9f8e7d6c-2222-4a3a-9b6e-9b6c1a2b3c4d
+                    reason: WRONG_ANSWER
+                    description: 'Dap an C moi la dung vi...'
+                    status: PENDING
+                    createdAt: '2026-06-12T10:00:00.000Z'
+                total: 12
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+
+  /api/admin/questions/reports/summary:
+    get:
+      tags: [Admin]
+      summary: Tổng hợp thống kê báo cáo (4 thẻ số liệu trên Admin Dashboard)
+      description: >-
+        ⚠️ **Breaking change (2026-06-12):** response shape đổi từ dạng lồng
+        `{ byStatus: { PENDING, REVIEWED, FIXED, DISMISSED }, topReportedQuestions }`
+        sang dạng flatten `{ pending, reviewed, fixed, dismissed,
+        topReportedQuestions }`. Shape cũ không còn được trả về.
+      security: [{ AdminSecret: [] }]
+      responses:
+        '200':
+          description: Thống kê báo cáo theo trạng thái + top câu bị báo cáo nhiều nhất
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionReportSummary'
+              example:
+                pending: 12
+                reviewed: 5
+                fixed: 3
+                dismissed: 2
+                topReportedQuestions:
+                  - questionId: 550e8400-e29b-41d4-a716-446655440001
+                    count: 7
+                  - questionId: 550e8400-e29b-41d4-a716-446655440002
+                    count: 4
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+
+  /api/admin/questions/reports/{id}:
+    patch:
+      tags: [Admin]
+      summary: Cập nhật trạng thái 1 báo cáo
+      description: >-
+        Có thể trigger auto-hide: nếu sau khi đổi trạng thái, câu hỏi liên
+        quan có ≥ `AUTO_HIDE_REPORT_THRESHOLD` (5) báo cáo `PENDING`, server
+        tự set `question.isActive = false` và trả `autoHidden: true`.
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  $ref: '#/components/schemas/ReportStatus'
+            example:
+              status: FIXED
+      responses:
+        '200':
+          description: Báo cáo sau khi cập nhật
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  status: { $ref: '#/components/schemas/ReportStatus' }
+                  autoHidden:
+                    type: boolean
+                    description: true nếu câu hỏi liên quan vừa bị tự động ẩn
+              example:
+                id: 7c1f0e7a-7e3b-4a3a-9b6e-9b6c1a2b3c4d
+                status: FIXED
+                autoHidden: false
+        '400':
+          description: '`status` không thuộc PENDING|REVIEWED|FIXED|DISMISSED'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: INVALID_REQUEST_BODY
+                message: 'Du lieu khong hop le'
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+        '500':
+          description: >-
+            `id` không tồn tại (Prisma P2025 → middleware lỗi tập trung trả
+            500 thay vì 404 — pre-existing, xem `docs/FEATURE_LOG.md` Section 5)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    SessionToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Session token nội bộ nhận được sau khi đăng nhập Firebase (xem Section 3 - Auth)
+    AdminSecret:
+      type: apiKey
+      in: header
+      name: X-Admin-Secret
+      description: Giá trị biến môi trường `ADMIN_SECRET`
+
+  parameters:
+    IdPathParam:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    AdminUnauthorized:
+      description: Thiếu hoặc sai `X-Admin-Secret`
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: ADMIN_UNAUTHORIZED
+            message: 'Khong co quyen truy cap.'
+
+  schemas:
+    SubjectId:
+      type: string
+      enum: [TOAN, VAN, ANH, LY, HOA, SINH, SU, DIA, GDCD]
+
+    ReportReason:
+      type: string
+      enum: [WRONG_ANSWER, BAD_CONTENT, TYPO, OTHER]
+
+    ReportStatus:
+      type: string
+      enum: [PENDING, REVIEWED, FIXED, DISMISSED]
+
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Mã lỗi (dùng để ánh xạ HTTP status, xem `app.ts`)
+        message:
+          type: string
+        details:
+          type: array
+          description: Chỉ có khi `error = INVALID_REQUEST_BODY` (lỗi Zod)
+          items:
+            type: object
+            properties:
+              path:
+                type: array
+                items: {}
+              message:
+                type: string
+
+    QuestionPublicDto:
+      type: object
+      description: Câu hỏi gửi cho user khi bắt đầu/resume phiên — KHÔNG có correctAnswer/explanation
+      properties:
+        id: { type: string, format: uuid }
+        subject: { $ref: '#/components/schemas/SubjectId' }
+        chapter: { type: string, nullable: true }
+        difficulty: { type: integer, enum: [1, 2, 3] }
+        question: { type: string }
+        options:
+          type: array
+          items: { type: string }
+          minItems: 4
+          maxItems: 4
+
+    QuestionFullDto:
+      allOf:
+        - $ref: '#/components/schemas/QuestionPublicDto'
+        - type: object
+          properties:
+            correctAnswer: { type: integer, minimum: 0, maximum: 3 }
+            explanation: { type: string, nullable: true }
+            examYear: { type: integer, nullable: true }
+            examCode: { type: string, nullable: true }
+            isActive: { type: boolean }
+            createdAt: { type: string, format: date-time }
+
+    CreateQuestionInput:
+      type: object
+      required: [subject, difficulty, question, options, correctAnswer]
+      properties:
+        subject: { $ref: '#/components/schemas/SubjectId' }
+        chapter: { type: string, maxLength: 200 }
+        difficulty: { type: integer, enum: [1, 2, 3] }
+        question: { type: string, minLength: 5, maxLength: 2000 }
+        options:
+          type: array
+          items: { type: string, minLength: 1 }
+          minItems: 4
+          maxItems: 4
+        correctAnswer: { type: integer, minimum: 0, maximum: 3 }
+        explanation: { type: string, maxLength: 2000 }
+        examYear: { type: integer, minimum: 2000, maximum: 2100 }
+        examCode: { type: string, maxLength: 50 }
+
+    UpdateQuestionInput:
+      allOf:
+        - $ref: '#/components/schemas/CreateQuestionInput'
+      description: Tất cả field đều tùy chọn (partial update)
+
+    StartSessionResponse:
+      type: object
+      properties:
+        sessionId: { type: string, format: uuid }
+        subjectId: { $ref: '#/components/schemas/SubjectId' }
+        questions:
+          type: array
+          items: { $ref: '#/components/schemas/QuestionPublicDto' }
+          minItems: 15
+          maxItems: 15
+        timeLimitSeconds:
+          type: integer
+          example: 1020
+          description: 17 phút (15 phút làm bài + 2 phút buffer)
+        startedAt: { type: string, format: date-time }
+
+    AnswerRequest:
+      type: object
+      required: [sessionId, questionId, selectedOption]
+      properties:
+        sessionId: { type: string, format: uuid }
+        questionId: { type: string, format: uuid }
+        selectedOption: { type: integer, minimum: 0, maximum: 3 }
+
+    AnswerResponse:
+      type: object
+      properties:
+        isCorrect: { type: boolean }
+        correctAnswer: { type: integer }
+        explanation: { type: string, nullable: true }
+        answeredCount:
+          type: integer
+          description: Số câu đã trả lời trong phiên này
+        totalQuestions:
+          type: integer
+          example: 15
+
+    AnswerSummary:
+      type: object
+      properties:
+        questionId: { type: string, format: uuid }
+        selectedOption: { type: integer, nullable: true }
+        isCorrect: { type: boolean }
+        correctAnswer: { type: integer }
+        explanation: { type: string, nullable: true }
+
+    CompleteSessionResponse:
+      type: object
+      properties:
+        sessionId: { type: string, format: uuid }
+        score: { type: integer, example: 12 }
+        pointsEarned: { type: integer, example: 12 }
+        totalQuestions: { type: integer, example: 15 }
+        answers:
+          type: array
+          items: { $ref: '#/components/schemas/AnswerSummary' }
+
+    SessionDetailResponse:
+      type: object
+      properties:
+        sessionId: { type: string, format: uuid }
+        subjectId: { $ref: '#/components/schemas/SubjectId' }
+        questions:
+          type: array
+          items: { $ref: '#/components/schemas/QuestionPublicDto' }
+        answers:
+          type: array
+          items:
+            type: object
+            properties:
+              questionId: { type: string, format: uuid }
+              selectedOption: { type: integer, nullable: true }
+              isCorrect: { type: boolean }
+        timeRemainingSeconds:
+          type: integer
+          description: Có thể âm nếu đã quá giờ nhưng chưa complete
+        startedAt: { type: string, format: date-time }
+
+    HistoryItem:
+      type: object
+      properties:
+        sessionId: { type: string, format: uuid }
+        subjectId: { $ref: '#/components/schemas/SubjectId' }
+        score: { type: integer }
+        pointsEarned: { type: integer }
+        totalQuestions: { type: integer }
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+
+    PaginatedHistory:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/HistoryItem' }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+
+    PracticeStats:
+      type: object
+      properties:
+        subject: { $ref: '#/components/schemas/SubjectId' }
+        totalSessions: { type: integer }
+        avgScore: { type: number }
+        bestScore: { type: integer }
+        accuracyByDifficulty:
+          type: object
+          description: 'Tỉ lệ đúng (0.0–1.0) theo độ khó, key là "1"|"2"|"3"'
+          additionalProperties: { type: number }
+          example: { '1': 0.96, '2': 0.74, '3': 0.52 }
+
+    ReportQuestionRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { $ref: '#/components/schemas/ReportReason' }
+        description:
+          type: string
+          maxLength: 500
+          nullable: true
+          description: Mô tả thêm, không bắt buộc
+
+    QuestionReportDto:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        questionId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        reason: { $ref: '#/components/schemas/ReportReason' }
+        description: { type: string, nullable: true }
+        status: { $ref: '#/components/schemas/ReportStatus' }
+        createdAt: { type: string, format: date-time }
+
+    QuestionReportSummary:
+      type: object
+      description: >-
+        Response của GET /api/admin/questions/reports/summary
+        (shape mới — flatten, thay cho `{ byStatus, topReportedQuestions }` cũ)
+      properties:
+        pending: { type: integer }
+        reviewed: { type: integer }
+        fixed: { type: integer }
+        dismissed: { type: integer }
+        topReportedQuestions:
+          type: array
+          description: Top 10 câu bị báo cáo nhiều nhất (mọi trạng thái), giảm dần theo count
+          items:
+            type: object
+            properties:
+              questionId: { type: string, format: uuid }
+              count: { type: integer }

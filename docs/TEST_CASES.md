@@ -124,6 +124,7 @@
 | 4 | Báo cáo lần 2 | Cùng userId + questionId | 409 | `REPORT_ALREADY_SUBMITTED` |
 | 5 | questionId không tồn tại | UUID ngẫu nhiên | 404 | `QUESTION_NOT_FOUND` |
 | 6 | Reason không hợp lệ | `reason: "FAKE_REASON"` | 400 | `INVALID_REQUEST_BODY` |
+| 7 | User chưa từng làm câu hỏi này | questionId hợp lệ nhưng user chưa có `UserQuestionHistory` cho câu đó | 403 | `QUESTION_NOT_ATTEMPTED_FOR_REPORT` |
 
 ---
 
@@ -141,3 +142,75 @@
 | 3 | Vượt quá 500 câu | Array 501 câu | 400 | `INVALID_REQUEST_BODY` |
 | 4 | Thiếu X-Admin-Secret header | Header không có | 401 | `ADMIN_UNAUTHORIZED` |
 | 5 | X-Admin-Secret sai | Header có nhưng sai | 401 | `ADMIN_UNAUTHORIZED` |
+
+---
+
+### 8. Admin — GET /api/admin/questions/reports (Danh sách báo cáo)
+
+#### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | Lấy danh sách báo cáo (mặc định) | không truyền query | 200 + `{ items: QuestionReportDto[], total }`, mới nhất trước |
+| 2 | Lọc theo trạng thái | `?status=PENDING` | 200 + chỉ chứa report có `status: "PENDING"` |
+| 3 | Phân trang | `?page=2&limit=10` | 200 + `items` là trang 2, tối đa 10 phần tử |
+
+#### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 4 | `status` không khớp giá trị hợp lệ nào | `?status=FOO_BAR` | 200 + `{ items: [], total: 0 }` (không có report nào có status này, KHÔNG trả lỗi 400) |
+| 5 | Không có báo cáo nào trong DB | DB trống | 200 + `{ items: [], total: 0 }` |
+| 6 | `limit` vượt quá giới hạn | `?limit=1000` | 200 + `limit` bị giới hạn về tối đa 100 (theo `Math.min(100, ...)`) |
+
+#### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 7 | Thiếu X-Admin-Secret header | Header không có | 401 | `ADMIN_UNAUTHORIZED` |
+| 8 | X-Admin-Secret sai | Header có nhưng sai | 401 | `ADMIN_UNAUTHORIZED` |
+
+> ⚠️ **Lưu ý (pre-existing, ngoài phạm vi review này):** query param `status` chưa được validate theo `REPORT_STATUSES` (`PENDING|REVIEWED|FIXED|DISMISSED`). Giá trị tuỳ ý sẽ không match record nào và trả về danh sách trống thay vì lỗi `400 INVALID_REQUEST_BODY`. Đề xuất S4/S1 xem xét bổ sung validate ở lần cập nhật sau.
+
+---
+
+### 9. Admin — GET /api/admin/questions/reports/summary (Tổng hợp báo cáo)
+
+#### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | Tổng hợp số lượng theo từng trạng thái | có report ở nhiều trạng thái khác nhau | 200 + `{ pending, reviewed, fixed, dismissed, topReportedQuestions }` (đếm đúng từng trạng thái) |
+| 2 | Top câu hỏi bị báo cáo nhiều nhất | nhiều report cho cùng 1 câu hỏi | `topReportedQuestions` chứa `{ questionId, count }`, sắp giảm dần theo `count`, tối đa 10 phần tử |
+
+#### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 3 | Không có báo cáo nào trong DB | DB trống | 200 + `{ pending: 0, reviewed: 0, fixed: 0, dismissed: 0, topReportedQuestions: [] }` |
+
+#### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 4 | Thiếu X-Admin-Secret header | Header không có | 401 | `ADMIN_UNAUTHORIZED` |
+
+> ℹ️ **Lưu ý cho S4 (docs):** response shape mới là `{ pending, reviewed, fixed, dismissed, topReportedQuestions }` (flattened), thay cho shape cũ `{ byStatus: {...}, topReportedQuestions: [...] }` mô tả trong `docs/guides/admin-guide.md` (dòng ~287-302). Cần cập nhật docs cho khớp shape mới.
+
+---
+
+### 10. Admin — PATCH /api/admin/questions/reports/:id (Cập nhật trạng thái báo cáo)
+
+#### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | Đổi trạng thái từ PENDING sang REVIEWED | `{ status: "REVIEWED" }`, câu hỏi chưa đạt ngưỡng | 200 + `{ id, status: "REVIEWED", autoHidden: false }` |
+| 2 | Đổi trạng thái sang FIXED/DISMISSED | `{ status: "FIXED" }` hoặc `{ status: "DISMISSED" }` | 200 + `{ id, status, autoHidden: false }` |
+
+#### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 3 | Đổi 1 báo cáo về PENDING khiến tổng số PENDING của câu hỏi đó đạt `AUTO_HIDE_REPORT_THRESHOLD` (5) | `{ status: "PENDING" }` | 200 + `{ ..., autoHidden: true }`, đồng thời `question.isActive` → `false` |
+| 4 | `status` không hợp lệ | `{ status: "FAKE" }` | 400 + `INVALID_REQUEST_BODY` (Zod `z.enum(REPORT_STATUSES)`) |
+
+#### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 5 | Thiếu X-Admin-Secret header | Header không có | 401 | `ADMIN_UNAUTHORIZED` |
+| 6 | `id` báo cáo không tồn tại | UUID ngẫu nhiên | 500 | `INTERNAL_SERVER_ERROR` |
+
+> ⚠️ **Lưu ý (pre-existing, ngoài phạm vi review này):** `updateReport()` gọi `prisma.questionReport.update({ where: { id } })` trực tiếp — nếu `id` không tồn tại, Prisma nem `PrismaClientKnownRequestError` (P2025) và bị middleware lỗi tập trung trả về `500 INTERNAL_SERVER_ERROR` thay vì `404 REPORT_NOT_FOUND`. Đề xuất bổ sung error class riêng (ví dụ `ReportNotFoundError`) ở lần cập nhật sau.

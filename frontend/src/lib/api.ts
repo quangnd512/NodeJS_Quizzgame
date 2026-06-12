@@ -28,14 +28,22 @@ export interface SubjectEntry {
 
 /** Loi tra ve tu API (co truong `error` va `message`). */
 export class ApiError extends Error {
-  constructor(
-    public readonly code: string,
-    message: string,
-    public readonly status: number,
-  ) {
+  readonly code: string;
+  readonly status: number;
+
+  constructor(code: string, message: string, status: number) {
     super(message);
     this.name = 'ApiError';
+    this.code = code;
+    this.status = status;
   }
+}
+
+/** Doc body response an toan: tra ve {} neu body rong (vd. 204, loi proxy). */
+async function parseJsonBody<T>(res: Response): Promise<{ error?: string; message?: string } & T> {
+  const text = await res.text();
+  if (!text) return {} as { error?: string; message?: string } & T;
+  return JSON.parse(text) as { error?: string; message?: string } & T;
 }
 
 async function request<T>(
@@ -52,7 +60,7 @@ async function request<T>(
     },
   });
 
-  const body = (await res.json()) as { error?: string; message?: string } & T;
+  const body = await parseJsonBody<T>(res);
 
   if (!res.ok) {
     throw new ApiError(
@@ -72,7 +80,7 @@ export async function loginWithFirebaseToken(firebaseIdToken: string): Promise<L
     headers: { Authorization: `Bearer ${firebaseIdToken}` },
   });
 
-  const body = (await res.json()) as { error?: string; message?: string } & LoginResult;
+  const body = await parseJsonBody<LoginResult>(res);
 
   if (!res.ok) {
     throw new ApiError(body.error ?? 'UNKNOWN_ERROR', body.message ?? `Loi HTTP ${res.status}`, res.status);
@@ -188,11 +196,11 @@ export async function reportQuestion(
   token: string,
   questionId: string,
   reason: 'WRONG_ANSWER' | 'BAD_CONTENT' | 'TYPO' | 'OTHER',
-  sessionId: string,
+  description?: string,
 ): Promise<{ message: string }> {
   return request(`/api/practice/questions/${questionId}/report`, token, {
     method: 'POST',
-    body: JSON.stringify({ reason, sessionId }),
+    body: JSON.stringify({ reason, description }),
   });
 }
 
@@ -204,4 +212,80 @@ export async function getPracticeHistory(token: string): Promise<{ items: Histor
 /** GET /api/practice/stats */
 export async function getPracticeStats(token: string): Promise<SubjectStat[]> {
   return request('/api/practice/stats', token);
+}
+
+// ─── Admin: Bao cao cau hoi ─────────────────────────────────────────────────
+
+export interface QuestionReportDto {
+  id: string;
+  questionId: string;
+  userId: string;
+  reason: string;
+  description: string | null;
+  status: string;
+  createdAt: string;
+}
+
+export interface ReportsSummary {
+  pending: number;
+  reviewed: number;
+  fixed: number;
+  dismissed: number;
+  topReportedQuestions: { questionId: string; count: number }[];
+}
+
+export type ReportStatus = 'PENDING' | 'REVIEWED' | 'FIXED' | 'DISMISSED';
+
+/** Goi API admin voi header X-Admin-Secret (khong dung session token). */
+async function adminRequest<T>(path: string, secret: string, options: RequestInit = {}): Promise<T> {
+  const res = await fetch(path, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Admin-Secret': secret,
+      ...options.headers,
+    },
+  });
+
+  const body = await parseJsonBody<T>(res);
+
+  if (!res.ok) {
+    throw new ApiError(
+      body.error ?? 'UNKNOWN_ERROR',
+      body.message ?? `Loi HTTP ${res.status}`,
+      res.status,
+    );
+  }
+
+  return body;
+}
+
+/** GET /api/admin/questions/reports?status=&page=&limit= */
+export async function adminListReports(
+  secret: string,
+  params: { status?: string; page?: number; limit?: number } = {},
+): Promise<{ items: QuestionReportDto[]; total: number }> {
+  const query = new URLSearchParams();
+  if (params.status) query.set('status', params.status);
+  if (params.page) query.set('page', String(params.page));
+  if (params.limit) query.set('limit', String(params.limit));
+  const qs = query.toString();
+  return adminRequest(`/api/admin/questions/reports${qs ? `?${qs}` : ''}`, secret);
+}
+
+/** PATCH /api/admin/questions/reports/:id */
+export async function adminUpdateReportStatus(
+  secret: string,
+  reportId: string,
+  status: ReportStatus,
+): Promise<{ id: string; status: string; autoHidden: boolean }> {
+  return adminRequest(`/api/admin/questions/reports/${reportId}`, secret, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
+}
+
+/** GET /api/admin/questions/reports/summary */
+export async function adminGetReportsSummary(secret: string): Promise<ReportsSummary> {
+  return adminRequest('/api/admin/questions/reports/summary', secret);
 }

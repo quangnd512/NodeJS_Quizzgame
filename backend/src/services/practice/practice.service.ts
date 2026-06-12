@@ -19,6 +19,7 @@ import {
   PracticeSessionNotFoundError,
   PracticeSessionNotOwnedError,
   QuestionNotAttemptedError,
+  QuestionNotAttemptedForReportError,
   QuestionNotFoundError,
   QuestionNotInSessionError,
   ReportAlreadySubmittedError,
@@ -36,6 +37,7 @@ import type {
   QuestionFullDto,
   QuestionPublicDto,
   QuestionReportDto,
+  QuestionReportSummary,
   ReportStatus,
   SessionDetailResponse,
   StartSessionResponse,
@@ -47,6 +49,7 @@ import {
   MAX_SESSIONS_PER_HOUR,
   QUESTIONS_PER_DIFFICULTY,
   QUESTIONS_PER_SESSION,
+  REPORT_STATUSES,
   SESSION_TIMEOUT_SECONDS,
 } from './practice.types.js';
 
@@ -767,28 +770,13 @@ export class PracticeService {
       data: { status },
     });
 
-    // Kiem tra co can auto-hide khong
-    const pendingCount = await prisma.questionReport.count({
-      where: { questionId: report.questionId, status: 'PENDING' },
-    });
-
-    let autoHidden = false;
-    if (pendingCount >= AUTO_HIDE_REPORT_THRESHOLD) {
-      await prisma.question.update({
-        where: { id: report.questionId },
-        data: { isActive: false },
-      });
-      autoHidden = true;
-    }
+    const autoHidden = await this.autoHideIfThresholdExceeded(report.questionId);
 
     return { id: report.id, status: report.status, autoHidden };
   }
 
   /** Tong hop thong ke bao cao: so luong theo trang thai, top cau bi bao cao nhieu nhat. */
-  async getReportsSummary(): Promise<{
-    byStatus: Record<string, number>;
-    topReportedQuestions: Array<{ questionId: string; count: number }>;
-  }> {
+  async getReportsSummary(): Promise<QuestionReportSummary> {
     const [statusGroups, topReported] = await Promise.all([
       prisma.questionReport.groupBy({ by: ['status'], _count: { id: true } }),
       prisma.questionReport.groupBy({
@@ -799,13 +787,23 @@ export class PracticeService {
       }),
     ]);
 
-    const byStatus: Record<string, number> = {};
+    const counts: Record<ReportStatus, number> = {
+      PENDING: 0,
+      REVIEWED: 0,
+      FIXED: 0,
+      DISMISSED: 0,
+    };
     for (const g of statusGroups) {
-      byStatus[g.status] = g._count.id;
+      if (REPORT_STATUSES.includes(g.status as ReportStatus)) {
+        counts[g.status as ReportStatus] = g._count.id;
+      }
     }
 
     return {
-      byStatus,
+      pending: counts.PENDING,
+      reviewed: counts.REVIEWED,
+      fixed: counts.FIXED,
+      dismissed: counts.DISMISSED,
       topReportedQuestions: topReported.map((r) => ({
         questionId: r.questionId,
         count: r._count.id,
@@ -822,6 +820,12 @@ export class PracticeService {
   ): Promise<void> {
     const question = await prisma.question.findUnique({ where: { id: questionId } });
     if (!question) throw new QuestionNotFoundError(questionId);
+
+    // Chi cho phep bao cao cau hoi user da tung lam
+    const attempted = await prisma.userQuestionHistory.findUnique({
+      where: { userId_questionId: { userId, questionId } },
+    });
+    if (!attempted) throw new QuestionNotAttemptedForReportError(questionId);
 
     // Kiem tra da bao cao chua (check truoc de tranh write thua)
     const existing = await prisma.questionReport.findUnique({
@@ -840,16 +844,31 @@ export class PracticeService {
       throw err;
     }
 
-    // Kiem tra auto-hide
+    await this.autoHideIfThresholdExceeded(questionId);
+  }
+
+  /**
+   * Dem so bao cao PENDING cua 1 cau hoi, neu >= AUTO_HIDE_REPORT_THRESHOLD
+   * thi tu dong an cau hoi (isActive = false). Tra ve true neu vua an.
+   * Dung chung cho `reportQuestion` (user gui bao cao moi) va
+   * `updateReport` (admin doi trang thai mot bao cao ve PENDING).
+   */
+  private async autoHideIfThresholdExceeded(questionId: string): Promise<boolean> {
     const pendingCount = await prisma.questionReport.count({
       where: { questionId, status: 'PENDING' },
     });
-    if (pendingCount >= AUTO_HIDE_REPORT_THRESHOLD) {
-      await prisma.question.update({
-        where: { id: questionId },
-        data: { isActive: false },
-      });
-    }
+    if (pendingCount < AUTO_HIDE_REPORT_THRESHOLD) return false;
+
+    await prisma.question.update({
+      where: { id: questionId },
+      data: { isActive: false },
+    });
+    console.warn('[PracticeService] Auto-hide cau hoi do vuot nguong bao cao:', {
+      questionId,
+      pendingCount,
+      at: new Date().toISOString(),
+    });
+    return true;
   }
 
   // -------------------------------------------------------------------------
