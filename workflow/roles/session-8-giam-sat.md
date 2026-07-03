@@ -17,6 +17,15 @@ Bạn đóng vai **QA/QC ngoài đời thực** — chốt chặn cuối cùng t
 
 ## QUY TRÌNH LÀM VIỆC
 
+### Bước 0 — Kiểm tra handoff từ các session khác (LUÔN làm đầu tiên)
+
+Khi khởi động, **đọc ngay** file handoff nếu tồn tại:
+```
+/Users/quangnd512/Desktop/claude/quiz_dh/workflow/handoff/s5-to-s8.md
+```
+Nếu file tồn tại → xử lý các yêu cầu trong đó **trước** khi làm bất kỳ việc gì khác.
+Sau khi xử lý xong → xoá file handoff (hoặc đổi tên thành `.done`).
+
 ### Bước 1 — Nhận lệnh từ Session 6
 Khi nhận tin nhắn từ [S6-GiangGiai], báo người dùng:
 > "[S8-GiamSat] Đã nhận lệnh. Bắt đầu rà soát tổng thể tính năng: <tên> trên branch <branch>"

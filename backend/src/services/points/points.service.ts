@@ -354,6 +354,60 @@ export class PointsService {
     await this.writeTransactionLog(tx, userId, amount, reason, metadata);
   }
 
+  /**
+   * Tru diem trong 1 outer transaction do caller quan ly (khong tu tao $transaction).
+   * Doi ngau cua `addPointsInTx` - dung khi can tru diem ATOMIC cung voi cac thao tac
+   * khac trong cung 1 giao dich - vi du: ExamService.startExam vua tru EXAM_ENTRY_FEE
+   * vua tao ExamSession.
+   *
+   * NEU optimistic lock that bai (version da bi thay doi boi request khac):
+   * → Nem `OptimisticLockRetryableError` (exported) de caller co the catch va
+   *   retry toan bo outer transaction tu dau.
+   *
+   * @param tx     Prisma TransactionClient tu outer $transaction
+   * @param userId ID nguoi dung bi tru diem
+   * @param amount So diem can tru (phai > 0)
+   * @param reason Ly do giao dich
+   * @param metadata Du lieu bo sung (tuy chon)
+   *
+   * @throws InvalidPointsAmountError neu amount khong hop le
+   * @throws PointsInsufficientError neu so du hien tai < amount
+   * @throws OptimisticLockRetryableError neu version conflict → caller can retry
+   */
+  public async deductPointsInTx(
+    tx: PrismaTx,
+    userId: string,
+    amount: number,
+    reason: string,
+    metadata?: Prisma.InputJsonValue,
+  ): Promise<void> {
+    this.assertNonEmptyString(userId, 'userId');
+    this.assertNonEmptyString(reason, 'reason');
+    this.assertPositiveInteger(amount, 'amount');
+
+    const current = await this.ensureUserPointsRecord(tx, userId);
+
+    if (current.currentPoints < amount) {
+      // Khong du diem -> nem loi nghiep vu ro rang, KHONG sua DB.
+      throw new PointsInsufficientError(userId, amount, current.currentPoints);
+    }
+
+    const newBalance = current.currentPoints - amount;
+
+    const result = await tx.userPoints.updateMany({
+      where: { userId, version: current.version },
+      data: { currentPoints: newBalance, version: { increment: 1 } },
+    });
+
+    if (result.count === 0) {
+      // Version da thay doi — bao hieu caller can retry outer transaction.
+      throw new OptimisticLockRetryableError();
+    }
+
+    // Luu delta la SO AM de phan anh dung ban chat "tru diem" trong nhat ky.
+    await this.writeTransactionLog(tx, userId, -amount, reason, metadata);
+  }
+
   // --------------------------------------------------------------------
   // NOI BO (PRIVATE HELPERS)
   // --------------------------------------------------------------------

@@ -6,6 +6,8 @@ import { authRouter } from './routes/auth.route.js';
 import { usersRouter } from './routes/users.route.js';
 import { practiceRouter } from './routes/practice.route.js';
 import { adminRouter } from './routes/admin.route.js';
+import { examRouter } from './routes/exam.route.js';
+import { examAdminRouter } from './routes/exam-admin.route.js';
 import type { ZodIssue } from 'zod';
 
 /**
@@ -46,6 +48,19 @@ const ERROR_CODE_TO_HTTP_STATUS: Readonly<Record<string, number>> = {
   ADMIN_UNAUTHORIZED: 401,
   // Reports
   REPORT_ALREADY_SUBMITTED: 409,
+  // Thi thu (Exam)
+  EXAM_PAPER_NOT_FOUND: 404,
+  EXAM_QUESTION_NOT_FOUND: 404,
+  EXAM_INVALID_SUBJECT: 400,
+  EXAM_PAPER_EMPTY: 404,
+  EXAM_INSUFFICIENT_POINTS: 409,
+  EXAM_SESSION_NOT_FOUND: 404,
+  EXAM_SESSION_NOT_OWNED: 403,
+  EXAM_SESSION_ALREADY_COMPLETED: 409,
+  EXAM_SESSION_NOT_COMPLETED: 409,
+  EXAM_EXPIRED: 410,
+  EXAM_QUESTION_INVALID: 400,
+  EXAM_IMPORT_FILE_INVALID: 400,
 };
 
 /** Kiem tra 1 gia tri loi co phai la "custom error" co truong `code` (string) hay khong. */
@@ -85,6 +100,8 @@ export function createApp(): Application {
   app.use('/api/users', usersRouter);
   app.use('/api/practice', practiceRouter);
   app.use('/api/admin', adminRouter);
+  app.use('/api/admin/exam-papers', examAdminRouter);
+  app.use('/api/exam', examRouter);
 
   // Route kiem tra suc khoe server
   app.get('/api/health', (_req: Request, res: Response) => {

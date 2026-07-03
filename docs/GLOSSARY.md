@@ -189,6 +189,121 @@ body rỗng, che mất lỗi HTTP thật (vd. `401`) bằng một lỗi parse JS
 
 ---
 
+---
+
+## Exam Module (Thi Thử) — Thuật ngữ kỹ thuật
+
+### Fair Exam Selection (Chọn đề công bằng / Round-Robin tự nhiên)
+**Định nghĩa**: Thuật toán chọn đề thi sao cho user được tiếp xúc đều với tất cả các đề — không bị lặp lại đề cũ khi vẫn còn đề chưa làm.
+
+**Trong dự án này**: `pickFairExamPaper()` trong `exam.service.ts`:
+1. Lấy tất cả đề đang active và có ít nhất 1 câu hỏi
+2. Đếm số lần user đã làm mỗi đề (từ bảng `ExamSession`)
+3. Tìm số lần làm nhỏ nhất (minAttempts)
+4. Random trong nhóm đề có số lần làm = minAttempts
+
+```
+User đã làm: Đề A (2 lần), Đề B (2 lần), Đề C (1 lần), Đề D (1 lần)
+minAttempts = 1 → candidates = [C, D]
+→ Random chọn C hoặc D (không bao giờ chọn A/B lúc này)
+```
+
+**Tại sao không dùng shuffle đơn thuần?**: Shuffle ngẫu nhiên có thể cho ra đề A 3 lần liên tiếp. Round-robin tự nhiên đảm bảo user trải qua hết tất cả đề ít nhất 1 lần trước khi bắt đầu vòng 2.
+
+---
+
+### ExamQuestionType (3 dạng câu hỏi thi thử)
+**Định nghĩa**: Module thi thử hỗ trợ 3 dạng câu hỏi khác nhau, mỗi dạng có cấu trúc `options`/`correctAnswer` và cách chấm điểm riêng:
+
+| Dạng | options | correctAnswer | Cách chấm |
+|------|---------|---------------|-----------|
+| `MCQ_4` | 4 string (A/B/C/D) | số 0-3 | Đúng = full điểm, Sai = 0 |
+| `TRUE_FALSE_4` | 4 string (4 phát biểu) | 4 boolean | Điểm theo tỉ lệ số ý đúng (xem TRUE_FALSE_SCORE_RATIOS) |
+| `FILL_BLANK` | null | mảng string (các đáp án chấp nhận) | Khớp 1 đáp án = full điểm (có normalize) |
+
+**Trong dự án này**: `validateQuestionShape()` trong `exam.service.ts` kiểm tra format trước khi lưu. `gradeQuestion()` chấm điểm theo đúng dạng.
+
+---
+
+### TRUE_FALSE_SCORE_RATIOS (Chấm điểm từng phần)
+**Định nghĩa**: Bảng tỉ lệ điểm cho dạng TRUE_FALSE_4 — học sinh đúng bao nhiêu ý trong 4 ý thì được bao nhiêu % điểm của câu đó.
+
+**Trong dự án này** (`exam.types.ts`):
+```
+[0, 0.1, 0.25, 0.5, 1]
+ ↑    ↑    ↑    ↑   ↑
+0ý  1ý   2ý   3ý  4ý
+```
+Ví dụ: câu worth 4 điểm, học sinh đúng 3/4 ý → 4 × 0.5 = **2 điểm**.
+
+---
+
+### normalizeAnswer (Chuẩn hóa đáp án FILL_BLANK)
+**Định nghĩa**: Trước khi so sánh đáp án tự điền của học sinh với đáp án đúng, chuẩn hóa cả hai về dạng giống nhau để tránh sai vì khoảng trắng thừa hoặc chữ hoa/thường.
+
+**Trong dự án này** (`exam.service.ts`):
+```typescript
+value.trim().toLowerCase().replace(/\s+/g, ' ')
+```
+```
+"  Hà Nội  " → "hà nội"
+"HÀ NỘI"    → "hà nội"
+"hà  nội"   → "hà nội"   ← gộp khoảng trắng giữa
+Tất cả đều match với đáp án đúng "hà nội" ✓
+```
+
+---
+
+### EXAM_GRACE_SECONDS (Thời gian ân hạn)
+**Định nghĩa**: Số giây cộng thêm vào thời gian làm bài trước khi hệ thống đánh dấu phiên là EXPIRED. Cho phép nộp bài trong khoảng trễ mạng bình thường.
+
+**Trong dự án này**: `EXAM_GRACE_SECONDS = 30`. Công thức:
+```
+deadline = startedAt + durationMinutes × 60s + 30s
+```
+Nếu `Date.now() > deadline` → trả `ExamExpiredError`, không chấm điểm.
+
+**Tại sao cần?**: Nếu học sinh bấm "Nộp bài" đúng lúc hết giờ, request mất 1-2 giây để đến server — không có grace period thì bị từ chối oan.
+
+---
+
+### durationMinutes Snapshot (Snapshot thời gian làm bài)
+**Định nghĩa**: Khi tạo `ExamSession`, hệ thống copy giá trị `durationMinutes` từ `ExamPaper` vào session — thay vì đọc trực tiếp từ đề thi mỗi lần.
+
+**Trong dự án này**: Nếu admin sửa thời gian làm bài của đề từ 90 phút xuống 45 phút sau khi học sinh đã bắt đầu thi, học sinh đó vẫn có đủ 90 phút (theo snapshot đã lưu). Không bị ảnh hưởng bởi thay đổi sau.
+
+---
+
+### deductPointsInTx (Trừ điểm trong transaction ngoài)
+**Định nghĩa**: Method mới thêm vào `PointsService` — tương tự `addPointsInTx` nhưng để trừ điểm. Dùng khi cần trừ điểm ATOMIC cùng với các thao tác khác trong 1 transaction.
+
+**Trong dự án này**: `startExam` cần trừ 60 điểm phí VÀ tạo ExamSession trong cùng 1 transaction — nếu tạo session thất bại thì việc trừ điểm cũng phải rollback:
+```
+$transaction:
+  1. deductPointsInTx(tx, userId, 60, ...)  ← trừ 60 điểm
+  2. tx.examSession.create(...)              ← tạo phiên thi
+  Nếu bước 2 fail → bước 1 cũng rollback → user không bị mất điểm
+```
+
+---
+
+### Partial Success Import (Import thành công một phần)
+**Định nghĩa**: Khi import nhiều dòng từ Excel, những dòng hợp lệ được lưu ngay, những dòng lỗi được báo cáo kèm số dòng — không vì 1 dòng lỗi mà hủy toàn bộ.
+
+**Trong dự án này** (`exam-import.service.ts`): Kết quả trả về:
+```json
+{
+  "inserted": 48,
+  "errors": [
+    { "row": 5, "message": "Loại câu hỏi 'XYZ' không hợp lệ" },
+    { "row": 23, "message": "Điểm phải là số dương" }
+  ]
+}
+```
+Admin biết chính xác dòng nào lỗi để sửa và import lại riêng phần đó.
+
+---
+
 ## Bug đã phát hiện và fix trong quá trình review
 
 ### Bug: ID không nhất quán giữa lưu điểm và đọc điểm

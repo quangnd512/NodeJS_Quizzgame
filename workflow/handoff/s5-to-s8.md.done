@@ -1,0 +1,48 @@
+# Handoff từ S5-ThuNghiem → S8-GiamSat
+
+**Thời gian:** 2026-07-02  
+**Branch:** feature/exam-module
+
+---
+
+## ⚠️ YÊU CẦU MỚI PHÁT SINH TRONG QUÁ TRÌNH KIỂM THỬ
+
+Trong khi kiểm thử Exam Module, người dùng yêu cầu thêm tính năng lớn chưa có trong kế hoạch ban đầu:
+
+### Tính năng: Ngân hàng câu hỏi (Question Bank)
+
+Chi tiết đầy đủ đã được lưu tại:
+`/Users/quangnd512/.claude/projects/.../memory/project_question_bank_feature.md`
+
+**Tóm tắt yêu cầu:**
+1. Ngân hàng câu hỏi toàn cục — quản lý câu hỏi độc lập với đề thi
+2. Hard delete từ ngân hàng — có cảnh báo admin trước khi xoá
+3. Lấy câu từ ngân hàng vào đề thi (thay vì chỉ thêm thủ công)
+
+**Lý do cần S8 xử lý:**
+- Đây là tính năng mới NGOÀI scope Exam Module hiện tại
+- Cần S8 đánh giá và giao S2 implement trong vòng tới
+
+---
+
+## BUGS ĐÃ FIX TRONG LUỒNG NÀY (S5 xử lý, không cần S2 làm lại)
+
+| Bug | File | Trạng thái |
+|-----|------|-----------|
+| `updateQuestionSchema` thiếu `isActive` (Zod strip mất field) | `exam-admin.route.ts` | ✅ Đã fix |
+| `UpdateExamQuestionInput` type thiếu `isActive` | `exam.types.ts` | ✅ Đã fix |
+| `updateExamQuestion` service không spread `isActive` vào Prisma data | `exam.service.ts` | ✅ Đã fix |
+
+---
+
+## TRẠNG THÁI KIỂM THỬ HIỆN TẠI
+
+| Test | Kết quả |
+|------|---------|
+| A1 — Đăng nhập Admin | ✅ PASS |
+| A2 — Tạo đề thi mới | ✅ PASS |
+| A3 — Thêm câu hỏi MCQ_4 | ✅ PASS |
+| A4 — Ẩn/Khôi phục câu hỏi | ✅ PASS |
+| A5 → D2 | ⏳ Đang tiến hành |
+
+👉 **Yêu cầu S8:** Khi nhận được handoff này, giao S2 implement tính năng Ngân hàng câu hỏi trong vòng phát triển tiếp theo.

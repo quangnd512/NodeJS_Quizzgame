@@ -214,3 +214,157 @@
 | 6 | `id` báo cáo không tồn tại | UUID ngẫu nhiên | 500 | `INTERNAL_SERVER_ERROR` |
 
 > ⚠️ **Lưu ý (pre-existing, ngoài phạm vi review này):** `updateReport()` gọi `prisma.questionReport.update({ where: { id } })` trực tiếp — nếu `id` không tồn tại, Prisma nem `PrismaClientKnownRequestError` (P2025) và bị middleware lỗi tập trung trả về `500 INTERNAL_SERVER_ERROR` thay vì `404 REPORT_NOT_FOUND`. Đề xuất bổ sung error class riêng (ví dụ `ReportNotFoundError`) ở lần cập nhật sau.
+
+---
+
+## Test Cases: Exam Module (Thi thử)
+
+### 11. POST /api/exam/start (Bắt đầu phiên thi thử)
+
+#### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | Bắt đầu thi môn hợp lệ, đủ điểm, có đề active | `{ subject: "TOAN" }`, user đủ ≥ 60 điểm | 200 + `StartExamResponse` (`sessionId`, `examPaperId`, `title`, `durationMinutes`, `startedAt`, `questions[]`) |
+| 2 | Câu hỏi trả về KHÔNG lộ đáp án đúng | — | Mỗi câu trong `questions[]` không có field `correctAnswer` |
+| 3 | Trừ đúng `EXAM_ENTRY_FEE` (60 điểm) | trước: 1000 điểm | sau: 940 điểm; `PointTransaction` mới có `reason: THI_THU_ENTRY_FEE`, `delta: -60` |
+| 4 | Chọn đề "công bằng" giữa nhiều đề active của 1 môn | môn có 2 đề active, user chưa thi đề nào | Đề được chọn có số lần user đã thi ÍT NHẤT (round-robin theo `examSession.groupBy`) |
+
+#### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 5 | User vừa đủ điểm (đúng 60) | `currentPoints = 60` | 200, sau khi trừ còn 0 — không lỗi |
+| 6 | Đề active nhưng 0 câu hỏi active | đề chỉ có câu `isActive=false` | 404 `EXAM_PAPER_EMPTY` (đề bị loại khỏi danh sách "đề hợp lệ") |
+| 7 | Nhiều request `startExam` đồng thời, user chỉ đủ điểm cho 1 lần | 5 request song song, `currentPoints = 60` | CHỈ 1 request thành công (trừ đúng 1 lần 60 điểm, tạo đúng 1 `ExamSession`); 4 request còn lại nhận `EXAM_INSUFFICIENT_POINTS` — không có request nào lỗi `500`/`OPTIMISTIC_LOCK_CONFLICT` |
+
+#### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 8 | `subject` không hợp lệ | `{ subject: "KHONG_TON_TAI" }` | 400 | `EXAM_INVALID_SUBJECT` |
+| 9 | Môn học chưa có đề thi active nào | `{ subject: "GDCD" }` (chưa có đề) | 404 | `EXAM_PAPER_EMPTY` |
+| 10 | User không đủ điểm (< 60) | `currentPoints = 0` | 409 | `EXAM_INSUFFICIENT_POINTS` (không tạo `ExamSession`, không trừ điểm — transaction rollback) |
+| 11 | Thiếu `subject` trong body | `{}` | 400 | `INVALID_REQUEST_BODY` |
+| 12 | Không có token | Header thiếu Authorization | 401 | `MISSING_AUTH_TOKEN` |
+
+---
+
+### 12. POST /api/exam/submit (Nộp bài thi thử)
+
+#### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | Làm đúng hoàn toàn (3 câu: MCQ_4, TRUE_FALSE_4, FILL_BLANK) | `answers` đúng hết | `score: 10`, `pointsAwarded: 120`; số dư được cộng 120, ghi `PointTransaction` `reason: THI_THU_RESULT` |
+| 2 | Làm đúng một phần (score = 7.0) | TRUE_FALSE_4 chỉ đúng 2/4 ý (ratio 0.5) | `score: 7.0`, `pointsAwarded: 10`; cộng đúng 10 điểm |
+| 3 | FILL_BLANK chấp nhận đáp án viết hoa/thường, khoảng trắng dư | `selectedAnswer: "  hà   nội  "`, đáp án đúng `"Hà Nội"` | Được tính đúng (so khớp sau `normalizeAnswer`) |
+| 4 | TRUE_FALSE_4 chấm theo tỉ lệ ý đúng (0/1/2/3/4 → ratio `TRUE_FALSE_SCORE_RATIOS`) | đúng 3/4 ý | `pointsEarned = points * 0.5` |
+
+#### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 5 | `answers: []` (không trả lời câu nào) | — | `score: 0`, `pointsAwarded: 0`; KHÔNG cộng điểm; mỗi `ExamAnswer.selectedAnswer = {}` (sentinel), `pointsEarned: 0` |
+| 6 | `score < 7.0` → `pointsAwarded = 0` | — | KHÔNG gọi cộng điểm (vì `addPoints` yêu cầu `amount > 0`); số dư không đổi |
+| 7 | Nộp bài sau khi hết giờ + grace period (`durationMinutes*60 + 30s`) | `Date.now() > deadlineMs` | 410 `EXAM_EXPIRED`; session chuyển `EXPIRED`, KHÔNG chấm điểm, KHÔNG tạo `ExamAnswer`, KHÔNG hoàn/trừ điểm đã trừ lúc `startExam` |
+| 8 | Nộp lại phiên đã `EXPIRED` | gọi `submit` lần 2 sau khi đã expired | vẫn 410 `EXAM_EXPIRED` (không đổi trạng thái thêm) |
+| 9 | `selectedAnswer` sai kiểu/định dạng cho loại câu hỏi (vd MCQ_4 nhưng gửi mảng) | — | `gradeQuestion` không crash, trả `pointsEarned: 0` (coi như sai) |
+| 10 | 5 request `submitExam` đồng thời cho CÙNG 1 phiên, `score < 7` (`pointsAwarded = 0`) | 5 request song song, `answers` giống nhau | CHỈ 1 request trả 200 (`score: 0, pointsAwarded: 0`); 4 request còn lại nhận `EXAM_SESSION_ALREADY_COMPLETED`; CHỈ có 1 `ExamAnswer` cho mỗi câu hỏi |
+| 11 | 5 request `submitExam` đồng thời cho CÙNG 1 phiên, `score = 10` (`pointsAwarded = 120`) | 5 request song song, `answers` đúng hết | CHỈ 1 request trả 200 (`score: 10, pointsAwarded: 120`); 4 request còn lại nhận `EXAM_SESSION_ALREADY_COMPLETED`; số dư CHỈ được cộng 120 MỘT LẦN (không phải 600) |
+
+#### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 12 | `sessionId` không tồn tại | UUID ngẫu nhiên | 404 | `EXAM_SESSION_NOT_FOUND` |
+| 13 | `sessionId` thuộc về user khác | user B nộp bài session của user A | 403 | `EXAM_SESSION_NOT_OWNED` |
+| 14 | Nộp lại phiên đã `COMPLETED` | gọi `submit` lần 2 | 409 | `EXAM_SESSION_ALREADY_COMPLETED` |
+| 15 | `sessionId` không phải UUID hợp lệ | `{ sessionId: "abc" }` | 400 | `INVALID_REQUEST_BODY` |
+| 16 | `examQuestionId` trong `answers` không thuộc đề thi của phiên | UUID câu hỏi ngẫu nhiên | Câu đó không được chấm (không có trong `questions` của đề) — không lỗi, không ảnh hưởng các câu khác |
+
+---
+
+### 13. GET /api/exam/:id/result (Xem kết quả phiên thi)
+
+#### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | Xem kết quả phiên đã hoàn thành | `sessionId` đã `submitExam` | 200 + `ExamResultResponse` (`score`, `pointsAwarded`, `chapterAnalysis[]`, `wrongAnswers[]`) |
+| 2 | Phân tích theo chương | đề có nhiều câu thuộc nhiều `chapter` | `chapterAnalysis[]` gộp đúng số câu đúng/tổng điểm theo từng `chapter` |
+| 3 | Danh sách câu sai | có câu `pointsEarned < points` | `wrongAnswers[]` chứa đúng các câu đó kèm `selectedAnswer`, `correctAnswer`, `explanation` |
+
+#### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 4 | Phiên `EXPIRED` (hết giờ, không chấm điểm) | `sessionId` của phiên expired | 200 + `score: 0`, tất cả câu nằm trong `wrongAnswers` với `selectedAnswer: null` |
+| 5 | Phiên làm đúng hết | — | `wrongAnswers: []` |
+
+#### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 6 | Phiên còn `IN_PROGRESS` (chưa nộp bài) | `sessionId` chưa `submit` | 409 | `EXAM_SESSION_NOT_COMPLETED` |
+| 7 | `sessionId` không tồn tại | UUID ngẫu nhiên | 404 | `EXAM_SESSION_NOT_FOUND` |
+| 8 | `sessionId` thuộc về user khác | user B xem kết quả của user A | 403 | `EXAM_SESSION_NOT_OWNED` |
+
+---
+
+### 14. Admin — Quản lý đề thi & câu hỏi (`/api/admin/exam-papers`)
+
+#### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | Tạo đề thi mới | `POST /` `{ subject, title, durationMinutes }` | 201 + `ExamPaperSummaryDto` (`isActive: true` mặc định) |
+| 2 | Danh sách đề thi, lọc theo môn | `GET /?subject=TOAN` | 200 + chỉ các đề môn TOAN |
+| 3 | Chi tiết đề thi kèm toàn bộ câu hỏi (cả câu đã ẩn) | `GET /:id` | 200 + `ExamPaperDetailDto` (`questions[]` đầy đủ `correctAnswer`) |
+| 4 | Cập nhật đề thi (đổi tiêu đề / thời gian / `isActive`) | `PATCH /:id` `{ title?, durationMinutes?, isActive? }` | 200 + đề đã cập nhật |
+| 5 | Thêm 1 câu hỏi (mỗi loại MCQ_4 / TRUE_FALSE_4 / FILL_BLANK) | `POST /:id/questions` đúng shape từng loại | 201 + `ExamQuestionFullDto` |
+| 6 | Sửa câu hỏi (partial update) | `PATCH /:id/questions/:qid` `{ points: 5 }` | 200 + câu hỏi đã cập nhật |
+| 7 | Ẩn (soft delete) câu hỏi | `DELETE /:id/questions/:qid` | 200 + `{ message }`; câu chuyển `isActive: false`, không bị xoá khỏi DB |
+
+#### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 8 | Tắt `isActive` đề thi đang là đề DUY NHẤT active của môn | `PATCH /:id { isActive: false }` | 200 OK; lần `startExam` kế tiếp cho môn đó → `EXAM_PAPER_EMPTY` |
+| 9 | `correctAnswer` không khớp `questionType` (vd MCQ_4 nhưng `correctAnswer` là mảng 4 boolean) | `POST /:id/questions` | 400 `EXAM_QUESTION_INVALID` (qua `validateQuestionShape`, KHÔNG tạo record) |
+| 10 | `options` thiếu (MCQ_4/TRUE_FALSE_4 yêu cầu đúng 4 phần tử) | `options: ["A", "B"]` | 400 `INVALID_REQUEST_BODY` (Zod `.length(4)`) |
+
+#### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 11 | Thiếu `X-Admin-Secret` header | bất kỳ route admin nào | 401 | `ADMIN_UNAUTHORIZED` |
+| 12 | `subject` không thuộc `SUBJECT_CATALOG` | `POST / { subject: "FAKE" }` | 400 | `INVALID_REQUEST_BODY` |
+| 13 | `examPaperId` không tồn tại | `GET /:id` với UUID ngẫu nhiên | 404 | `EXAM_PAPER_NOT_FOUND` |
+| 14 | `examQuestionId` không tồn tại / không thuộc đề | `PATCH /:id/questions/:qid` sai `qid` | 404 | `EXAM_QUESTION_NOT_FOUND` |
+
+---
+
+### 15. Admin — POST /api/admin/exam-papers/:id/questions/import (Import câu hỏi từ Excel)
+
+#### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | Import file đúng format (1 dòng mỗi loại câu hỏi) | file `.xlsx` theo template `docs/templates/mau-import-cau-hoi-thi-thu.xlsx` | 200 + `{ inserted: N, errors: [] }`; N câu hỏi mới được tạo |
+| 2 | File có một số dòng lỗi, một số dòng hợp lệ | trộn dòng đúng/sai | 200 + `{ inserted: M, errors: [{ row, message }, ...] }` — THÀNH CÔNG MỘT PHẦN, các dòng hợp lệ vẫn được tạo |
+
+#### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 3 | Đáp án Đúng/Sai dạng chữ tiếng Việt (`Đ`, `S`, `Đúng`, `Sai`, `1`, `0`, `X`) | cột "Đáp án đúng" = `"Đ"` / `"S"` / ... | Parse đúng thành `true`/`false` |
+| 4 | Đáp án MCQ dạng chữ cái (`A`/`B`/`C`/`D`) hoặc số (`0`-`3`) | cột "Đáp án đúng" = `"C"` | Parse thành `correctAnswer: 2` |
+| 5 | File rỗng (0 dòng dữ liệu, chỉ có header) | sheet chỉ có header | 200 + `{ inserted: 0, errors: [] }` (hoặc lỗi rõ ràng — không crash) |
+| 6 | Lỗi được báo đúng số dòng Excel (tính cả header) | dòng dữ liệu thứ 1 (Excel row 2) sai | `errors[0].row === 2` |
+
+#### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 7 | Không gửi file (`field "file"` rỗng) | `POST` không kèm file | 400 | `EXAM_IMPORT_FILE_INVALID` |
+| 8 | File không phải Excel hợp lệ (vd `.txt` đổi đuôi) | `XLSX.read` parse lỗi | 400 | `EXAM_IMPORT_FILE_INVALID` |
+| 9 | File vượt quá 5MB | file > 5MB | 400 | `EXAM_IMPORT_FILE_INVALID` (qua `MulterError` `LIMIT_FILE_SIZE` → `uploadExcelFile` chuyển đổi, KHÔNG còn rơi vào `500`) |
+| 10 | `examPaperId` không tồn tại | `POST /:fakeId/questions/import` | 404 | `EXAM_PAPER_NOT_FOUND` |
+
+---
+
+### 16. Race conditions — Module Thi thử (smoke test riêng `smoke:exam:concurrency`)
+
+> Các test case này được hiện thực trong `backend/src/scripts/smoke-test-exam-concurrency.ts` (chạy bằng `npm run smoke:exam:concurrency`), bổ sung cho `smoke-test-exam.ts` (vốn chỉ test tuần tự).
+
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | 5× `startExam` đồng thời, user chỉ đủ điểm cho 1 lần | `currentPoints = EXAM_ENTRY_FEE` | 1 thành công + 4× `ExamInsufficientPointsError`; số dư cuối = 0; đúng 1 `ExamSession`, đúng 1 `PointTransaction (THI_THU_ENTRY_FEE)` |
+| 2 | 5× `submitExam` đồng thời, cùng phiên, `pointsAwarded = 0` | `answers` sai (score = 0) | 1 thành công (`score: 0`) + 4× `ExamSessionAlreadyCompletedError`; đúng 1 `ExamAnswer`/câu; session → `COMPLETED` |
+| 3 | 5× `submitExam` đồng thời, cùng phiên, `pointsAwarded = 120` | `answers` đúng hết (score = 10) | 1 thành công (`score: 10, pointsAwarded: 120`) + 4× `ExamSessionAlreadyCompletedError`; đúng 1 `ExamAnswer`/câu; số dư CHỈ được cộng 120 một lần, đúng 1 `PointTransaction (THI_THU_RESULT)` |

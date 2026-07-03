@@ -214,6 +214,96 @@ export async function getPracticeStats(token: string): Promise<SubjectStat[]> {
   return request('/api/practice/stats', token);
 }
 
+// ─── Exam Module (Thi thu) ───────────────────────────────────────────────────
+
+export type ExamQuestionType = 'MCQ_4' | 'TRUE_FALSE_4' | 'FILL_BLANK';
+export type ExamSessionStatus = 'IN_PROGRESS' | 'COMPLETED' | 'EXPIRED';
+
+/** Dap an hoc sinh chon, theo tung dang: MCQ_4 -> so 0-3; TRUE_FALSE_4 -> 4 gia tri (null = chua tra loi); FILL_BLANK -> chuoi. */
+export type ExamAnswerValue = number | string | (boolean | null)[];
+
+export interface ExamQuestionPublic {
+  id: string;
+  chapter: string | null;
+  difficulty: number;
+  questionType: ExamQuestionType;
+  points: number;
+  questionText: string;
+  options: string[] | null;
+}
+
+export interface StartExamResult {
+  sessionId: string;
+  examPaperId: string;
+  subject: string;
+  title: string;
+  durationMinutes: number;
+  startedAt: string;
+  questions: ExamQuestionPublic[];
+}
+
+export interface SubmitExamResult {
+  sessionId: string;
+  score: number;
+  pointsAwarded: number;
+}
+
+export interface ExamChapterAnalysis {
+  chapter: string;
+  correctCount: number;
+  totalCount: number;
+  pointsEarned: number;
+  pointsTotal: number;
+}
+
+export interface ExamWrongAnswer {
+  examQuestionId: string;
+  questionText: string;
+  questionType: ExamQuestionType;
+  chapter: string | null;
+  options: string[] | null;
+  correctAnswer: unknown;
+  selectedAnswer: unknown;
+  explanation: string | null;
+  points: number;
+  pointsEarned: number;
+}
+
+export interface ExamResult {
+  sessionId: string;
+  status: ExamSessionStatus;
+  score: number;
+  pointsAwarded: number;
+  totalQuestions: number;
+  chapterAnalysis: ExamChapterAnalysis[];
+  wrongAnswers: ExamWrongAnswer[];
+}
+
+/** POST /api/exam/start */
+export async function startExam(token: string, subject: string): Promise<StartExamResult> {
+  return request('/api/exam/start', token, {
+    method: 'POST',
+    body: JSON.stringify({ subject }),
+  });
+}
+
+/** POST /api/exam/submit */
+export async function submitExam(
+  token: string,
+  sessionId: string,
+  answers: { examQuestionId: string; selectedAnswer: ExamAnswerValue }[],
+): Promise<SubmitExamResult> {
+  return request('/api/exam/submit', token, {
+    method: 'POST',
+    body: JSON.stringify({ sessionId, answers }),
+  });
+}
+
+/** GET /api/exam/:id/result */
+export async function getExamResult(token: string, sessionId: string): Promise<ExamResult> {
+  return request(`/api/exam/${sessionId}/result`, token);
+}
+
 // ─── Admin: Bao cao cau hoi ─────────────────────────────────────────────────
 
 export interface QuestionReportDto {
@@ -288,4 +378,169 @@ export async function adminUpdateReportStatus(
 /** GET /api/admin/questions/reports/summary */
 export async function adminGetReportsSummary(secret: string): Promise<ReportsSummary> {
   return adminRequest('/api/admin/questions/reports/summary', secret);
+}
+
+// ─── Admin: Quan ly de thi thu ───────────────────────────────────────────────
+
+export interface ExamPaperSummary {
+  id: string;
+  subject: string;
+  title: string;
+  durationMinutes: number;
+  isActive: boolean;
+  questionCount: number;
+  createdAt: string;
+}
+
+export interface ExamQuestionFull {
+  id: string;
+  examPaperId: string;
+  chapter: string | null;
+  difficulty: number;
+  questionType: ExamQuestionType;
+  points: number;
+  questionText: string;
+  options: string[] | null;
+  correctAnswer: unknown;
+  explanation: string | null;
+  examYear: number | null;
+  examCode: string | null;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface ExamPaperDetail extends ExamPaperSummary {
+  questions: ExamQuestionFull[];
+}
+
+export interface CreateExamQuestionPayload {
+  chapter?: string;
+  difficulty: number;
+  questionType: ExamQuestionType;
+  points: number;
+  questionText: string;
+  options?: string[];
+  correctAnswer: unknown;
+  explanation?: string;
+  examYear?: number;
+  examCode?: string;
+}
+
+export interface ExamImportResultDto {
+  inserted: number;
+  errors: { row: number; message: string }[];
+}
+
+/** POST /api/admin/exam-papers */
+export async function adminCreateExamPaper(
+  secret: string,
+  data: { subject: string; title: string; durationMinutes: number },
+): Promise<ExamPaperSummary> {
+  return adminRequest('/api/admin/exam-papers', secret, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+/** GET /api/admin/exam-papers?subject= */
+export async function adminListExamPapers(secret: string, subject?: string): Promise<ExamPaperSummary[]> {
+  const qs = subject ? `?subject=${encodeURIComponent(subject)}` : '';
+  return adminRequest(`/api/admin/exam-papers${qs}`, secret);
+}
+
+/** GET /api/admin/exam-papers/:id */
+export async function adminGetExamPaperDetail(secret: string, id: string): Promise<ExamPaperDetail> {
+  return adminRequest(`/api/admin/exam-papers/${id}`, secret);
+}
+
+/** PATCH /api/admin/exam-papers/:id */
+export async function adminUpdateExamPaper(
+  secret: string,
+  id: string,
+  data: { title?: string; durationMinutes?: number; isActive?: boolean },
+): Promise<ExamPaperSummary> {
+  return adminRequest(`/api/admin/exam-papers/${id}`, secret, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+/** POST /api/admin/exam-papers/:id/questions */
+export async function adminCreateExamQuestion(
+  secret: string,
+  paperId: string,
+  data: CreateExamQuestionPayload,
+): Promise<ExamQuestionFull> {
+  return adminRequest(`/api/admin/exam-papers/${paperId}/questions`, secret, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+/** DELETE /api/admin/exam-papers/:id/questions/:qid — soft delete (isActive=false) */
+export async function adminDeleteExamQuestion(
+  secret: string,
+  paperId: string,
+  questionId: string,
+): Promise<{ message: string }> {
+  return adminRequest(`/api/admin/exam-papers/${paperId}/questions/${questionId}`, secret, {
+    method: 'DELETE',
+  });
+}
+
+/** PATCH /api/admin/exam-papers/:id/questions/:qid — cap nhat noi dung cau hoi (partial) */
+export async function adminUpdateExamQuestion(
+  secret: string,
+  paperId: string,
+  questionId: string,
+  data: {
+    points?: number;
+    difficulty?: number;
+    chapter?: string;
+    questionText?: string;
+    options?: string[];
+    correctAnswer?: number | boolean[] | string[];
+    explanation?: string;
+  },
+): Promise<ExamQuestionFull> {
+  return adminRequest(`/api/admin/exam-papers/${paperId}/questions/${questionId}`, secret, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+/** PATCH /api/admin/exam-papers/:id/questions/:qid — khoi phuc cau hoi da an (isActive=true) */
+export async function adminRestoreExamQuestion(
+  secret: string,
+  paperId: string,
+  questionId: string,
+): Promise<ExamQuestionFull> {
+  return adminRequest(`/api/admin/exam-papers/${paperId}/questions/${questionId}`, secret, {
+    method: 'PATCH',
+    body: JSON.stringify({ isActive: true }),
+  });
+}
+
+/** POST /api/admin/exam-papers/:id/questions/import (multipart/form-data) */
+export async function adminImportExamQuestions(
+  secret: string,
+  paperId: string,
+  file: File,
+): Promise<ExamImportResultDto> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const res = await fetch(`/api/admin/exam-papers/${paperId}/questions/import`, {
+    method: 'POST',
+    headers: { 'X-Admin-Secret': secret },
+    body: formData,
+  });
+
+  const body = await parseJsonBody<ExamImportResultDto>(res);
+
+  if (!res.ok) {
+    throw new ApiError(body.error ?? 'UNKNOWN_ERROR', body.message ?? `Loi HTTP ${res.status}`, res.status);
+  }
+
+  return body;
 }

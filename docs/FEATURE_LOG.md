@@ -1853,3 +1853,991 @@ npm run dev
 # → mở http://localhost:5173/#admin
 # → nhập giá trị ADMIN_SECRET trong backend/.env
 ```
+
+---
+
+## 6. Exam Module – Thi thử (Mock Exam)
+
+**Trạng thái:** ✅ Hoàn thành
+**Ngày hoàn thành:** 2026-06-15
+**Branch / commit liên quan:** `feature/exam-module`
+
+---
+
+### Tổng quan
+
+Tính năng **"Thi thử"** (mock exam) cho phép học sinh làm 1 đề thi đầy đủ
+(nhiều dạng câu hỏi, có giới hạn thời gian) để mô phỏng kỳ thi thật — khác với
+"Ôn tập" (Practice Module, Section 4) vốn chỉ có 15 câu trắc nghiệm và không
+giới hạn thời gian.
+
+**Tính năng chính (học sinh):**
+- Trên `ProfilePage`, nút **"Thi thử 🎯"** (cạnh "Bắt đầu ôn tập 📚") mở Hub
+  chọn môn học (giống Practice).
+- Bấm vào 1 môn → trừ **60 điểm tích lũy** (`EXAM_ENTRY_FEE`); hệ thống chọn
+  "công bằng" 1 trong các đề đang active của môn đó (xem mục Ghi chú kỹ
+  thuật), tạo `ExamSession` mới và trả về toàn bộ câu hỏi (đã ẩn đáp án đúng,
+  thứ tự xáo trộn).
+- `ExamSessionScreen`: đồng hồ đếm ngược theo `durationMinutes` của đề; 3
+  dạng câu hỏi hiển thị khác nhau (trắc nghiệm 4 đáp án, đúng/sai 4 ý, điền
+  đáp án). Hết giờ → tự động nộp bài.
+- Nộp bài → chấm điểm theo thang 10, có thể được **thưởng điểm tích lũy**
+  theo bậc điểm (0 / 10 / 20 / 50 / 120 cho điểm <7 / 7–7.9 / 8–8.9 / 9–9.9 /
+  10).
+- `ExamResultScreen`: hiển thị điểm, điểm thưởng, phân tích kết quả theo
+  chương, danh sách câu chưa đạt trọn điểm kèm đáp án đúng + giải thích.
+
+**Tính năng chính (admin):**
+- `AdminPage` (`/#admin`) có thêm tab **"Đề thi thử"** (cạnh "Báo cáo câu
+  hỏi").
+- `AdminExamPaperListPage`: danh sách đề thi (lọc theo môn), tạo đề mới (môn,
+  tên đề, thời gian làm bài).
+- `AdminExamPaperDetailPage`: xem chi tiết 1 đề (kèm đáp án đúng), bật/tắt
+  trạng thái active, thêm câu hỏi (form thủ công theo 3 dạng), import câu hỏi
+  từ file Excel, xoá (ẩn) câu hỏi.
+
+**Backend:**
+- 4 model Prisma mới: `ExamPaper`, `ExamQuestion`, `ExamSession`,
+  `ExamAnswer` (migration `20260613232440_add_exam_module`).
+- `ExamService` (761 dòng) — toàn bộ logic nghiệp vụ: chọn đề công bằng, trừ
+  điểm vào thi (atomic, optimistic lock + retry), chấm điểm 3 dạng câu hỏi,
+  thưởng điểm theo bậc, hết giờ + grace period, CRUD đề/câu hỏi cho admin.
+- `PointsService.deductPointsInTx()` mới — đối ngẫu của `addPointsInTx()`,
+  dùng để trừ điểm atomic trong `startExam`.
+- Import câu hỏi từ Excel (`exam-import.service.ts`, dùng `xlsx` + `multer`),
+  kèm file mẫu `docs/templates/mau-import-cau-hoi-thi-thu.xlsx` (sinh bằng
+  `npm run generate:exam-template`).
+
+---
+
+### Data Model
+
+4 bảng mới (xem `backend/prisma/schema.prisma`, migration
+`20260613232440_add_exam_module`):
+
+#### `exam_papers` (model `ExamPaper`)
+
+| Field | Kiểu | Mô tả |
+|-------|------|-------|
+| `id` | UUID (PK) | |
+| `subject` | string | Mã môn học, khớp `SUBJECT_CATALOG` (ví dụ `TOAN`) |
+| `title` | string | Tên đề thi, ví dụ "Đề thi thử THPT QG 2024 - Mã đề 101" |
+| `durationMinutes` | int | Thời gian làm bài (phút) |
+| `isActive` | boolean (default `true`) | `false` = admin tạm ẩn đề — không được rút khi học sinh chọn đề ngẫu nhiên |
+| `createdAt` | datetime | |
+
+Index: `[subject, isActive]`
+
+#### `exam_questions` (model `ExamQuestion`)
+
+| Field | Kiểu | Mô tả |
+|-------|------|-------|
+| `id` | UUID (PK) | |
+| `examPaperId` | UUID (FK) | Đề thi chứa câu hỏi này |
+| `chapter` | string? | Tên chương/chủ đề — dùng để phân tích kết quả theo chương |
+| `difficulty` | int | 1 = dễ, 2 = trung bình, 3 = khó |
+| `questionType` | string | `MCQ_4` \| `TRUE_FALSE_4` \| `FILL_BLANK` |
+| `points` | float | Điểm của câu hỏi trong đề (tổng các câu **không cần** bằng 10 — hệ thống tự quy đổi về thang 10 khi chấm) |
+| `questionText` | string | |
+| `options` | JSON? | `MCQ_4`/`TRUE_FALSE_4`: mảng 4 string; `FILL_BLANK`: `null` |
+| `correctAnswer` | JSON | `MCQ_4`: số 0-3; `TRUE_FALSE_4`: mảng 4 boolean; `FILL_BLANK`: mảng ≥1 string (các đáp án được chấp nhận) |
+| `explanation` | string? | Hiện ở trang kết quả |
+| `examYear` | int? | |
+| `examCode` | string? | Mã đề gốc (khác với `ExamPaper.id` nội bộ) |
+| `isActive` | boolean (default `true`) | Soft delete |
+| `createdAt` | datetime | |
+
+Index: `[examPaperId, isActive]`
+
+#### `exam_sessions` (model `ExamSession`)
+
+| Field | Kiểu | Mô tả |
+|-------|------|-------|
+| `id` | UUID (PK) | |
+| `userId` | UUID | |
+| `examPaperId` | UUID | Đề đã được rút cho phiên này |
+| `subjectId` | string | Snapshot môn học (phục vụ thống kê) |
+| `durationMinutes` | int | **Snapshot** từ `ExamPaper.durationMinutes` lúc bắt đầu — admin sửa đề sau đó không ảnh hưởng phiên đang chạy |
+| `startedAt` | datetime (default `now()`) | |
+| `status` | string (default `IN_PROGRESS`) | `IN_PROGRESS` \| `COMPLETED` \| `EXPIRED` |
+| `score` | float? | Thang 10, 1 chữ số thập phân — `null` nếu chưa nộp |
+| `pointsAwarded` | int (default `0`) | Điểm tích lũy được thưởng (0 nếu `score < 7.0`) |
+| `completedAt` | datetime? | |
+
+Index: `[userId, examPaperId]` (phục vụ thuật toán chọn đề công bằng),
+`[userId, completedAt]` (phục vụ lịch sử)
+
+#### `exam_answers` (model `ExamAnswer`)
+
+| Field | Kiểu | Mô tả |
+|-------|------|-------|
+| `id` | UUID (PK) | |
+| `sessionId` | UUID | |
+| `examQuestionId` | UUID | |
+| `selectedAnswer` | JSON | Theo từng dạng, giống `correctAnswer`; `{}` = chưa trả lời |
+| `pointsEarned` | float (default `0`) | Có thể là số lẻ (`TRUE_FALSE_4` đúng 2/4 ý → `points * 0.25`) |
+| `answeredAt` | datetime (default `now()`) | |
+
+Unique: `[sessionId, examQuestionId]` — mỗi câu hỏi trong 1 phiên chỉ có 1
+bản ghi trả lời.
+
+---
+
+### API Reference
+
+#### Tổng hợp endpoint
+
+| Method | Path | Auth | Mô tả |
+|--------|------|------|-------|
+| POST | `/api/exam/start` | `Bearer <session-token>` | Bắt đầu phiên thi thử mới (trừ 60 điểm, chọn đề công bằng) |
+| POST | `/api/exam/submit` | `Bearer <session-token>` | Nộp bài, chấm điểm + thưởng điểm |
+| GET | `/api/exam/:id/result` | `Bearer <session-token>` | Xem kết quả chi tiết 1 phiên đã hoàn thành |
+| POST | `/api/admin/exam-papers` | `X-Admin-Secret` | Tạo đề thi mới |
+| GET | `/api/admin/exam-papers?subject=` | `X-Admin-Secret` | Danh sách đề thi |
+| GET | `/api/admin/exam-papers/:id` | `X-Admin-Secret` | Chi tiết 1 đề (kèm đáp án đúng) |
+| PATCH | `/api/admin/exam-papers/:id` | `X-Admin-Secret` | Cập nhật tiêu đề/thời gian/trạng thái active |
+| POST | `/api/admin/exam-papers/:id/questions` | `X-Admin-Secret` | Thêm 1 câu hỏi |
+| POST | `/api/admin/exam-papers/:id/questions/import` | `X-Admin-Secret` | Import câu hỏi từ file Excel (`multipart/form-data`) |
+| PATCH | `/api/admin/exam-papers/:id/questions/:qid` | `X-Admin-Secret` | Cập nhật 1 câu hỏi (⚠️ chưa có FE gọi — xem Ghi chú kỹ thuật) |
+| DELETE | `/api/admin/exam-papers/:id/questions/:qid` | `X-Admin-Secret` | Ẩn (soft delete) 1 câu hỏi |
+
+---
+
+#### POST /api/exam/start
+
+**Request:**
+```json
+{ "subject": "TOAN" }
+```
+
+**Response (201):**
+```json
+{
+  "sessionId": "a1b2c3d4-0001-4a3a-9b6e-9b6c1a2b3c4d",
+  "examPaperId": "b2c3d4e5-0001-4a3a-9b6e-9b6c1a2b3c4d",
+  "subject": "TOAN",
+  "title": "Đề thi thử THPT QG 2024 - Mã đề 101",
+  "durationMinutes": 50,
+  "startedAt": "2026-06-15T08:00:00.000Z",
+  "questions": [
+    {
+      "id": "a1b2c3d4-0003-4a3a-9b6e-9b6c1a2b3c4d",
+      "chapter": "Hàm số",
+      "difficulty": 2,
+      "questionType": "MCQ_4",
+      "points": 0.25,
+      "questionText": "Hàm số y = x^3 - 3x đồng biến trên khoảng nào?",
+      "options": ["(-1;1)", "(-∞;-1)", "(1;+∞)", "(-∞;-1) và (1;+∞)"]
+    },
+    {
+      "id": "a1b2c3d4-0004-4a3a-9b6e-9b6c1a2b3c4d",
+      "chapter": "Hình học",
+      "difficulty": 2,
+      "questionType": "TRUE_FALSE_4",
+      "points": 1,
+      "questionText": "Cho hình chóp S.ABCD có đáy là hình vuông cạnh a, SA vuông góc với đáy, SA = a. Xét tính đúng/sai của các phát biểu sau:",
+      "options": [
+        "a) SA vuông góc với BC",
+        "b) Góc giữa SC và mặt đáy bằng 45°",
+        "c) Thể tích khối chóp S.ABCD bằng a^3/3",
+        "d) SC = a√3"
+      ]
+    },
+    {
+      "id": "a1b2c3d4-0005-4a3a-9b6e-9b6c1a2b3c4d",
+      "chapter": "Đại số",
+      "difficulty": 1,
+      "questionType": "FILL_BLANK",
+      "points": 0.5,
+      "questionText": "Giải phương trình 2x + 4 = 10. Đáp án: x = ___",
+      "options": null
+    }
+  ]
+}
+```
+
+> Câu hỏi trả về **không có** `correctAnswer`/`explanation` (dùng
+> `ExamQuestionPublicDto`), và thứ tự đã được xáo trộn (`shuffle()`).
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 400 | `INVALID_REQUEST_BODY` | Thiếu `subject` (Zod) |
+| 400 | `EXAM_INVALID_SUBJECT` | `subject` không nằm trong `SUBJECT_CATALOG` |
+| 404 | `EXAM_PAPER_EMPTY` | Môn học chưa có đề thi `isActive=true` nào có ≥1 câu hỏi `isActive=true` |
+| 409 | `EXAM_INSUFFICIENT_POINTS` | User có ít hơn `EXAM_ENTRY_FEE` (60) điểm tích lũy |
+
+---
+
+#### POST /api/exam/submit
+
+**Request:**
+```json
+{
+  "sessionId": "a1b2c3d4-0001-4a3a-9b6e-9b6c1a2b3c4d",
+  "answers": [
+    { "examQuestionId": "a1b2c3d4-0003-4a3a-9b6e-9b6c1a2b3c4d", "selectedAnswer": 3 },
+    { "examQuestionId": "a1b2c3d4-0004-4a3a-9b6e-9b6c1a2b3c4d", "selectedAnswer": [true, false, false, false] },
+    { "examQuestionId": "a1b2c3d4-0005-4a3a-9b6e-9b6c1a2b3c4d", "selectedAnswer": "x = 3" }
+  ]
+}
+```
+
+**Response (200):**
+```json
+{
+  "sessionId": "a1b2c3d4-0001-4a3a-9b6e-9b6c1a2b3c4d",
+  "score": 7.1,
+  "pointsAwarded": 10
+}
+```
+
+> Cách tính ở ví dụ trên (xem `gradeQuestion()`):
+> - Câu MCQ_4 (0.25đ): chọn đúng đáp án `3` → +0.25.
+> - Câu TRUE_FALSE_4 (1đ), đáp án đúng `[true,true,false,false]`, chọn
+>   `[true,false,false,false]` → đúng 3/4 ý → `TRUE_FALSE_SCORE_RATIOS[3] = 0.5`
+>   → +0.5 (chưa đạt trọn điểm → xuất hiện trong `wrongAnswers` khi xem kết
+>   quả).
+> - Câu FILL_BLANK (0.5đ), đáp án đúng chấp nhận `["x = 3","x=3"]`, nhập
+>   `"x = 3"` → khớp sau `normalizeAnswer()` → +0.5.
+> - `score = round((0.25+0.5+0.5) / (0.25+1+0.5) * 100) / 10 = 7.1` →
+>   `getExamBonusPoints(7.1) = 10`.
+
+**Response khi hết giờ (410):** nếu quá `durationMinutes*60 + 30s` tính từ
+`startedAt`, phiên bị đánh dấu `EXPIRED`, **không** chấm điểm, **không** hoàn
+60 điểm đã trừ:
+```json
+{ "error": "EXAM_EXPIRED", "message": "Phien thi thu '...' da het thoi gian lam bai - bai khong duoc cham diem." }
+```
+Frontend xử lý case này bằng cách tự coi như `{ score: 0, pointsAwarded: 0 }`
+và chuyển sang `ExamResultScreen` (xem `ExamPage.handleSubmit`).
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 400 | `INVALID_REQUEST_BODY` | `sessionId` không phải UUID, hoặc `answers[].selectedAnswer` không phải `number \| string \| boolean[]` (Zod) |
+| 404 | `EXAM_SESSION_NOT_FOUND` | `sessionId` không tồn tại |
+| 403 | `EXAM_SESSION_NOT_OWNED` | Phiên không thuộc về user hiện tại |
+| 409 | `EXAM_SESSION_ALREADY_COMPLETED` | Phiên đã được nộp trước đó — hoặc bị 1 request đồng thời khác "chốt" trước (race condition, xem Ghi chú kỹ thuật) |
+| 410 | `EXAM_EXPIRED` | Đã quá thời gian làm bài + 30s grace period |
+
+---
+
+#### GET /api/exam/:id/result
+
+**Response (200):**
+```json
+{
+  "sessionId": "a1b2c3d4-0001-4a3a-9b6e-9b6c1a2b3c4d",
+  "status": "COMPLETED",
+  "score": 7.1,
+  "pointsAwarded": 10,
+  "totalQuestions": 3,
+  "chapterAnalysis": [
+    { "chapter": "Hàm số", "correctCount": 1, "totalCount": 1, "pointsEarned": 0.25, "pointsTotal": 0.25 },
+    { "chapter": "Hình học", "correctCount": 0, "totalCount": 1, "pointsEarned": 0.5, "pointsTotal": 1 },
+    { "chapter": "Đại số", "correctCount": 1, "totalCount": 1, "pointsEarned": 0.5, "pointsTotal": 0.5 }
+  ],
+  "wrongAnswers": [
+    {
+      "examQuestionId": "a1b2c3d4-0004-4a3a-9b6e-9b6c1a2b3c4d",
+      "questionText": "Cho hình chóp S.ABCD có đáy là hình vuông cạnh a, SA vuông góc với đáy, SA = a. Xét tính đúng/sai của các phát biểu sau:",
+      "questionType": "TRUE_FALSE_4",
+      "chapter": "Hình học",
+      "options": [
+        "a) SA vuông góc với BC",
+        "b) Góc giữa SC và mặt đáy bằng 45°",
+        "c) Thể tích khối chóp S.ABCD bằng a^3/3",
+        "d) SC = a√3"
+      ],
+      "correctAnswer": [true, true, false, false],
+      "selectedAnswer": [true, false, false, false],
+      "explanation": "a, b đúng theo tính chất hình chóp đều có cạnh bên vuông góc đáy; c, d sai do tính toán thể tích/độ dài cạnh.",
+      "points": 1,
+      "pointsEarned": 0.5
+    }
+  ]
+}
+```
+
+> - `wrongAnswers` chỉ gồm câu **chưa đạt trọn điểm** (`pointsEarned <
+>   points`) — kể cả khi đã được điểm thành phần (như ví dụ trên, đúng 3/4 ý
+>   vẫn tính là "chưa đúng").
+> - `chapter` = `"Khác"` nếu câu hỏi không gán chương.
+> - `status` có thể là `EXPIRED` (xem mục `submitExam`) — khi đó `score = 0`,
+>   `pointsAwarded = 0`, nhưng `wrongAnswers`/`chapterAnalysis` vẫn được trả
+>   về dựa trên `ExamAnswer` đã ghi (rỗng, vì hết giờ không tạo `ExamAnswer`).
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 404 | `EXAM_SESSION_NOT_FOUND` | `sessionId` không tồn tại |
+| 403 | `EXAM_SESSION_NOT_OWNED` | Phiên không thuộc về user hiện tại |
+| 409 | `EXAM_SESSION_NOT_COMPLETED` | Phiên đang `IN_PROGRESS` — chưa có kết quả |
+
+---
+
+#### POST /api/admin/exam-papers — Tạo đề thi mới
+
+**Request:**
+```json
+{ "subject": "TOAN", "title": "Đề thi thử THPT QG 2024 - Mã đề 101", "durationMinutes": 50 }
+```
+
+**Response (201):**
+```json
+{
+  "id": "b2c3d4e5-0001-4a3a-9b6e-9b6c1a2b3c4d",
+  "subject": "TOAN",
+  "title": "Đề thi thử THPT QG 2024 - Mã đề 101",
+  "durationMinutes": 50,
+  "isActive": true,
+  "questionCount": 0,
+  "createdAt": "2026-06-15T08:00:00.000Z"
+}
+```
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 400 | `INVALID_REQUEST_BODY` | `subject` không thuộc `SUBJECT_CATALOG`, `title` rỗng/>300 ký tự, hoặc `durationMinutes` không phải số nguyên dương ≤600 (Zod) |
+| 401 | `ADMIN_UNAUTHORIZED` | Thiếu/sai `X-Admin-Secret` |
+
+---
+
+#### GET /api/admin/exam-papers?subject=TOAN — Danh sách đề thi
+
+**Response (200):** trả **mảng trực tiếp** (không phân trang, không bọc `items`):
+```json
+[
+  {
+    "id": "b2c3d4e5-0001-4a3a-9b6e-9b6c1a2b3c4d",
+    "subject": "TOAN",
+    "title": "Đề thi thử THPT QG 2024 - Mã đề 101",
+    "durationMinutes": 50,
+    "isActive": true,
+    "questionCount": 3,
+    "createdAt": "2026-06-15T08:00:00.000Z"
+  }
+]
+```
+
+> `questionCount` chỉ đếm câu hỏi `isActive=true`. Nếu `subject` không truyền,
+> trả tất cả đề (mọi môn).
+
+**Lỗi:** | 401 | `ADMIN_UNAUTHORIZED` |
+
+---
+
+#### GET /api/admin/exam-papers/:id — Chi tiết 1 đề thi
+
+**Response (200):** giống `ExamPaperSummaryDto` + `questions[]` (đầy đủ, **có**
+`correctAnswer`/`explanation`, **gồm cả câu đã bị ẩn** `isActive=false`):
+```json
+{
+  "id": "b2c3d4e5-0001-4a3a-9b6e-9b6c1a2b3c4d",
+  "subject": "TOAN",
+  "title": "Đề thi thử THPT QG 2024 - Mã đề 101",
+  "durationMinutes": 50,
+  "isActive": true,
+  "questionCount": 1,
+  "createdAt": "2026-06-15T08:00:00.000Z",
+  "questions": [
+    {
+      "id": "a1b2c3d4-0003-4a3a-9b6e-9b6c1a2b3c4d",
+      "examPaperId": "b2c3d4e5-0001-4a3a-9b6e-9b6c1a2b3c4d",
+      "chapter": "Hàm số",
+      "difficulty": 2,
+      "questionType": "MCQ_4",
+      "points": 0.25,
+      "questionText": "Hàm số y = x^3 - 3x đồng biến trên khoảng nào?",
+      "options": ["(-1;1)", "(-∞;-1)", "(1;+∞)", "(-∞;-1) và (1;+∞)"],
+      "correctAnswer": 3,
+      "explanation": "y' = 3x^2 - 3 = 3(x-1)(x+1); y' > 0 khi x < -1 hoặc x > 1",
+      "examYear": 2024,
+      "examCode": "Mã đề 101",
+      "isActive": true,
+      "createdAt": "2026-06-15T08:00:00.000Z"
+    }
+  ]
+}
+```
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 404 | `EXAM_PAPER_NOT_FOUND` | `id` không tồn tại |
+| 401 | `ADMIN_UNAUTHORIZED` | |
+
+---
+
+#### PATCH /api/admin/exam-papers/:id — Cập nhật đề thi
+
+**Request (ví dụ tạm ẩn đề):**
+```json
+{ "isActive": false }
+```
+
+**Response (200):** `ExamPaperSummaryDto` (không kèm `questions`):
+```json
+{
+  "id": "b2c3d4e5-0001-4a3a-9b6e-9b6c1a2b3c4d",
+  "subject": "TOAN",
+  "title": "Đề thi thử THPT QG 2024 - Mã đề 101",
+  "durationMinutes": 50,
+  "isActive": false,
+  "questionCount": 1,
+  "createdAt": "2026-06-15T08:00:00.000Z"
+}
+```
+
+> Tất cả field (`title`, `durationMinutes`, `isActive`) đều tùy chọn — chỉ
+> field nào có trong body mới được cập nhật. Dùng cho cả nút "Tạm ẩn / Kích
+> hoạt" trên `AdminExamPaperDetailPage`.
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 400 | `INVALID_REQUEST_BODY` | `title` rỗng/>300, `durationMinutes` không hợp lệ, hoặc `isActive` không phải boolean (Zod) |
+| 404 | `EXAM_PAPER_NOT_FOUND` | `id` không tồn tại |
+| 401 | `ADMIN_UNAUTHORIZED` | |
+
+---
+
+#### POST /api/admin/exam-papers/:id/questions — Thêm 1 câu hỏi
+
+Body theo `CreateExamQuestionPayload`, `options`/`correctAnswer` **phải khớp**
+`questionType` (kiểm tra bởi `validateQuestionShape()`). 3 ví dụ theo từng dạng:
+
+**MCQ_4:**
+```json
+{
+  "chapter": "Hàm số",
+  "difficulty": 2,
+  "questionType": "MCQ_4",
+  "points": 0.25,
+  "questionText": "Hàm số y = x^3 - 3x đồng biến trên khoảng nào?",
+  "options": ["(-1;1)", "(-∞;-1)", "(1;+∞)", "(-∞;-1) và (1;+∞)"],
+  "correctAnswer": 3,
+  "explanation": "y' = 3x^2 - 3 = 3(x-1)(x+1); y' > 0 khi x < -1 hoặc x > 1",
+  "examYear": 2024,
+  "examCode": "Mã đề 101"
+}
+```
+
+**TRUE_FALSE_4** (`correctAnswer` = 4 boolean, theo đúng thứ tự `options` a/b/c/d):
+```json
+{
+  "chapter": "Hình học",
+  "difficulty": 2,
+  "questionType": "TRUE_FALSE_4",
+  "points": 1,
+  "questionText": "Cho hình chóp S.ABCD có đáy là hình vuông cạnh a, SA vuông góc với đáy, SA = a. Xét tính đúng/sai của các phát biểu sau:",
+  "options": [
+    "a) SA vuông góc với BC",
+    "b) Góc giữa SC và mặt đáy bằng 45°",
+    "c) Thể tích khối chóp S.ABCD bằng a^3/3",
+    "d) SC = a√3"
+  ],
+  "correctAnswer": [true, true, false, false],
+  "explanation": "a, b đúng theo tính chất hình chóp đều có cạnh bên vuông góc đáy; c, d sai do tính toán thể tích/độ dài cạnh."
+}
+```
+
+**FILL_BLANK** (`options` không có; `correctAnswer` = mảng các đáp án được
+chấp nhận, so khớp sau khi `normalizeAnswer()` — trim, lowercase, gộp khoảng
+trắng):
+```json
+{
+  "chapter": "Đại số",
+  "difficulty": 1,
+  "questionType": "FILL_BLANK",
+  "points": 0.5,
+  "questionText": "Giải phương trình 2x + 4 = 10. Đáp án: x = ___",
+  "correctAnswer": ["x = 3", "x=3", "3"]
+}
+```
+
+**Response (201):** `ExamQuestionFullDto` (giống item trong `questions[]` ở
+endpoint GET chi tiết đề).
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 400 | `INVALID_REQUEST_BODY` | Sai schema Zod (`questionType` không thuộc 3 giá trị, `points <= 0`, `difficulty` không thuộc 1-3, `questionText`/`options[]` rỗng hoặc quá dài...) |
+| 400 | `EXAM_QUESTION_INVALID` | `options`/`correctAnswer` không khớp `questionType` (ví dụ `MCQ_4` mà `correctAnswer` không phải số 0-3) |
+| 404 | `EXAM_PAPER_NOT_FOUND` | `id` (đề thi) không tồn tại |
+| 401 | `ADMIN_UNAUTHORIZED` | |
+
+---
+
+#### POST /api/admin/exam-papers/:id/questions/import — Import câu hỏi từ Excel
+
+`Content-Type: multipart/form-data`, field `file` (`.xlsx`/`.xls`, tối đa
+5MB). Quy ước cột — xem file mẫu
+`docs/templates/mau-import-cau-hoi-thi-thu.xlsx` (sinh bằng `npm run
+generate:exam-template`):
+
+| Cột | Ghi chú |
+|-----|---------|
+| Chương, Độ khó, Loại câu hỏi, Điểm, Nội dung câu hỏi | bắt buộc |
+| Lựa chọn 1-4 | dùng cho `MCQ_4`/`TRUE_FALSE_4`, bỏ trống với `FILL_BLANK` |
+| Đáp án đúng | `MCQ_4`: `A`-`D` hoặc `0`-`3`; `TRUE_FALSE_4`: 4 giá trị `D/S` cách nhau bởi dấu phẩy (ví dụ `"D,S,D,S"`); `FILL_BLANK`: các đáp án cách nhau bởi `\|` (ví dụ `"Hà Nội\|HN"`) |
+| Giải thích, Năm thi, Mã đề | tùy chọn |
+
+**Response (200) — cho phép THÀNH CÔNG MỘT PHẦN:**
+```json
+{
+  "inserted": 18,
+  "errors": [
+    { "row": 5, "message": "Loai cau hoi 'TRAC_NGHIEM' khong hop le (phai la MCQ_4, TRUE_FALSE_4 hoac FILL_BLANK)." },
+    { "row": 12, "message": "Dap an dung 'E' khong hop le (phai la A/B/C/D hoac 0-3)." }
+  ]
+}
+```
+
+> `row` tính cả dòng header (dòng 1) — `row: 5` = dòng dữ liệu thứ 4. Các
+> dòng hợp lệ vẫn được lưu dù có dòng khác lỗi (xử lý tuần tự từng dòng qua
+> `createExamQuestion`, không bọc transaction chung).
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 400 | `EXAM_IMPORT_FILE_INVALID` | Thiếu file, sai định dạng (không đọc được bằng `xlsx`), không có sheet/dữ liệu, hoặc **vượt 5MB** (`MulterError` → 400, xem fix Review #5) |
+| 404 | `EXAM_PAPER_NOT_FOUND` | `id` (đề thi) không tồn tại |
+| 401 | `ADMIN_UNAUTHORIZED` | |
+
+---
+
+#### PATCH /api/admin/exam-papers/:id/questions/:qid — Cập nhật 1 câu hỏi
+
+> ⚠️ **Endpoint đã implement đầy đủ ở backend nhưng hiện CHƯA có nơi nào ở
+> frontend gọi tới** (không có `adminUpdateExamQuestion` trong
+> `frontend/src/lib/api.ts`, `AdminExamPaperDetailPage` chỉ có nút "Xoá", không
+> có "Sửa"). Xem mục Ghi chú kỹ thuật.
+
+**Request (partial — chỉ field cần đổi):**
+```json
+{ "explanation": "Giải thích đã được cập nhật rõ hơn..." }
+```
+
+**Response (200):** `ExamQuestionFullDto` sau khi cập nhật.
+
+> Nếu request có `questionType`/`options`/`correctAnswer`, server validate
+> lại **toàn bộ shape theo dạng câu hỏi MỚI** (lấy giá trị cũ cho field không
+> đổi) bằng `validateQuestionShape()`.
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 400 | `INVALID_REQUEST_BODY` | Sai schema Zod (partial của schema tạo câu hỏi) |
+| 400 | `EXAM_QUESTION_INVALID` | Sau khi áp input mới, `options`/`correctAnswer` không khớp `questionType` |
+| 404 | `EXAM_QUESTION_NOT_FOUND` | `qid` không tồn tại hoặc không thuộc đề `id` |
+| 401 | `ADMIN_UNAUTHORIZED` | |
+
+---
+
+#### DELETE /api/admin/exam-papers/:id/questions/:qid — Ẩn 1 câu hỏi
+
+Soft delete — set `isActive = false`, giữ lại để không phá vỡ lịch sử chấm
+điểm các phiên đã làm câu này.
+
+**Response (200):**
+```json
+{ "message": "Da an cau hoi thanh cong." }
+```
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 404 | `EXAM_QUESTION_NOT_FOUND` | `qid` không tồn tại hoặc không thuộc đề `id` |
+| 401 | `ADMIN_UNAUTHORIZED` | |
+
+---
+
+### Luồng chạy (Flow)
+
+#### 1. Bắt đầu phiên thi thử
+
+```
+[Học sinh]                    [ExamPage]                         [Backend]                    [DB]
+  │                              │                                    │                          │
+  ├─ Bấm "Thi thử 🎯" ───────────► sub = 'hub'                         │                          │
+  │◄─ Hiện danh sách môn học ─────┤                                    │                          │
+  │                              │                                    │                          │
+  ├─ Chọn môn (vd TOAN) ──────────► setLoadingSubj('TOAN')             │                          │
+  │                              ├─ POST /api/exam/start               │                          │
+  │                              │   { subject: "TOAN" } ──────────────► startExam()              │
+  │                              │                                    ├─ pickFairExamPaper(): ─────► SELECT ExamPaper
+  │                              │                                    │   - đề isActive + có câu      WHERE subject &
+  │                              │                                    │     hỏi isActive              isActive
+  │                              │                                    │   - groupBy ExamSession ──────► COUNT theo
+  │                              │                                    │     theo examPaperId            examPaperId
+  │                              │                                    │   - chọn random trong nhóm
+  │                              │                                    │     "đã thi ít nhất"
+  │                              │                                    ├─ $transaction:
+  │                              │                                    │   deductPointsInTx(60) ────────► UPDATE user_points
+  │                              │                                    │     (optimistic lock + retry)     (version check)
+  │                              │                                    │   CREATE ExamSession ──────────► INSERT exam_sessions
+  │                              │                                    │   SELECT ExamQuestion ──────────► WHERE examPaperId
+  │                              │                                    │     (toàn bộ câu isActive)        & isActive
+  │                              │◄─ 201 { sessionId, examPaperId,     │   shuffle() + toPublicDto()
+  │                              │         title, durationMinutes,     │   (ẩn correctAnswer/explanation)
+  │                              │         startedAt, questions[] } ───┤                          │
+  │                              ├─ setSession(...); sub = 'session'   │                          │
+  │                              ├─ getMyProfile() ──────────────────────► (cập nhật điểm hiển thị) │
+  │◄─ ExamSessionScreen ───────────┤                                    │                          │
+  │                              │                                    │                          │
+  │  nếu 409 EXAM_INSUFFICIENT_POINTS:                                  │                          │
+  │◄─ "Bạn cần tối thiểu 60 điểm tích lũy để vào thi thử." ──────────────┤                          │
+  │  nếu 404 EXAM_PAPER_EMPTY:                                          │                          │
+  │◄─ "Môn học này hiện chưa có đề thi thử. Vui lòng thử lại sau." ──────┤                          │
+```
+
+#### 2. Làm bài & nộp bài
+
+```
+[Học sinh]              [ExamSessionScreen]                      [Backend]                    [DB]
+  │                              │                                    │                          │
+  ├─ Trả lời từng câu ────────────► onAnswerChange(qId, value)         │                          │
+  │                              │   (lưu vào Map answers — chỉ ở      │                          │
+  │                              │    client, KHÔNG gọi API mỗi câu)   │                          │
+  │                              │                                    │                          │
+  │  setInterval 1s ───────────────► timeLeft--, hiện ps-timer          │                          │
+  │  timeLeft === 0 ───────────────► autoSubmitted=true → onSubmit()    │                          │
+  │                              │                                    │                          │
+  ├─ Bấm "Nộp bài" (hoặc auto) ────► handleSubmit()                    │                          │
+  │                              ├─ POST /api/exam/submit               │                          │
+  │                              │   { sessionId, answers[] } ──────────► submitExam()            │
+  │                              │                                    ├─ now > startedAt +          │
+  │                              │                                    │   duration*60 + 30s ?       │
+  │                              │                                    │   CÓ → UPDATE status=        │
+  │                              │                                    │   EXPIRED ────────────────────► exam_sessions
+  │                              │◄─ 410 EXAM_EXPIRED ───────────────────┤   (không chấm, không hoàn   │
+  │                              │   (FE coi như score=0, pointsAwarded=0,  điểm)                    │
+  │                              │    chuyển sang ExamResultScreen)        │                          │
+  │                              │                                    │  KHÔNG → tiếp tục:          │
+  │                              │                                    ├─ $transaction:               │
+  │                              │                                    │   freshSession.status ===    │
+  │                              │                                    │   IN_PROGRESS? (else 409)    │
+  │                              │                                    │   gradeQuestion() x N câu    │
+  │                              │                                    │   (MCQ_4/TRUE_FALSE_4/       │
+  │                              │                                    │    FILL_BLANK)               │
+  │                              │                                    │   createMany ExamAnswer ──────► INSERT exam_answers
+  │                              │                                    │   score = round(earned/total │   (skipDuplicates)
+  │                              │                                    │     *100)/10                 │
+  │                              │                                    │   pointsAwarded =             │
+  │                              │                                    │     getExamBonusPoints(score)│
+  │                              │                                    │   nếu pointsAwarded>0:       │
+  │                              │                                    │     addPointsInTx() ──────────► UPDATE user_points
+  │                              │                                    │   updateMany ExamSession      │
+  │                              │                                    │   WHERE status=IN_PROGRESS ───► UPDATE exam_sessions
+  │                              │                                    │   (count=0 → đã bị chốt       │   SET status=COMPLETED,
+  │                              │                                    │    trước → 409) ──► rollback   │   score, pointsAwarded
+  │                              │◄─ 200 { sessionId, score,             │                          │
+  │                              │         pointsAwarded } ──────────────┤                          │
+  │                              ├─ getMyProfile() ────────────────────────► (cập nhật điểm hiển thị) │
+  │◄─ ExamResultScreen ─────────────┤                                    │                          │
+```
+
+#### 3. Xem kết quả chi tiết
+
+```
+[Học sinh]              [ExamResultScreen]                       [Backend]                    [DB]
+  │                              │                                    │                          │
+  ├─ Vào màn kết quả ──────────────► useEffect: GET /api/exam/:id/      │                          │
+  │                              │   result ─────────────────────────────► getExamResult()        │
+  │                              │                                    ├─ Promise.all:                │
+  │                              │                                    │   SELECT ExamQuestion ────────► exam_questions
+  │                              │                                    │     WHERE examPaperId          (toàn bộ đề, kể cả
+  │                              │                                    │   SELECT ExamAnswer ──────────► exam_answers
+  │                              │                                    │     WHERE sessionId             câu đã bị ẩn)
+  │                              │                                    ├─ Gộp theo chapter →
+  │                              │                                    │   chapterAnalysis[]
+  │                              │                                    ├─ pointsEarned < points →
+  │                              │                                    │   wrongAnswers[] (kèm
+  │                              │                                    │   correctAnswer + explanation)
+  │                              │◄─ 200 { score, pointsAwarded,         │                          │
+  │                              │         chapterAnalysis[],            │                          │
+  │                              │         wrongAnswers[] } ──────────────┤                          │
+  │◄─ Điểm + icon (🎉/💪/📖) ───────┤                                    │                          │
+  │◄─ Bảng "Phân tích theo chương" ─┤                                    │                          │
+  │◄─ "Câu chưa đúng" (đáp án        │                                    │                          │
+  │    đúng + giải thích nếu có) ───┤                                    │                          │
+  │                              │                                    │                          │
+  ├─ "Thi tiếp 🎯" ──────────────────► reset state → sub = 'hub'         │                          │
+  ├─ "Về trang chủ" ──────────────────► onHome() → ProfilePage           │                          │
+```
+
+#### 4. Admin quản lý đề thi thử
+
+```
+[Admin]                  [AdminExamPage]                         [Backend]                    [DB]
+  │                              │                                    │                          │
+  ├─ Tab "Đề thi thử" ─────────────► AdminExamPaperListPage             │                          │
+  │                              ├─ GET /api/admin/exam-papers           │                          │
+  │                              │   ?subject= ──────────────────────────► listExamPapers() ────────► SELECT ExamPaper
+  │◄─ Danh sách đề (lọc môn) ───────┤                                    │   + groupBy questionCount   + groupBy ExamQuestion
+  │                              │                                    │                          │
+  ├─ "+ Tạo đề thi mới" → điền       │                                    │                          │
+  │   môn / tên đề / thời gian ──────► POST /api/admin/exam-papers ───────► createExamPaper() ───────► INSERT exam_papers
+  │◄─ reload list ──────────────────┤                                    │                          │
+  │                              │                                    │                          │
+  ├─ Click 1 đề ─────────────────────► AdminExamPaperDetailPage          │                          │
+  │                              ├─ GET /api/admin/exam-papers/:id ───────► getExamPaperDetail() ────► SELECT ExamPaper +
+  │◄─ Chi tiết đề (kèm correctAnswer) ┤                                    │   (toàn bộ ExamQuestion,    ExamQuestion[]
+  │   + danh sách câu hỏi ───────────┤                                    │    kể cả isActive=false)    (tất cả, mọi trạng thái)
+  │                              │                                    │                          │
+  ├─ "Tạm ẩn / Kích hoạt" ─────────────► PATCH /api/admin/exam-papers/:id │                          │
+  │                              │     { isActive: !paper.isActive } ─────► updateExamPaper() ───────► UPDATE exam_papers
+  │◄─ reload detail ──────────────────┤                                    │                          │
+  │                              │                                    │                          │
+  ├─ "+ Thêm câu hỏi" → chọn dạng       │                                    │                          │
+  │   (MCQ_4/TRUE_FALSE_4/FILL_BLANK),  │                                    │                          │
+  │   điền nội dung + đáp án ───────────► AdminExamQuestionForm            │                          │
+  ├─ "Thêm câu hỏi" ──────────────────────► POST .../:id/questions ────────► createExamQuestion() ────► validateQuestionShape()
+  │                              │       (payload theo dạng)               │                            INSERT exam_questions
+  │◄─ reload detail ──────────────────────┤                                │                          │
+  │                              │                                    │                          │
+  ├─ Chọn file Excel (.xlsx) ──────────────► AdminExamImportBox            │                          │
+  │                              ├─ POST .../:id/questions/import ─────────► uploadExcelFile()        │
+  │                              │   (multipart/form-data, field "file")   │   → importQuestionsFromExcel()
+  │                              │                                    ├─ parseExcelRow() x N dòng     │
+  │                              │                                    ├─ createExamQuestion() từng    │
+  │                              │                                    │   dòng hợp lệ ──────────────────► INSERT exam_questions
+  │◄─ "Đã thêm N câu hỏi" +                  │◄─ 200 { inserted, errors[] } ─┤   (dòng lỗi bị skip,        (mỗi dòng hợp lệ)
+  │   danh sách dòng lỗi (nếu có) ───────────┤                                │    không rollback toàn bộ)
+  │                              │                                    │                          │
+  ├─ "Xoá" 1 câu hỏi ────────────────────────► DELETE .../questions/:qid ────► deleteExamQuestion() ────► UPDATE isActive=false
+  │◄─ reload detail (câu mất khỏi             │                                │                          │
+  │   danh sách, nhưng vẫn còn trong          │                                │                          │
+  │   exam_questions để giữ lịch sử) ─────────┤                                │                          │
+```
+
+---
+
+### File Structure
+
+```
+backend/
+├── prisma/
+│   ├── schema.prisma                    +4 model: ExamPaper, ExamQuestion, ExamSession, ExamAnswer
+│   └── migrations/
+│       └── 20260613232440_add_exam_module/
+└── src/
+    ├── app.ts                            +examRouter, +examAdminRouter, +12 error code → HTTP status
+    ├── routes/
+    │   ├── exam.route.ts                  POST /start, POST /submit, GET /:id/result (verifyAppToken)
+    │   └── exam-admin.route.ts            CRUD đề/câu hỏi + import Excel (verifyAdminSecret)
+    ├── services/
+    │   ├── exam/
+    │   │   ├── exam.types.ts              hằng số (EXAM_ENTRY_FEE, EXAM_GRACE_SECONDS,
+    │   │   │                                TRUE_FALSE_SCORE_RATIOS, getExamBonusPoints) + DTOs
+    │   │   ├── exam.errors.ts             12 lớp lỗi (ExamPaperNotFoundError, ExamExpiredError, ...)
+    │   │   ├── exam.service.ts            ExamService: pickFairExamPaper, gradeQuestion,
+    │   │   │                                validateQuestionShape, normalizeAnswer, startExam,
+    │   │   │                                submitExam, getExamResult, + CRUD đề/câu hỏi (admin)
+    │   │   └── exam-import.service.ts     parseExcelRow, importQuestionsFromExcel
+    │   └── points/
+    │       ├── points.service.ts          +deductPointsInTx() — đối ngẫu addPointsInTx()
+    │       └── points.types.ts            +PointReason.THI_THU_ENTRY_FEE, THI_THU_RESULT
+    ├── scripts/
+    │   ├── generate-exam-import-template.ts  sinh docs/templates/mau-import-cau-hoi-thi-thu.xlsx
+    │   ├── smoke-test-exam.ts                 87 test case (hàm thuần + luồng chính)
+    │   └── smoke-test-exam-concurrency.ts     21 test case (race condition start/submit)
+    └── package.json                       +scripts smoke:exam, smoke:exam:concurrency,
+                                             generate:exam-template; +deps multer, xlsx, @types/multer
+
+frontend/
+└── src/
+    ├── App.tsx
+    │   ├── ProfilePage                    +nút "Thi thử 🎯" (onExam) cạnh "Bắt đầu ôn tập 📚"
+    │   ├── Screen 'exam'                  ExamPage (sub: 'hub' | 'session' | 'result')
+    │   ├── ExamPage                       hub chọn môn → startExam → session/result
+    │   ├── ExamSessionScreen              đồng hồ đếm ngược, auto-submit khi timeLeft=0
+    │   ├── ExamQuestionCard               render theo questionType (MCQ_4/TRUE_FALSE_4/FILL_BLANK)
+    │   ├── ExamResultScreen               điểm, icon, chapterAnalysis, wrongAnswers
+    │   ├── defaultAnswerFor()             giá trị mặc định theo questionType (-1 / [] / '')
+    │   ├── describeExamAnswer()           hiển thị 1 đáp án (đã chọn/đúng) ở màn kết quả
+    │   ├── AdminPage                      +tab 'exams' (AdminTab = 'reports' | 'exams')
+    │   ├── AdminExamPage                  điều hướng list ↔ detail (AdminExamSub)
+    │   ├── AdminExamPaperListPage         danh sách đề (lọc môn) + tạo đề mới
+    │   ├── AdminExamPaperDetailPage       chi tiết đề, toggle active, danh sách câu hỏi + xoá
+    │   ├── AdminExamQuestionForm          form thêm câu hỏi theo 3 dạng
+    │   └── AdminExamImportBox             upload Excel, hiện inserted/errors theo dòng
+    ├── App.css                            +.exam-*, .admin-exam-*, .admin-import-*,
+    │                                       .admin-tab(s), .btn-lg, .ps-option.selected*
+    └── lib/
+        └── api.ts
+            ├── types: ExamQuestionType, ExamSessionStatus, ExamAnswerValue, ExamQuestionPublic,
+            │   StartExamResult, SubmitExamResult, ExamChapterAnalysis, ExamWrongAnswer, ExamResult,
+            │   ExamPaperSummary, ExamQuestionFull, ExamPaperDetail, CreateExamQuestionPayload,
+            │   ExamImportResultDto
+            ├── startExam(), submitExam(), getExamResult()                       (học sinh)
+            └── adminCreateExamPaper(), adminListExamPapers(),
+                adminGetExamPaperDetail(), adminUpdateExamPaper(),
+                adminCreateExamQuestion(), adminDeleteExamQuestion(),
+                adminImportExamQuestions()       (admin — ⚠️ thiếu adminUpdateExamQuestion)
+```
+
+---
+
+### Ghi chú kỹ thuật
+
+**1. Thuật toán chọn đề "công bằng" (`pickFairExamPaper`)**
+Mỗi lần học sinh bấm "Thi thử" cho 1 môn, hệ thống KHÔNG random hoàn toàn
+trong mọi đề — mà: (1) lấy các đề `isActive=true` có ≥1 câu hỏi `isActive=true`,
+(2) đếm số lần user đã thi từng đề (`groupBy ExamSession`), (3) tìm số lần
+thi **tối thiểu** (`minAttempts`) trong nhóm, (4) random đều trong các đề có
+`attemptCount === minAttempts`. Kết quả: học sinh sẽ "xoay vòng" qua hết các
+đề trước khi gặp lại đề đã làm — tránh tình trạng 1 đề bị rút liên tục do
+random thuần.
+
+**2. Optimistic locking + retry cho `startExam`/`submitExam`**
+Cả 2 thao tác đều bọc `$transaction` và catch
+`OptimisticLockRetryableError` để retry tối đa `MAX_EXAM_RETRY = 10` lần, có
+`delayJitter()` (10-50ms ngẫu nhiên) giữa các lần retry để giảm "thundering
+herd" khi nhiều request cùng đụng `version` của `user_points`. Nếu hết
+`MAX_EXAM_RETRY` lần vẫn conflict → `OptimisticLockError` (500).
+
+**3. `deductPointsInTx` — đối ngẫu của `addPointsInTx`**
+`startExam` cần trừ `EXAM_ENTRY_FEE` (60 điểm) **atomic cùng** việc tạo
+`ExamSession` — nếu tạo session thất bại, điểm KHÔNG được trừ (và ngược lại).
+`PointsService.deductPointsInTx()` mới được thêm theo đúng pattern
+`addPointsInTx()` (cùng 1 outer `tx`, `updateMany` + check `version` +
+`writeTransactionLog` với `amount` âm), khác biệt duy nhất: kiểm tra
+`currentPoints >= amount` trước, nếu không đủ → `PointsInsufficientError` →
+`ExamService` bắt và chuyển thành `ExamInsufficientPointsError` (409).
+
+**4. Chấm điểm 3 dạng câu hỏi (`gradeQuestion`)**
+- `MCQ_4`: đúng hoàn toàn → `+points`, sai → `0` (không có điểm thành phần).
+- `TRUE_FALSE_4`: đếm số ý đúng trong 4 ý (`correctCount` 0-4), điểm =
+  `points * TRUE_FALSE_SCORE_RATIOS[correctCount]` với
+  `TRUE_FALSE_SCORE_RATIOS = [0, 0.1, 0.25, 0.5, 1]` — đúng 2/4 ý chỉ được
+  25% điểm câu, đúng 3/4 ý được 50%. Ý không trả lời (không phải `boolean`)
+  tính là sai.
+- `FILL_BLANK`: chuẩn hoá cả 2 phía bằng `normalizeAnswer()` (trim, lowercase,
+  gộp khoảng trắng liên tiếp) rồi so khớp với **bất kỳ** đáp án nào trong
+  `correctAnswer[]` — khớp 1 là đủ `+points`.
+
+Câu chưa trả lời được gửi lên dưới dạng sentinel `{}` (hợp lệ với mọi dạng
+JSON và luôn được `gradeQuestion` tính là sai).
+
+**5. Giới hạn thời gian + grace period (`EXAM_GRACE_SECONDS = 30`)**
+`submitExam` so sánh `Date.now()` với
+`startedAt + durationMinutes*60_000 + 30_000` **trước khi** vào transaction
+chấm điểm. Quá hạn → đánh dấu `EXPIRED`, không tạo `ExamAnswer`, không
+chấm/thưởng điểm, **không hoàn lại** 60 điểm đã trừ lúc `startExam`. 30 giây
+grace là khoảng đệm cho độ trễ mạng khi học sinh bấm nộp đúng lúc hết giờ.
+
+**6. Điểm thưởng theo bậc (`getExamBonusPoints`)**
+
+| Điểm (thang 10) | Điểm thưởng |
+|------------------|-------------|
+| < 7.0 | 0 |
+| 7.0 – 7.9 | 10 |
+| 8.0 – 8.9 | 20 |
+| 9.0 – 9.9 | 50 |
+| 10.0 | 120 |
+
+Khi `pointsAwarded = 0`, `submitExam` **không gọi** `addPointsInTx` (hàm này
+yêu cầu `amount > 0`, sẽ ném `InvalidPointsAmountError` nếu gọi với `0`) —
+chỉ ghi `score`/`pointsAwarded = 0` vào `ExamSession`.
+
+**7. Fix race condition khi `pointsAwarded = 0` (Review #5, bug #3)**
+Khi điểm < 7.0, `submitExam` không đi qua `addPointsInTx` (không có
+optimistic lock nào ở bước này) — nếu chỉ dùng `tx.examSession.update()` vô
+điều kiện, 2 request nộp bài đồng thời cho cùng 1 phiên đều có thể vượt qua
+check `status === 'IN_PROGRESS'` (đọc trước khi bên kia commit, Read
+Committed) và cả hai trả `200`. Fix: đổi thành
+`tx.examSession.updateMany({ where: { id, status: 'IN_PROGRESS' }, data:
+{...} })` — nếu `count === 0` (đã bị request khác chốt trước) → ném
+`ExamSessionAlreadyCompletedError`. Xác nhận bằng
+`smoke-test-exam-concurrency.ts` (21/21 PASS).
+
+**8. Fix upload Excel > 5MB trả sai mã lỗi (Review #5, bug #2)**
+`multer` ném `MulterError` (`LIMIT_FILE_SIZE`) khi file vượt 5MB — middleware
+lỗi tập trung trong `app.ts` không biết mã lỗi này nên rơi vào nhánh `>= 500`.
+Fix: wrapper `uploadExcelFile()` trong `exam-admin.route.ts` bắt
+`MulterError` và chuyển thành `ExamImportFileInvalidError` →
+`400 EXAM_IMPORT_FILE_INVALID`.
+
+**9. Fix thiếu import type ở FE (Review #5, bug #1)**
+`App.tsx` thiếu import `ExamQuestionPublic`/`ExamImportResultDto` (và import
+dư `ExamQuestionFull` không dùng) khiến `tsc -b` fail với 8 lỗi (`TS6196`,
+`TS2552`/`TS2304`, kéo theo 4 lỗi `TS7006` implicit `any`). Đã fix trong block
+import của `App.tsx`.
+
+**10. Soft delete `ExamQuestion` (`isActive=false`)**
+Giống pattern của Practice Module — xoá câu hỏi không xoá dữ liệu, chỉ ẩn
+khỏi: (a) `pickFairExamPaper`/`startExam` (câu mới sẽ không được rút), (b)
+danh sách hiển thị cho admin trong `AdminExamPaperDetailPage`. Các
+`ExamAnswer`/`ExamResult` của các phiên đã làm câu đó **trước khi** bị ẩn vẫn
+giữ nguyên (join trực tiếp `ExamQuestion` theo `examQuestionId`, không lọc
+`isActive`).
+
+**11. `PATCH /api/admin/exam-papers/:id/questions/:qid` chưa có FE sử dụng**
+Route, Zod schema (`updateQuestionSchema = createQuestionSchema.partial()`)
+và `ExamService.updateExamQuestion()` đã implement đầy đủ và đúng (validate
+lại shape theo dạng mới nếu đổi `questionType`/`options`/`correctAnswer`),
+nhưng `frontend/src/lib/api.ts` **không có** `adminUpdateExamQuestion()`, và
+`AdminExamPaperDetailPage` chỉ có nút "Xoá" cho mỗi câu hỏi, không có "Sửa".
+Hiện tại cách duy nhất để sửa nội dung 1 câu hỏi đã tạo là: xoá (ẩn) câu cũ
+rồi thêm câu mới qua `AdminExamQuestionForm`.
+
+---
+
+### Vấn đề đã ghi nhận, chưa xử lý trong tính năng này
+
+- **Thiếu UI "Sửa câu hỏi"** ở `AdminExamPaperDetailPage` dù backend
+  `PATCH .../questions/:qid` đã sẵn sàng (xem Ghi chú kỹ thuật #11).
+- **`GET /api/admin/exam-papers?subject=`** trả mảng **không phân trang** —
+  khi số đề thi tăng lên (nhiều môn × nhiều mã đề), danh sách admin sẽ tải
+  toàn bộ cùng lúc.
+- **Không có trang "Lịch sử thi thử"** cho học sinh — khác với Practice
+  Module (Section 4) có `PaginatedHistory`/`PracticeStats`, học sinh thi thử
+  xong chỉ xem được kết quả ngay lúc đó (`ExamResultScreen`), không có nơi
+  xem lại các phiên `ExamSession` cũ.
+- **Tổng điểm các câu trong 1 đề không bị validate phải bằng 10** — đây là
+  chủ ý thiết kế (hệ thống tự quy đổi qua `score = earned/total*100/10`),
+  nhưng admin cần tự đảm bảo tổng điểm hợp lý (ví dụ không tạo đề chỉ có 1
+  câu 0.25đ) để điểm số có ý nghĩa.
+- **Import Excel xử lý tuần tự, không transaction** — nếu 1 trong nhiều dòng
+  hợp lệ ghi DB thành công nhưng request bị ngắt giữa chừng (timeout, crash),
+  các câu đã insert trước đó **không bị rollback**; lần import lại sẽ tạo
+  câu hỏi trùng (không có check trùng nội dung).
+
+---
+
+### Cách thiết lập & kiểm thử
+
+```bash
+# Backend: smoke test luồng chính (87 test case — chấm điểm 3 dạng, chọn đề
+# công bằng, hết giờ + grace period, điểm thưởng, lỗi đầu vào...)
+cd backend
+npm run smoke:exam
+
+# Backend: smoke test race condition (21 test case — tranh chấp trừ điểm khi
+# vào thi, tranh chấp "chốt phiên" khi nộp bài cả 2 trường hợp pointsAwarded=0/>0)
+npm run smoke:exam:concurrency
+
+# (Tuỳ chọn) sinh lại file mẫu import Excel
+npm run generate:exam-template
+# → ghi ra docs/templates/mau-import-cau-hoi-thi-thu.xlsx
+
+# Frontend
+npm run dev
+# → Đăng nhập học sinh → ProfilePage → "Thi thử 🎯"
+# → Admin: http://localhost:5173/#admin → tab "Đề thi thử"
+#   (dùng giá trị ADMIN_SECRET trong backend/.env)
+```
