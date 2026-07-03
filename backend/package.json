@@ -14,7 +14,9 @@
     "smoke:reports": "tsx src/scripts/smoke-test-question-reports.ts",
     "smoke:exam": "tsx src/scripts/smoke-test-exam.ts",
     "smoke:exam:concurrency": "tsx src/scripts/smoke-test-exam-concurrency.ts",
-    "generate:exam-template": "tsx src/scripts/generate-exam-import-template.ts"
+    "smoke:question-bank": "tsx src/scripts/smoke-test-question-bank.ts",
+    "generate:exam-template": "tsx src/scripts/generate-exam-import-template.ts",
+    "seed:question-bank": "tsx src/scripts/seed-question-bank-from-questions.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

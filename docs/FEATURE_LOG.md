@@ -2841,3 +2841,583 @@ npm run dev
 # → Admin: http://localhost:5173/#admin → tab "Đề thi thử"
 #   (dùng giá trị ADMIN_SECRET trong backend/.env)
 ```
+
+---
+
+## 7. Ngân hàng câu hỏi (Question Bank)
+
+**Trạng thái:** ✅ Hoàn thành
+**Ngày hoàn thành:** 2026-07-03
+**Branch / commit liên quan:** `feature/question-bank`
+
+---
+
+### Tổng quan
+
+Module Ngân hàng câu hỏi là **kho lưu trữ câu hỏi dùng chung** cho toàn hệ
+thống. Admin có thể tạo, sửa, xóa câu hỏi trong kho — sau đó thêm hàng loạt
+vào bất kỳ đề thi nào mà không phải nhập lại. Điểm khác biệt so với câu hỏi
+đề thi (`exam_questions`): câu trong kho có thể được **tái sử dụng** trong
+nhiều đề, và khi xóa khỏi kho, các bản sao trong đề thi vẫn còn nguyên
+(`FK ON DELETE SET NULL`).
+
+**Tính năng chính:**
+- CRUD đầy đủ: Tạo / Đọc (danh sách có filter + phân trang) / Sửa / Xóa câu hỏi
+- Hỗ trợ 3 dạng câu: `MCQ_4` (trắc nghiệm 4 đáp án), `TRUE_FALSE_4` (4 phát biểu Đúng/Sai), `FILL_BLANK` (điền từ)
+- Tìm kiếm theo nội dung (full-text contains, case-insensitive)
+- Lọc theo môn học, chương, độ khó, trạng thái active
+- **Hard delete có cảnh báo**: kiểm tra phiên `IN_PROGRESS` trước khi xóa; nếu đang có phiên thi dùng câu này → trả lỗi `409 QUESTION_BANK_DELETE_BLOCKED`
+- Kiểm tra usage: xem câu đang dùng trong đề nào, có phiên đang diễn ra không
+- **Thêm từ kho vào đề thi** theo batch (tối đa 100 câu): tự động bỏ qua câu đã tồn tại trong đề (skip duplicate, không báo lỗi)
+
+---
+
+### Data Model
+
+#### Bảng `question_bank` (mới)
+
+| Field | Kiểu | Mô tả |
+|-------|------|-------|
+| `id` | TEXT (UUID) | Primary key |
+| `subject` | TEXT | Mã môn (`TOAN`, `VAN`, ...) |
+| `chapter` | TEXT? | Tên chương (tùy chọn) |
+| `difficulty` | INTEGER | Độ khó: 1=dễ, 2=trung bình, 3=khó |
+| `questionType` | TEXT | Dạng câu: `MCQ_4` / `TRUE_FALSE_4` / `FILL_BLANK` |
+| `points` | FLOAT | Điểm của câu hỏi |
+| `questionText` | TEXT | Nội dung câu hỏi (tối đa 4000 ký tự) |
+| `options` | JSONB? | `null` với FILL_BLANK; mảng 4 chuỗi với MCQ_4/TRUE_FALSE_4 |
+| `correctAnswer` | JSONB | Đáp án đúng: `int` (MCQ_4), `bool[]` (TRUE_FALSE_4), `string[]` (FILL_BLANK) |
+| `explanation` | TEXT? | Giải thích đáp án |
+| `examYear` | INTEGER? | Năm đề tham khảo |
+| `examCode` | TEXT? | Mã đề tham khảo |
+| `isActive` | BOOLEAN | `false` = ẩn khỏi danh sách active |
+| `createdAt` | TIMESTAMP | Thời điểm tạo |
+| `sourceQuestionId` | TEXT? (UNIQUE) | ID câu hỏi gốc từ bảng `questions` (module Ôn tập). `null` = câu được tạo thủ công hoặc import. Ràng buộc `@unique` đảm bảo seed script idempotent — chạy nhiều lần không tạo bản sao. |
+
+**Index:** `(subject, difficulty, isActive)` — tối ưu truy vấn lọc câu theo môn/độ khó.
+
+#### Bảng `exam_questions` (thay đổi)
+
+| Field mới | Kiểu | Mô tả |
+|-----------|------|-------|
+| `questionBankId` | TEXT? (FK, nullable) | Liên kết với `question_bank.id`. `ON DELETE SET NULL`: khi câu trong kho bị xóa, field này tự thành `null` — bản sao trong đề thi vẫn tồn tại. |
+
+**Index mới:** `exam_questions_questionBankId_idx`.
+
+---
+
+### API Reference
+
+#### Admin — `/api/admin/question-bank/*` (cần `X-Admin-Secret: <ADMIN_SECRET>`)
+
+| Method | Path | Mô tả |
+|--------|------|-------|
+| GET | `/api/admin/question-bank` | Danh sách câu hỏi (filter + phân trang) |
+| POST | `/api/admin/question-bank` | Tạo câu hỏi mới trong kho |
+| GET | `/api/admin/question-bank/:id/usage` | Kiểm tra câu đang được dùng trong đề nào |
+| PUT | `/api/admin/question-bank/:id` | Cập nhật câu hỏi (partial update) |
+| DELETE | `/api/admin/question-bank/:id` | Hard delete câu hỏi (có guard phiên IN_PROGRESS) |
+
+#### Endpoint thêm vào `exam-admin` (đã có)
+
+| Method | Path | Mô tả |
+|--------|------|-------|
+| POST | `/api/admin/exam-papers/:id/questions/from-bank` | Thêm nhiều câu từ kho vào đề thi (batch, theo danh sách ID) |
+| POST | `/api/admin/exam-papers/:id/questions/auto-fill` | Tự động lấy N câu ngẫu nhiên từ kho (tỉ lệ 50% dễ / 30% TB / 20% khó) |
+
+---
+
+#### GET /api/admin/question-bank
+
+**Query params (tất cả tùy chọn):**
+
+| Param | Kiểu | Mô tả |
+|-------|------|-------|
+| `subject` | string | Lọc theo mã môn (`TOAN`, `VAN`, ...) |
+| `chapter` | string | Lọc theo tên chương (contains, case-insensitive) |
+| `difficulty` | 1\|2\|3 | Lọc theo độ khó |
+| `search` | string | Tìm kiếm theo nội dung câu hỏi (contains) |
+| `isActive` | `"true"` \| `"false"` | Lọc theo trạng thái |
+| `page` | int > 0 | Trang hiện tại (mặc định: 1) |
+| `pageSize` | 1–100 | Số câu mỗi trang (mặc định: 20) |
+
+**Response (200):**
+```json
+{
+  "items": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440001",
+      "subject": "TOAN",
+      "chapter": "Đại số",
+      "difficulty": 2,
+      "questionType": "MCQ_4",
+      "points": 1,
+      "questionText": "Giá trị của biểu thức log₂8 bằng?",
+      "options": ["2", "3", "4", "6"],
+      "correctAnswer": 1,
+      "explanation": "log₂8 = log₂(2³) = 3",
+      "examYear": 2024,
+      "examCode": "001",
+      "isActive": true,
+      "createdAt": "2026-07-03T02:00:00.000Z"
+    }
+  ],
+  "total": 150,
+  "page": 1,
+  "pageSize": 20
+}
+```
+
+---
+
+#### POST /api/admin/question-bank
+
+**Request body (MCQ_4):**
+```json
+{
+  "subject": "TOAN",
+  "chapter": "Đại số",
+  "difficulty": 2,
+  "questionType": "MCQ_4",
+  "points": 1,
+  "questionText": "Giá trị của biểu thức log₂8 bằng?",
+  "options": ["2", "3", "4", "6"],
+  "correctAnswer": 1,
+  "explanation": "log₂8 = log₂(2³) = 3",
+  "examYear": 2024,
+  "examCode": "001"
+}
+```
+
+**Request body (TRUE_FALSE_4):**
+```json
+{
+  "subject": "LY",
+  "difficulty": 1,
+  "questionType": "TRUE_FALSE_4",
+  "points": 1,
+  "questionText": "Xác nhận đúng/sai về định luật Newton:",
+  "options": ["F=ma", "Lực và phản lực cùng chiều", "Vật tĩnh khi hợp lực = 0", "Gia tốc tỉ lệ nghịch với khối lượng"],
+  "correctAnswer": [true, false, true, true]
+}
+```
+
+**Request body (FILL_BLANK):**
+```json
+{
+  "subject": "VAN",
+  "difficulty": 1,
+  "questionType": "FILL_BLANK",
+  "points": 0.5,
+  "questionText": "Thủ đô của Việt Nam là ___.",
+  "correctAnswer": ["Hà Nội", "Ha Noi"]
+}
+```
+
+**Response (201):** Trả về `QuestionBankSummaryDto` đầy đủ (giống schema trong GET).
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 401 | `ADMIN_UNAUTHORIZED` | Thiếu hoặc sai `X-Admin-Secret` |
+| 400 | `INVALID_REQUEST_BODY` | Thiếu trường bắt buộc, `subject` không hợp lệ |
+| 400 | `EXAM_QUESTION_INVALID` | `correctAnswer` không khớp với `questionType` (ví dụ MCQ_4 nhưng gửi mảng boolean) |
+
+---
+
+#### GET /api/admin/question-bank/:id/usage
+
+**Response (200):**
+```json
+{
+  "examPapers": [
+    {
+      "paperId": "paper-uuid",
+      "paperTitle": "Đề Toán 2024 - Số 1",
+      "subject": "TOAN",
+      "isActive": true,
+      "hasActiveSession": false
+    }
+  ],
+  "totalExamPapers": 1,
+  "hasActiveSession": false
+}
+```
+
+> `hasActiveSession: true` → cảnh báo cho admin: không nên xóa câu này ngay,
+> vì đang có phiên thi thử đang diễn ra dùng đề có chứa câu hỏi này.
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 401 | `ADMIN_UNAUTHORIZED` | Thiếu hoặc sai `X-Admin-Secret` |
+| 404 | `QUESTION_BANK_NOT_FOUND` | `id` không tồn tại trong kho |
+
+---
+
+#### PUT /api/admin/question-bank/:id
+
+**Ngữ nghĩa partial update:** Chỉ trường nào có trong body mới bị cập nhật.
+Có thể gửi chỉ `{ "isActive": false }` để ẩn câu mà không cần gửi lại toàn bộ dữ liệu.
+
+**Request body (ví dụ — chỉ cần gửi trường muốn sửa):**
+```json
+{
+  "chapter": "Giải tích",
+  "difficulty": 3,
+  "isActive": false
+}
+```
+
+**Response (200):** `QuestionBankSummaryDto` sau khi cập nhật.
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 401 | `ADMIN_UNAUTHORIZED` | Thiếu hoặc sai `X-Admin-Secret` |
+| 400 | `INVALID_REQUEST_BODY` | Kiểu dữ liệu không đúng |
+| 400 | `EXAM_QUESTION_INVALID` | Sự kết hợp `questionType/options/correctAnswer` không hợp lệ |
+| 404 | `QUESTION_BANK_NOT_FOUND` | `id` không tồn tại trong kho |
+
+---
+
+#### DELETE /api/admin/question-bank/:id
+
+**Luồng xử lý chi tiết:**
+
+```
+1. Kiểm tra id tồn tại trong question_bank → không → 404 QUESTION_BANK_NOT_FOUND
+
+2. Mở Prisma $transaction:
+   a. Tìm tất cả ExamQuestion có questionBankId = id
+   b. Nếu có → lấy danh sách examPaperId
+   c. Kiểm tra có ExamSession IN_PROGRESS nào dùng các đề đó không
+      → Có → throw QuestionBankDeleteBlockedError (409) → transaction rollback
+   d. Không có → prisma.questionBank.delete({ where: { id } })
+   e. FK ON DELETE SET NULL tự động đặt exam_questions.questionBankId = null
+      cho tất cả ExamQuestion từng tham chiếu đến câu này
+
+3. Trả về 200 + { message: "Da xoa cau hoi khoi ngan hang thanh cong." }
+```
+
+**Response (200):**
+```json
+{ "message": "Da xoa cau hoi khoi ngan hang thanh cong." }
+```
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 401 | `ADMIN_UNAUTHORIZED` | Thiếu hoặc sai `X-Admin-Secret` |
+| 404 | `QUESTION_BANK_NOT_FOUND` | `id` không tồn tại trong kho |
+| 409 | `QUESTION_BANK_DELETE_BLOCKED` | Còn phiên thi thử `IN_PROGRESS` đang dùng đề có câu này |
+
+---
+
+#### POST /api/admin/exam-papers/:id/questions/from-bank
+
+**Mục đích:** Thêm hàng loạt câu hỏi từ kho vào một đề thi. Câu đã tồn tại
+trong đề (theo `questionBankId`) sẽ bị bỏ qua (`skipped`) mà không báo lỗi.
+Chỉ câu có `isActive: true` trong kho mới được thêm.
+
+**Request body:**
+```json
+{
+  "questionBankIds": [
+    "bank-uuid-1",
+    "bank-uuid-2",
+    "bank-uuid-3"
+  ]
+}
+```
+
+> Tối đa 100 UUID mỗi lần gọi. Phải là UUID hợp lệ.
+
+**Luồng xử lý:**
+
+```
+1. Kiểm tra examPaperId tồn tại → không → 404 EXAM_PAPER_NOT_FOUND
+
+2. Mở Prisma $transaction:
+   a. Lấy câu hỏi trong kho theo IDs (chỉ lấy câu isActive=true)
+   b. Tìm questionBankId đã tồn tại trong đề này (để skip)
+   c. Lọc: toInsert = bankQuestions không có trong existingLinks
+   d. createMany ExamQuestion từ toInsert (copy toàn bộ fields từ QuestionBank)
+   e. skipped = questionBankIds.length - toInsert.length
+
+3. Trả về { added, skipped }
+```
+
+**Response (200):**
+```json
+{ "added": 2, "skipped": 1 }
+```
+
+> `skipped` bao gồm cả câu đã có trong đề lẫn câu `isActive=false` trong kho.
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 401 | `ADMIN_UNAUTHORIZED` | Thiếu hoặc sai `X-Admin-Secret` |
+| 400 | `INVALID_REQUEST_BODY` | `questionBankIds` rỗng, vượt 100, hoặc không phải UUID |
+| 404 | `EXAM_PAPER_NOT_FOUND` | `examPaperId` không tồn tại |
+
+---
+
+---
+
+#### POST /api/admin/exam-papers/:id/questions/auto-fill
+
+**Mục đích:** Tự động lấy ngẫu nhiên N câu từ kho (cùng môn với đề thi) theo
+tỉ lệ độ khó cố định: **50% dễ / 30% trung bình / 20% khó**. Câu đã tồn tại
+trong đề thi được bỏ qua tự động. Hữu ích khi muốn nhanh chóng tạo đề mà
+không cần chọn thủ công từng câu.
+
+**Request body:**
+```json
+{ "count": 40 }
+```
+
+> `count` là số câu cần thêm (nguyên dương, tối đa 200). Ví dụ với `count=40`:
+> `easyCount = 20` (50%), `mediumCount = 12` (30%), `hardCount = 8` (20%).
+> Phần còn lại được gán cho nhóm khó để tránh lệch do làm tròn.
+
+**Luồng xử lý:**
+
+```
+1. Kiểm tra examPaperId tồn tại → không → 404 EXAM_PAPER_NOT_FOUND
+
+2. Tính số câu theo độ khó:
+   easyCount   = round(count * 0.5)
+   mediumCount = round(count * 0.3)
+   hardCount   = count - easyCount - mediumCount  ← phần còn lại, tránh lệch do làm tròn
+
+3. Mở Prisma $transaction:
+   a. Đọc existingBankIds (các questionBankId đã có trong đề) — bên trong TX để atomic
+   b. Với mỗi độ khó, query QuestionBank:
+      WHERE subject = paper.subject AND difficulty = diff
+        AND isActive = true
+        AND id NOT IN existingBankIds
+   c. Fisher-Yates shuffle kết quả → lấy đúng số câu cần
+      (nếu kho không đủ câu cho 1 độ khó → lấy tất cả số còn lại)
+   d. createMany ExamQuestion từ tất cả câu đã chọn (copy toàn bộ fields)
+   e. shortage = count - added  (số câu thiếu so với yêu cầu)
+
+4. Trả về { added, skipped, shortage }
+```
+
+**Response (200):**
+```json
+{ "added": 38, "skipped": 0, "shortage": 2 }
+```
+
+> `shortage > 0` → kho không đủ câu cho môn/độ khó tương ứng. Ví dụ:
+> yêu cầu 40 câu nhưng kho môn Toán chỉ còn 38 câu chưa có trong đề →
+> `added: 38, shortage: 2`.
+
+**Lỗi:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 401 | `ADMIN_UNAUTHORIZED` | Thiếu hoặc sai `X-Admin-Secret` |
+| 400 | `INVALID_REQUEST_BODY` | `count` không phải số nguyên dương hoặc vượt 200 |
+| 404 | `EXAM_PAPER_NOT_FOUND` | `examPaperId` không tồn tại |
+
+---
+
+### Luồng chạy (Flow)
+
+#### A. Admin tạo câu hỏi và thêm vào đề thi
+
+```
+Admin
+  │
+  ├─ POST /api/admin/question-bank
+  │    └─ validateQuestionShape (options/correctAnswer khớp questionType?)
+  │    └─ prisma.questionBank.create(...)
+  │    └─ 201 + QuestionBankSummaryDto
+  │
+  ├─ GET /api/admin/question-bank?subject=TOAN&difficulty=2
+  │    └─ listQuestions (filter + phân trang)
+  │    └─ 200 + { items, total, page, pageSize }
+  │
+  ├─ GET /api/admin/question-bank/:id/usage
+  │    └─ Kiểm tra câu đang trong đề nào, có phiên IN_PROGRESS không
+  │    └─ 200 + QuestionBankUsageDto
+  │
+  ├─ POST /api/admin/exam-papers/:paperId/questions/from-bank
+  │    └─ { questionBankIds: ["id1", "id2", ...] }
+  │    └─ TX: lấy câu active → skip duplicate → createMany ExamQuestion
+  │    └─ 200 + { added: N, skipped: M }
+  │
+  └─ POST /api/admin/exam-papers/:paperId/questions/auto-fill
+       └─ { count: 40 }
+       └─ Tính easyCount/mediumCount/hardCount theo tỉ lệ 50/30/20
+       └─ TX: đọc existingBankIds → pickRandom(diff, need) × 3 song song
+              (Fisher-Yates shuffle → slice)
+       └─ createMany ExamQuestion + shortage = count - added
+       └─ 200 + { added: N, skipped: 0, shortage: M }
+```
+
+#### B. Admin xóa câu hỏi (hard delete có guard)
+
+```
+Admin → DELETE /api/admin/question-bank/:id
+          │
+          ├─ findUnique → không tìm thấy → 404
+          │
+          └─ $transaction:
+               ├─ findMany ExamQuestion (questionBankId = id)
+               │    └─ Có → tìm ExamSession IN_PROGRESS dùng các đề đó
+               │         ├─ Có phiên IN_PROGRESS → 409 QUESTION_BANK_DELETE_BLOCKED
+               │         └─ Không có → tiếp tục xóa
+               └─ questionBank.delete(id)
+                    └─ FK ON DELETE SET NULL → exam_questions.questionBankId = null
+                    └─ 200 + { message }
+```
+
+---
+
+### Cấu trúc file liên quan
+
+```
+backend/
+├── prisma/
+│   ├── schema.prisma                            Model QuestionBank mới; thêm field
+│   │                                            questionBankId vào ExamQuestion
+│   └── migrations/
+│       └── 20260703021638_add_question_bank/    Migration SQL tạo bảng question_bank,
+│                                                thêm FK question_bank_id vào exam_questions
+│
+├── src/
+│   ├── services/exam/
+│   │   ├── question-bank.types.ts               QuestionBankSummaryDto, QuestionBankListResult,
+│   │   │                                        QuestionBankUsageDto, AddFromBankResult,
+│   │   │                                        AutoFillFromBankResult (extends AddFromBankResult + shortage),
+│   │   │                                        CreateQuestionBankInput, UpdateQuestionBankInput,
+│   │   │                                        QuestionBankFilter, AddFromBankInput, AutoFillFromBankInput
+│   │   ├── question-bank.errors.ts              QuestionBankNotFoundError (404),
+│   │   │                                        QuestionBankDeleteBlockedError (409),
+│   │   │                                        QuestionBankDuplicateError (không dùng — skip silent)
+│   │   └── question-bank.service.ts             QuestionBankService:
+│   │                                            ├─ listQuestions(filter)
+│   │                                            ├─ createQuestion(input)
+│   │                                            ├─ updateQuestion(id, input)
+│   │                                            ├─ getUsage(id)
+│   │                                            ├─ deleteQuestion(id)      ← hard delete + guard
+│   │                                            ├─ addFromBank(examPaperId, input)
+│   │                                            └─ autoFillFromBank(examPaperId, input)  ← random 50/30/20
+│   │
+│   ├── routes/
+│   │   ├── question-bank.route.ts               Router /api/admin/question-bank
+│   │   │                                        (GET /, POST /, GET /:id/usage,
+│   │   │                                        PUT /:id, DELETE /:id)
+│   │   └── exam-admin.route.ts                  Bổ sung thêm:
+│   │                                            POST /:id/questions/from-bank
+│   │                                            POST /:id/questions/auto-fill
+│   │
+│   ├── app.ts                                   Đăng ký questionBankRouter tại
+│   │                                            /api/admin/question-bank
+│   │
+│   └── scripts/
+│       └── smoke-test-question-bank.ts          Smoke test tất cả luồng chính
+│                                                (23 test case CRUD + usage + from-bank)
+```
+
+---
+
+### Ghi chú kỹ thuật
+
+1. **Hard delete vs soft delete:** Module Ngân hàng câu hỏi dùng **hard delete**
+   (xóa hẳn khỏi DB) thay vì soft delete (`isActive=false`) như module Ôn tập.
+   Lý do: câu trong kho là bản "gốc" để tái sử dụng; khi không còn cần thiết,
+   nên xóa thật. Các bản sao trong `exam_questions` vẫn còn nhờ `ON DELETE SET NULL`.
+
+2. **FK ON DELETE SET NULL:** Khi xóa câu khỏi kho, `exam_questions.questionBankId`
+   tự động về `null`. Điều này có nghĩa: câu trong đề thi trở thành "độc lập" —
+   không còn liên kết với kho nữa. Admin vẫn phải sửa/xóa riêng bản sao trong đề.
+
+3. **Guard phiên IN_PROGRESS bên trong transaction:** Toàn bộ việc kiểm tra
+   và xóa nằm trong cùng 1 transaction để tránh race condition: nếu 1 phiên
+   được tạo ngay sau khi kiểm tra nhưng trước khi xóa, transaction vẫn sẽ
+   phát hiện và từ chối.
+
+4. **addFromBank bỏ qua câu isActive=false:** Khi thêm từ kho vào đề thi,
+   câu bị ẩn (`isActive=false`) được coi là "không tồn tại" và không được thêm
+   — tính vào `skipped`. Hành vi này là có chủ đích: không muốn đề thi chứa
+   câu đang bị ẩn.
+
+5. **Validate shape được tái sử dụng từ exam.service:** `validateQuestionShape`
+   từ `exam.service.ts` được dùng lại để đảm bảo `options/correctAnswer` khớp
+   với `questionType` — không có logic validate trùng lặp.
+
+6. **autoFillFromBank: Fisher-Yates shuffle thay vì `ORDER BY RANDOM()`:** Lấy
+   toàn bộ câu hợp lệ cho mỗi độ khó rồi shuffle phía application, thay vì
+   dùng `ORDER BY RANDOM()` của PostgreSQL. Lý do: `ORDER BY RANDOM()` không thể
+   kết hợp với `LIMIT` hiệu quả trên bảng lớn (phải sort toàn bộ bảng). Fisher-Yates
+   đảm bảo random thực sự và không phụ thuộc vào thứ tự DB trả về.
+
+7. **`sourceQuestionId` — idempotent seed script:** Trường `@unique` này chỉ
+   được dùng bởi `seed-question-bank-from-questions.ts` để "copy" câu từ bảng
+   `questions` (module Ôn tập) sang kho. Ràng buộc `@unique` đảm bảo chạy
+   script nhiều lần không tạo bản sao — bất kỳ câu nào đã có `sourceQuestionId`
+   tương ứng sẽ bị skip.
+
+---
+
+### Cách kiểm thử
+
+```bash
+cd backend
+
+# Chạy smoke test Ngân hàng câu hỏi (23 test case)
+npm run smoke:question-bank
+# Kỳ vọng: toàn bộ PASS, kết thúc bằng "TAT CA KIEM TRA PASS!"
+
+# Test thủ công — tạo câu hỏi MCQ_4
+curl -X POST http://localhost:4000/api/admin/question-bank \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Secret: $ADMIN_SECRET" \
+  -d '{
+    "subject": "TOAN",
+    "chapter": "Đại số",
+    "difficulty": 2,
+    "questionType": "MCQ_4",
+    "points": 1,
+    "questionText": "log₂8 bằng?",
+    "options": ["2", "3", "4", "6"],
+    "correctAnswer": 1
+  }'
+
+# Test thêm câu từ kho vào đề (thay <PAPER_ID> và <BANK_ID> bằng UUID thật)
+curl -X POST http://localhost:4000/api/admin/exam-papers/<PAPER_ID>/questions/from-bank \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Secret: $ADMIN_SECRET" \
+  -d '{ "questionBankIds": ["<BANK_ID>"] }'
+
+# Test kiểm tra usage trước khi xóa
+curl http://localhost:4000/api/admin/question-bank/<BANK_ID>/usage \
+  -H "X-Admin-Secret: $ADMIN_SECRET"
+
+# Test xóa câu (guard sẽ từ chối nếu còn phiên IN_PROGRESS)
+curl -X DELETE http://localhost:4000/api/admin/question-bank/<BANK_ID> \
+  -H "X-Admin-Secret: $ADMIN_SECRET"
+```
+
+### Lưu ý / rủi ro / TODO tiếp theo
+
+- **UI Admin chưa có:** Hiện tại chưa có giao diện cho Ngân hàng câu hỏi trong
+  admin dashboard frontend. Admin phải dùng curl/Postman hoặc viết UI ở giai đoạn tiếp.
+- **Không có giới hạn tổng số câu:** Không có cap cho số câu trong kho — cần
+  monitor dung lượng DB khi số lượng câu tăng lớn.
+- **`skipped` có thể khó debug:** Khi `from-bank` trả `skipped > 0`, admin không
+  biết câu nào bị skip (bị ẩn hay đã có trong đề). Có thể bổ sung field
+  `skippedIds` trong response về sau nếu cần.
+- **Chưa có audit log:** Các thao tác xóa câu chưa được ghi lịch sử (ai xóa, lúc nào).
+  Cân nhắc thêm bảng `admin_audit_log` nếu cần truy vết.
+- TODO tiếp theo: Xây dựng UI tab "Ngân hàng câu hỏi" trong admin dashboard frontend.

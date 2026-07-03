@@ -1209,3 +1209,30 @@ body {
 .admin-import-errors { margin-top: .5rem; }
 .admin-import-err-title { font-size: .8rem; font-weight: 600; color: var(--danger); margin-bottom: .25rem; }
 .admin-import-err-row { font-size: .78rem; color: var(--danger); line-height: 1.4; }
+
+/* ── Modal overlay (Question Bank delete confirm & from-bank modal) ─────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.modal-box {
+  background: #fff;
+  border-radius: 12px;
+  padding: 1.25rem;
+  width: 100%;
+  max-width: 480px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.25);
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.modal-box-wide {
+  max-width: 700px;
+}

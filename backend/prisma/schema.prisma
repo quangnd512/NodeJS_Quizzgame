@@ -234,6 +234,67 @@ model QuestionReport {
 }
 
 // ============================================================================
+// NGAN HANG CAU HOI (Question Bank)
+// ============================================================================
+
+/// Bang luu kho cau hoi chung cho module Thi thu.
+/// Tach rieng khoi bang questions (On tap) — hai he thong doc lap.
+/// Admin quan ly tap trung tai day; khi tao de thi co the "lay cau tu kho"
+/// thay vi nhap tay tung cau. Xoa khoi kho la HARD DELETE (co canh bao).
+model QuestionBank {
+  id            String   @id @default(uuid())
+
+  /// Ma mon hoc (vi du: "TOAN", "VAN", "ANH") - khop voi SUBJECT_CATALOG.
+  subject       String
+
+  /// Ten chuong/chu de (tuy chon) - dung de loc khi chon cau vao de thi.
+  chapter       String?
+
+  /// Do kho: 1=de, 2=trung binh, 3=kho.
+  difficulty    Int
+
+  /// Dang cau hoi: MCQ_4 | TRUE_FALSE_4 | FILL_BLANK (giong ExamQuestion).
+  questionType  String
+
+  /// So diem cua cau hoi.
+  points        Float
+
+  /// Noi dung cau hoi.
+  questionText  String
+
+  /// Du lieu lua chon/phat bieu dang JSON (null voi FILL_BLANK).
+  options       Json?
+
+  /// Dap an dung dang JSON (so, mang boolean, hoac mang string).
+  correctAnswer Json
+
+  /// Giai thich sau khi tra loi (tuy chon).
+  explanation   String?
+
+  /// Nam de thi goc (tuy chon).
+  examYear      Int?
+
+  /// Ma de thi goc (tuy chon).
+  examCode      String?
+
+  /// Trang thai kich hoat — false neu bi an tam (soft delete).
+  isActive      Boolean  @default(true)
+
+  createdAt     DateTime @default(now())
+
+  /// ID cau hoi goc tu bang questions (module On tap) — chi dung boi seed script.
+  /// null = cau hoi duoc tao thu cong hoac nhap qua Excel.
+  /// @unique dam bao seed script idempotent: chay nhieu lan khong tao duplicate.
+  sourceQuestionId String? @unique
+
+  /// Cac ExamQuestion tham chieu den cau hoi nay.
+  examQuestions ExamQuestion[]
+
+  @@index([subject, difficulty, isActive])
+  @@map("question_bank")
+}
+
+// ============================================================================
 // MODULE THI THU (Mock Exam Module)
 // ============================================================================
 
@@ -306,12 +367,21 @@ model ExamQuestion {
   /// Ma de thi goc (tuy chon) - vi du "Ma de 101" (phan biet voi ExamPaper.id noi bo).
   examCode      String?
 
+  /// ID cua cau hoi trong Ngan hang cau hoi (tuy chon).
+  /// null = cau hoi duoc nhap tay (hoac qua Excel import).
+  /// co gia tri = cau hoi duoc lay tu kho, van giu ban ghi goc trong QuestionBank.
+  questionBankId String?
+
+  /// Lien ket voi QuestionBank (tuy chon - nullable).
+  questionBank   QuestionBank? @relation(fields: [questionBankId], references: [id])
+
   /// Trang thai kich hoat - false neu bi an (soft delete).
   isActive      Boolean  @default(true)
 
   createdAt     DateTime @default(now())
 
   @@index([examPaperId, isActive])
+  @@index([questionBankId])
   @@map("exam_questions")
 }
 

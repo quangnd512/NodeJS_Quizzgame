@@ -304,6 +304,124 @@ Admin biết chính xác dòng nào lỗi để sửa và import lại riêng ph
 
 ---
 
+## Ngân hàng câu hỏi (Question Bank) — Thuật ngữ kỹ thuật
+
+### Fisher-Yates Shuffle (autoFillFromBank)
+**Định nghĩa**: Thuật toán xáo trộn mảng đảm bảo mỗi phần tử có xác suất bằng nhau để xuất hiện ở bất kỳ vị trí nào — không bị lệch xác suất như `sort(() => Math.random() - 0.5)`.
+
+**Trong dự án này**: Dùng trong `autoFillFromBank()` (`question-bank.service.ts:401`) — sau khi lấy danh sách câu hỏi theo độ khó từ DB, xáo mảng rồi `slice(0, need)` để lấy N câu ngẫu nhiên thực sự.
+
+**Cách hoạt động** (mảng 5 câu [A, B, C, D, E], cần 3 câu):
+```
+Bước i=4: j=random(0..4)=2  →  đổi chỗ E ↔ C  →  [A, B, E, D, C]
+Bước i=3: j=random(0..3)=0  →  đổi chỗ D ↔ A  →  [D, B, E, A, C]
+Bước i=2: j=random(0..2)=2  →  đổi chỗ E ↔ E  →  [D, B, E, A, C]
+Bước i=1: j=random(0..1)=0  →  đổi chỗ B ↔ D  →  [B, D, E, A, C]
+
+slice(0, 3) → lấy [B, D, E]
+```
+
+**Tại sao không dùng `ORDER BY RANDOM()` ở SQL?**
+```
+SQL RANDOM():  sort toàn bộ bảng → O(N log N) → chậm khi kho lớn
+Fisher-Yates:  xáo mảng JS đã lấy về → O(N) tuyến tính → nhanh hơn
+```
+
+---
+
+### Transaction (Giao dịch nguyên tử)
+**Định nghĩa**: Nhóm nhiều thao tác DB thành một khối "tất cả thành công hoặc tất cả thất bại" — không bao giờ bị dừng giữa chừng dẫn đến dữ liệu không nhất quán.
+
+**Trong dự án này**: Dùng ở 2 nơi quan trọng:
+
+1. `addFromBank` / `autoFillFromBank` — tránh race condition khi 2 admin thêm câu vào cùng 1 đề cùng lúc:
+```
+Không có TX:
+  Admin A đọc "đề chưa có câu nào" → insert 10 câu ✓
+  Admin B đọc "đề chưa có câu nào" → insert 10 câu ✓ (TRÙNG!)
+
+Với TX:
+  Admin A [TX bắt đầu]──── đọc + insert ──── [TX kết thúc] ✓
+  Admin B              ────── chờ A xong ──── [TX bắt đầu] → 0 câu thêm (đã có rồi)
+```
+
+2. `deleteQuestion` — tránh khoảng hở giữa "kiểm tra session" và "xoá":
+```
+Không có TX:
+  Kiểm tra: "không có session IN_PROGRESS" → OK
+  ← học sinh bắt đầu session mới ngay lúc này! →
+  Xoá câu hỏi → câu trong session đang thi bị mất!
+
+Với TX:
+  Kiểm tra + xoá là 1 thao tác liền mạch → không có kẽ hở
+```
+
+---
+
+### ON DELETE SET NULL (FK nullable)
+**Định nghĩa**: Khi xoá bản ghi cha (QuestionBank), DB tự động đặt cột `questionBankId = NULL` trên các bản ghi con (ExamQuestion) thay vì xoá chúng.
+
+**Trong dự án này** (`schema.prisma:376`): Quan hệ `ExamQuestion → QuestionBank` là nullable. Khi admin xoá câu hỏi khỏi kho:
+```
+Trước khi xoá:
+  QuestionBank [Q1] ──────► ExamQuestion [EQ1] → ExamAnswer (học sinh đã làm)
+
+Sau khi xoá (SET NULL):
+  QuestionBank [Q1] ✗        ExamQuestion [EQ1] → ExamAnswer (vẫn nguyên!)
+                               questionBankId = NULL
+                               questionText/options/correctAnswer vẫn còn đủ
+```
+
+**Tại sao không dùng ON DELETE CASCADE?**
+```
+CASCADE: xoá Q1 → xoá luôn EQ1 → ExamAnswer trỏ vào EQ1 không còn tồn tại
+       → điểm thi của học sinh bị hỏng / mất dữ liệu lịch sử
+```
+Khi `addFromBank` copy câu vào đề thi, nó **copy toàn bộ nội dung** (questionText, options, correctAnswer...) vào ExamQuestion — không chỉ lưu ID. Nên dù nguồn gốc bị xoá, nội dung vẫn còn nguyên. Xem chi tiết: `docs/adr/003-question-bank-fk-set-null.md`.
+
+---
+
+### Hard Delete có Guard (Xoá thật với bảo vệ)
+**Định nghĩa**: Xoá thật sự khỏi DB (không phải soft delete `isActive=false`), nhưng kiểm tra điều kiện trước — nếu không an toàn thì từ chối với lỗi rõ ràng.
+
+**Trong dự án này**: `deleteQuestion()` kiểm tra xem có `ExamSession` nào đang `IN_PROGRESS` tham chiếu đến câu hỏi không. Nếu có → throw `QuestionBankDeleteBlockedError` (400) — admin phải chờ phiên đó kết thúc.
+
+**Luồng admin xoá câu hỏi an toàn**:
+```
+1. GET /api/admin/question-bank/:id/usage  ← xem câu đang dùng ở đề nào
+2. Nếu có session IN_PROGRESS → đợi hoặc không xoá
+3. DELETE /api/admin/question-bank/:id      ← xoá thật
+4. ExamQuestion giữ lại nội dung, questionBankId = NULL (ON DELETE SET NULL)
+```
+
+---
+
+### Idempotent Seed Script (`sourceQuestionId @unique`)
+**Định nghĩa**: Script có thể chạy nhiều lần mà không tạo dữ liệu trùng lặp — mỗi lần chạy cho kết quả giống lần đầu.
+
+**Trong dự án này**: `QuestionBank.sourceQuestionId` có ràng buộc `@unique`. Seed script import câu từ module Ôn tập vào kho — nếu câu đã có trong kho (`sourceQuestionId` đã tồn tại), Prisma throw `P2002` → script bỏ qua, không insert thêm. Chạy lại 100 lần cũng không sinh duplicate.
+
+---
+
+### Phân phối độ khó 50/30/20 (AutoFill ratio)
+**Định nghĩa**: Quy tắc tỉ lệ câu hỏi theo độ khó khi tự động lấy từ kho.
+
+**Trong dự án này** (`question-bank.service.ts:347`):
+```typescript
+const easyCount   = Math.round(count * 0.5);
+const mediumCount = Math.round(count * 0.3);
+const hardCount   = count - easyCount - mediumCount;  // ← phần còn lại
+```
+
+`hardCount` lấy phần còn lại (không dùng `Math.round(count * 0.2)`) để đảm bảo tổng 3 mức **luôn bằng chính xác `count`** — tránh sai 1 câu do làm tròn số lẻ:
+```
+count=7: round(3.5)=4, round(2.1)=2, 7-4-2=1  → tổng = 7 ✓
+         (nếu round(1.4)=1 thì 4+2+1=7 cũng đúng, nhưng
+          với count khác có thể ra 4+2+2=8 ✗ → không dùng)
+```
+
+---
+
 ## Bug đã phát hiện và fix trong quá trình review
 
 ### Bug: ID không nhất quán giữa lưu điểm và đọc điểm

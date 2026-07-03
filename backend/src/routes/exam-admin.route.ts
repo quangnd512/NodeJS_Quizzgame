@@ -9,6 +9,7 @@ import { ExamImportFileInvalidError } from '../services/exam/exam.errors.js';
 import { importQuestionsFromExcel } from '../services/exam/exam-import.service.js';
 import { examService } from '../services/exam/exam.service.js';
 import { EXAM_QUESTION_TYPES } from '../services/exam/exam.types.js';
+import { questionBankService } from '../services/exam/question-bank.service.js';
 import { SUBJECT_CATALOG } from '../services/users/users.types.js';
 
 export const examAdminRouter = Router();
@@ -201,6 +202,55 @@ examAdminRouter.patch(
         req.params['id']!,
         req.params['qid']!,
         req.body as z.infer<typeof updateQuestionSchema>,
+      );
+      res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/exam-papers/:id/questions/from-bank — them nhieu cau tu kho
+// ---------------------------------------------------------------------------
+
+const addFromBankSchema = z.object({
+  questionBankIds: z.array(z.string().uuid()).min(1).max(100),
+});
+
+examAdminRouter.post(
+  '/:id/questions/from-bank',
+  validateBody(addFromBankSchema),
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const result = await questionBankService.addFromBank(
+        req.params['id']!,
+        req.body as z.infer<typeof addFromBankSchema>,
+      );
+      res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/exam-papers/:id/questions/auto-fill — lay cau tu dong tu kho
+// Chon ngau nhien N cau theo ti le 50% de / 30% tb / 20% kho cung mon voi de.
+// ---------------------------------------------------------------------------
+
+const autoFillSchema = z.object({
+  count: z.number().int().min(1).max(200),
+});
+
+examAdminRouter.post(
+  '/:id/questions/auto-fill',
+  validateBody(autoFillSchema),
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const result = await questionBankService.autoFillFromBank(
+        req.params['id']!,
+        req.body as z.infer<typeof autoFillSchema>,
       );
       res.status(200).json(result);
     } catch (err) {

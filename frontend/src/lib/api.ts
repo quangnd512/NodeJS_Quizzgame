@@ -521,6 +521,159 @@ export async function adminRestoreExamQuestion(
   });
 }
 
+// ─── Question Bank API ────────────────────────────────────────────────────────
+
+export interface QuestionBankItem {
+  id: string;
+  subject: string;
+  chapter: string | null;
+  difficulty: number;
+  questionType: ExamQuestionType;
+  points: number;
+  questionText: string;
+  options: string[] | null;
+  correctAnswer: unknown;
+  explanation: string | null;
+  examYear: number | null;
+  examCode: string | null;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface QuestionBankListResult {
+  items: QuestionBankItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface QuestionBankUsage {
+  examPapers: Array<{
+    paperId: string;
+    paperTitle: string;
+    subject: string;
+    isActive: boolean;
+    hasActiveSession: boolean;
+  }>;
+  totalExamPapers: number;
+  hasActiveSession: boolean;
+}
+
+export interface QuestionBankFilter {
+  subject?: string;
+  chapter?: string;
+  difficulty?: number;
+  search?: string;
+  isActive?: boolean;
+  page?: number;
+  pageSize?: number;
+}
+
+/** GET /api/admin/question-bank */
+export async function adminListQuestionBank(
+  secret: string,
+  filter?: QuestionBankFilter,
+): Promise<QuestionBankListResult> {
+  const params = new URLSearchParams();
+  if (filter?.subject) params.set('subject', filter.subject);
+  if (filter?.chapter) params.set('chapter', filter.chapter);
+  if (filter?.difficulty !== undefined) params.set('difficulty', String(filter.difficulty));
+  if (filter?.search) params.set('search', filter.search);
+  if (filter?.isActive !== undefined) params.set('isActive', String(filter.isActive));
+  if (filter?.page !== undefined) params.set('page', String(filter.page));
+  if (filter?.pageSize !== undefined) params.set('pageSize', String(filter.pageSize));
+  const qs = params.toString();
+  return adminRequest(`/api/admin/question-bank${qs ? `?${qs}` : ''}`, secret);
+}
+
+/** POST /api/admin/question-bank */
+export async function adminCreateQuestionBankItem(
+  secret: string,
+  data: {
+    subject: string;
+    chapter?: string;
+    difficulty: number;
+    questionType: ExamQuestionType;
+    points: number;
+    questionText: string;
+    options?: string[];
+    correctAnswer: unknown;
+    explanation?: string;
+    examYear?: number;
+    examCode?: string;
+  },
+): Promise<QuestionBankItem> {
+  return adminRequest('/api/admin/question-bank', secret, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+/** PUT /api/admin/question-bank/:id */
+export async function adminUpdateQuestionBankItem(
+  secret: string,
+  id: string,
+  data: {
+    subject?: string;
+    chapter?: string;
+    difficulty?: number;
+    questionType?: ExamQuestionType;
+    points?: number;
+    questionText?: string;
+    options?: string[];
+    correctAnswer?: unknown;
+    explanation?: string;
+    examYear?: number;
+    examCode?: string;
+    isActive?: boolean;
+  },
+): Promise<QuestionBankItem> {
+  return adminRequest(`/api/admin/question-bank/${id}`, secret, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+/** GET /api/admin/question-bank/:id/usage */
+export async function adminGetQuestionBankUsage(
+  secret: string,
+  id: string,
+): Promise<QuestionBankUsage> {
+  return adminRequest(`/api/admin/question-bank/${id}/usage`, secret);
+}
+
+/** DELETE /api/admin/question-bank/:id */
+export async function adminDeleteQuestionBankItem(
+  secret: string,
+  id: string,
+): Promise<{ message: string }> {
+  return adminRequest(`/api/admin/question-bank/${id}`, secret, { method: 'DELETE' });
+}
+
+/** POST /api/admin/exam-papers/:id/questions/auto-fill */
+export async function adminAutoFillFromBank(
+  secret: string,
+  paperId: string,
+  count: number,
+): Promise<{ added: number; skipped: number; shortage: number }> {
+  return adminRequest(`/api/admin/exam-papers/${paperId}/questions/auto-fill`, secret, {
+    method: 'POST',
+    body: JSON.stringify({ count }),
+  });
+}
+
+/** POST /api/admin/exam-papers/:id/questions/from-bank */
+export async function adminAddFromBank(
+  secret: string,
+  paperId: string,
+  questionBankIds: string[],
+): Promise<{ added: number; skipped: number }> {
+  return adminRequest(`/api/admin/exam-papers/${paperId}/questions/from-bank`, secret, {
+    method: 'POST',
+    body: JSON.stringify({ questionBankIds }),
+  });
+}
+
 /** POST /api/admin/exam-papers/:id/questions/import (multipart/form-data) */
 export async function adminImportExamQuestions(
   secret: string,

@@ -368,3 +368,51 @@
 | 1 | 5× `startExam` đồng thời, user chỉ đủ điểm cho 1 lần | `currentPoints = EXAM_ENTRY_FEE` | 1 thành công + 4× `ExamInsufficientPointsError`; số dư cuối = 0; đúng 1 `ExamSession`, đúng 1 `PointTransaction (THI_THU_ENTRY_FEE)` |
 | 2 | 5× `submitExam` đồng thời, cùng phiên, `pointsAwarded = 0` | `answers` sai (score = 0) | 1 thành công (`score: 0`) + 4× `ExamSessionAlreadyCompletedError`; đúng 1 `ExamAnswer`/câu; session → `COMPLETED` |
 | 3 | 5× `submitExam` đồng thời, cùng phiên, `pointsAwarded = 120` | `answers` đúng hết (score = 10) | 1 thành công (`score: 10, pointsAwarded: 120`) + 4× `ExamSessionAlreadyCompletedError`; đúng 1 `ExamAnswer`/câu; số dư CHỈ được cộng 120 một lần, đúng 1 `PointTransaction (THI_THU_RESULT)` |
+
+---
+
+## Test Cases: Ngân hàng câu hỏi (Question Bank)
+> Smoke test: `npm run smoke:question-bank` (`backend/src/scripts/smoke-test-question-bank.ts`)
+
+### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | Tạo câu hỏi MCQ_4 với đầy đủ trường | `POST /api/admin/question-bank` (MCQ_4, 4 options, correctAnswer=0) | `201`, trả về DTO với `questionType: "MCQ_4"`, `isActive: true` |
+| 2 | Tạo câu hỏi TRUE_FALSE_4 | `POST` (TRUE_FALSE_4, 4 phát biểu, correctAnswer=[true,false,true,false]) | `201`, `questionType: "TRUE_FALSE_4"` |
+| 3 | Tạo câu hỏi FILL_BLANK (không options) | `POST` (FILL_BLANK, không có options, correctAnswer=["đáp án 1"]) | `201`, `options: null` |
+| 4 | Lấy danh sách với filter môn/chương/độ khó | `GET ?subject=TOAN&chapter=Đại số` | `200`, chỉ trả về câu thuộc chương đó |
+| 5 | Tìm kiếm theo nội dung (contains, case-insensitive) | `GET ?search=trac nghiem` | `200`, trả về câu có text khớp |
+| 6 | Cập nhật câu hỏi (partial) | `PUT /:id` `{ chapter, difficulty, isActive }` | `200`, chỉ trường được gửi bị thay đổi |
+| 7 | Thêm câu từ kho vào đề thi (2 câu) | `POST /api/admin/exam-papers/:id/questions/from-bank` | `200`, `{ added: 2, skipped: 0 }` |
+| 8 | Thêm lại câu đã có + 1 câu mới (skip duplicate) | `POST from-bank` với 2 câu cũ + 1 câu mới | `200`, `{ added: 1, skipped: 2 }` |
+| 9 | Kiểm tra usage câu hỏi đang dùng trong đề | `GET /:id/usage` | `200`, `totalExamPapers: 1, hasActiveSession: false` |
+| 10 | Xóa câu hỏi không thuộc đề nào | `DELETE /:id` | `200`, câu biến mất khỏi DB |
+
+### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 11 | pageSize=0 bị clamp lên 1 | `GET ?pageSize=0` | `200`, `pageSize: 1` |
+| 12 | pageSize=200 bị clamp xuống 100 | `GET ?pageSize=200` | `200`, `pageSize: 100` |
+| 13 | Thêm câu từ kho khi câu `isActive=false` | `POST from-bank` với câu inactive | `200`, `{ added: 0, skipped: 1 }` |
+| 14 | Xóa câu trong kho → ExamQuestion.questionBankId tự set NULL (FK ON DELETE SET NULL) | `DELETE /:id` khi câu đang được dùng trong đề (nhưng không có phiên IN_PROGRESS) | `200`, `exam_questions.questionBankId = null` |
+| 15 | usage trả về `examPapers: []` khi câu chưa được dùng đề nào | `GET /:id/usage` (câu chưa trong đề nào) | `200`, `{ totalExamPapers: 0, hasActiveSession: false }` |
+
+### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 16 | Tạo câu với subject không hợp lệ | `subject: "KHONG_TON_TAI"` | 400 | `INVALID_REQUEST_BODY` |
+| 17 | Tạo MCQ_4 thiếu options | `questionType: "MCQ_4"`, không có `options` | 400 | Validation shape error |
+| 18 | Cập nhật ID không tồn tại | `PUT /non-existent-id` | 404 | `QUESTION_BANK_NOT_FOUND` |
+| 19 | Xóa ID không tồn tại | `DELETE /non-existent-id` | 404 | `QUESTION_BANK_NOT_FOUND` |
+| 20 | Xóa câu khi còn ExamSession IN_PROGRESS đang dùng câu đó | `DELETE /:id` | 409 | `QUESTION_BANK_DELETE_BLOCKED` |
+| 21 | Usage check ID không tồn tại | `GET /non-existent-id/usage` | 404 | `QUESTION_BANK_NOT_FOUND` |
+| 22 | addFromBank với `questionBankIds` rỗng | `{ questionBankIds: [] }` | 400 | `INVALID_REQUEST_BODY` |
+| 23 | addFromBank với examPaperId không tồn tại | `POST /fake-id/questions/from-bank` | 404 | `EXAM_PAPER_NOT_FOUND` |
+| 24 | autoFill với examPaperId không tồn tại | `POST /fake-id/questions/auto-fill` | 404 | `EXAM_PAPER_NOT_FOUND` |
+
+### Auto-fill Tests (Mới — S3 bổ sung)
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 25 | autoFill happy path, kho đủ câu | `count: 2`, kho có câu medium + hard cùng môn | `{ added >= 0, shortage >= 0, added + shortage == 2 }` |
+| 26 | autoFill shortage: yêu cầu nhiều hơn tổng kho | `count = bankCount + 1` | `shortage > 0`, `added + shortage == count` |
+| 27 | autoFill gọi lần 2: không thêm câu trùng | Gọi lại autoFill cùng đề sau lần 1 | `skipped == 0`, không có duplicate questionBankId trong đề |
