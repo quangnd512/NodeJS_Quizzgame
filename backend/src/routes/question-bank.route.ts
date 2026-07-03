@@ -46,8 +46,8 @@ const listQuerySchema = z.object({
   difficulty: z.coerce.number().int().min(1).max(3).optional(),
   search: z.string().max(200).optional(),
   isActive: z.enum(['true', 'false']).optional(),
-  page: z.coerce.number().int().positive().optional(),
-  pageSize: z.coerce.number().int().min(1).max(100).optional(),
+  page: z.coerce.number().int().optional(),
+  pageSize: z.coerce.number().int().optional(),
 });
 
 // ---------------------------------------------------------------------------
