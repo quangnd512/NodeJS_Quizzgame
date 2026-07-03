@@ -9,7 +9,7 @@
 | 002 | Practice Module (Ôn tập thích nghi) | ✅ Done | feature/practice-module | 2026-06-09 |
 | 003 | Admin Dashboard – Quản lý báo cáo câu hỏi | ✅ Done | feature/question-reports | 2026-06-13 |
 | 004 | Exam Module – Thi thử (Mock Exam) | ✅ Done | feature/exam-module | 2026-07-03 |
-| 005 | Question Bank – Ngân hàng câu hỏi | ↩️ Trả lại | feature/question-bank | — |
+| 005 | Question Bank – Ngân hàng câu hỏi | ✅ Done | feature/question-bank | 2026-07-03 |
 | 006 | Leaderboard – Bảng xếp hạng | ⏳ Chờ S1 lên kế hoạch | — | — |
 | 007 | Progress Dashboard – Thống kê tiến độ học sinh | ⏳ Chờ S1 lên kế hoạch | — | — |
 | 008 | Admin User Management – Quản lý người dùng | ⏳ Chờ S1 lên kế hoạch | — | — |
@@ -30,4 +30,4 @@
 | ID | Vấn đề | Trả về session | Kết quả sau khi làm lại |
 |----|--------|-----------------|--------------------------|
 | 004 | (1) S5: Test thủ công chưa hoàn thành — chỉ có A1–A4 PASS, A5→D2 còn "đang tiến hành"; (2) S6: bị bỏ qua hoàn toàn — GLOSSARY.md thiếu toàn bộ thuật ngữ Exam Module (ExamPaper, ExamSession, ExamQuestion, ExamAnswer, entry fee, grace period, pointsAwarded, MCQ_4, TRUE_FALSE_4, FILL_BLANK...) | S5 (ưu tiên trước), sau đó S6 | ✅ Đạt — S5 hoàn thành test cases (6 nhóm, ~70 test case), fix thêm 3 bug (isActive schema); S6 bổ sung 8 thuật ngữ GLOSSARY. Build+lint+smoke test 108/108 PASS. S8 xác nhận 2026-07-03 |
-| 005 | (1) S2: Frontend build/lint FAIL — `handleRestoreQuestion` (App.tsx:1796) định nghĩa nhưng không gọi, bị bỏ lại khi refactor onclick sang AdminFromBankModal; chặn `tsc -b` (TS6133) và `eslint` (no-unused-vars). (2) S5: Không có record kiểm thử thủ công cho vòng Question Bank (chỉ có handoff cũ từ round Exam Module). | S2 (fix build trước), sau đó S5 (manual test) | — |
+| 005 | (1) S2: Frontend build/lint FAIL — `handleRestoreQuestion` (App.tsx:1796) định nghĩa nhưng không gọi, bị bỏ lại khi refactor onclick sang AdminFromBankModal; chặn `tsc -b` (TS6133) và `eslint` (no-unused-vars). (2) S5: Không có record kiểm thử thủ công cho vòng Question Bank (chỉ có handoff cũ từ round Exam Module). | S2 (fix build trước), sau đó S5 (manual test) | ✅ Đạt — S2 fix unused function + commit 9862bcf; S5 fix pageSize clamp bug + commit a0243f4, 25/25 manual test PASS. Build+lint+smoke 45/45 PASS. S8 xác nhận 2026-07-03 |
