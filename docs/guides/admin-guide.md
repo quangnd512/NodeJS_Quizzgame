@@ -13,6 +13,7 @@
 4. [Xử lý báo cáo câu hỏi](#4-xử-lý-báo-cáo-câu-hỏi)
 5. [Admin Dashboard (Giao diện Web)](#5-admin-dashboard-giao-diện-web)
 6. [Xử lý sự cố thường gặp](#6-xử-lý-sự-cố-thường-gặp)
+7. [Quản lý Đề thi thử (Thi thử / Mock Exam)](#7-quản-lý-đề-thi-thử-thi-thử--mock-exam)
 
 ---
 
@@ -55,6 +56,8 @@ Lệnh này tạo tất cả các bảng cần thiết, bao gồm:
 - `users`, `user_points`, `point_transactions` (Auth + Points)
 - `questions`, `practice_sessions`, `practice_answers` (Practice Module)
 - `user_question_history`, `question_reports` (Practice Module)
+- `exam_papers`, `exam_questions`, `exam_sessions`, `exam_answers` (Module Thi
+  thử — xem mục 7)
 
 ### Xem dữ liệu trực quan (Prisma Studio)
 
@@ -402,6 +405,40 @@ Sau khi đăng nhập, màn hình hiển thị:
 |------------|------|
 | Xử lý báo cáo hàng ngày, xem nhanh thống kê | Dashboard (`/#admin`) |
 | Import/sửa hàng loạt câu hỏi, debug, script tự động | API trực tiếp (mục 3, 4) |
+| Tạo/sửa đề thi thử, thêm câu hỏi, import Excel | Dashboard tab "Đề thi thử" (mục 5.5) hoặc API trực tiếp (mục 7) |
+
+### 5.5 Tab "Đề thi thử" (Quản lý đề thi thử)
+
+Sau khi đăng nhập (mục 5.2), Admin Dashboard có **2 tab** ở đầu trang: **"Báo
+cáo câu hỏi"** (mục 5.3) và **"Đề thi thử"** (mới). Tab "Đề thi thử" dùng các
+API ở mục 7.
+
+**Danh sách đề thi (`AdminExamPaperListPage`):**
+- Bộ lọc theo môn học (dropdown — để trống = xem tất cả môn).
+- Mỗi đề hiển thị: tiêu đề, môn, thời gian làm bài (phút), số câu hỏi đang
+  hoạt động, trạng thái Hoạt động/Tạm ẩn.
+- Form **"Tạo đề mới"**: nhập môn, tiêu đề, thời gian làm bài (phút) → gọi
+  `POST /api/admin/exam-papers` (mục 7.2). Đề mới tạo **chưa có câu hỏi nào**
+  — cần bấm vào đề để thêm câu hỏi.
+- Bấm vào 1 đề để xem chi tiết.
+
+**Chi tiết đề thi (`AdminExamPaperDetailPage`):**
+- Nút **"Tạm ẩn" / "Kích hoạt"** — bật/tắt `isActive` của đề
+  (`PATCH /api/admin/exam-papers/:id`, mục 7.2). Đề bị tạm ẩn sẽ **không**
+  được chọn cho học sinh thi thử nữa (nhưng vẫn xem được lịch sử các phiên cũ).
+- **Danh sách câu hỏi**: mỗi câu hiển thị chương, độ khó, dạng câu hỏi
+  (`MCQ_4`/`TRUE_FALSE_4`/`FILL_BLANK`), số điểm, và nút **"Xoá"** (ẩn câu —
+  soft delete, mục 7.3).
+  > ⚠️ Hiện **chưa có nút "Sửa"** cho từng câu hỏi (xem mục 7.5). Muốn sửa nội
+  > dung 1 câu, cách duy nhất hiện tại là: **Xoá** câu cũ rồi **thêm câu mới**
+  > bằng form dưới đây.
+- **Form thêm câu hỏi**: chọn dạng câu hỏi (`MCQ_4`/`TRUE_FALSE_4`/
+  `FILL_BLANK`) → form đổi theo dạng tương ứng (xem ví dụ ở mục 7.3) → gọi
+  `POST /api/admin/exam-papers/:id/questions`.
+- **Khung Import Excel**: chọn file `.xlsx`/`.xls` (tối đa 5MB) → gọi
+  `POST /api/admin/exam-papers/:id/questions/import` (mục 7.3) → hiển thị số
+  câu đã thêm thành công (`inserted`) và danh sách lỗi theo dòng (`errors`,
+  nếu có) — các dòng hợp lệ vẫn được lưu dù có dòng lỗi khác.
 
 ---
 
@@ -494,3 +531,218 @@ Nếu server khởi động nhưng API trả lỗi 500 với "relation does not 
 cd backend
 npx prisma migrate dev
 ```
+
+---
+
+## 7. Quản lý Đề thi thử (Thi thử / Mock Exam)
+
+### 7.1 Tổng quan
+
+- Học sinh bấm **"Thi thử 🎯"** trên trang hồ sơ → trừ **60 điểm** tích lũy
+  (`EXAM_ENTRY_FEE`, `PointReason.THI_THU_ENTRY_FEE`) → hệ thống tự chọn 1 đề
+  đang hoạt động cho môn đã chọn theo thuật toán "công bằng" (ưu tiên đề học
+  sinh thi ít lần nhất).
+- Sau khi nộp bài, điểm số (thang 10) quyết định điểm thưởng tích lũy
+  (`PointReason.THI_THU_RESULT`):
+
+| Điểm (thang 10) | Điểm thưởng |
+|------------------|-------------|
+| < 7.0 | 0 |
+| 7.0 – 7.9 | 10 |
+| 8.0 – 8.9 | 20 |
+| 9.0 – 9.9 | 50 |
+| 10.0 | 120 |
+
+- 3 dạng câu hỏi: `MCQ_4` (trắc nghiệm 4 đáp án), `TRUE_FALSE_4` (4 phát biểu
+  Đúng/Sai, có điểm thành phần theo số ý đúng), `FILL_BLANK` (điền đáp án,
+  chấp nhận nhiều cách viết).
+- Toàn bộ API ở mục này yêu cầu header `X-Admin-Secret` (mục 2). Xem chi tiết
+  request/response đầy đủ tại `docs/api/openapi.yaml` và
+  `docs/FEATURE_LOG.md` Section 6.
+
+### 7.2 Quản lý đề thi (Exam Paper)
+
+**Tạo đề thi mới** (chưa có câu hỏi):
+```bash
+POST /api/admin/exam-papers
+X-Admin-Secret: <secret>
+Content-Type: application/json
+
+{ "subject": "TOAN", "title": "Đề thi thử THPT QG 2024 - Mã đề 101", "durationMinutes": 50 }
+```
+
+**Danh sách đề thi** (trả **mảng trực tiếp**, không phân trang):
+```bash
+GET /api/admin/exam-papers?subject=TOAN
+```
+
+**Chi tiết 1 đề** (kèm toàn bộ câu hỏi, có `correctAnswer`/`explanation`, gồm
+cả câu đã ẩn):
+```bash
+GET /api/admin/exam-papers/:id
+```
+
+**Cập nhật đề** (tiêu đề / thời gian / tạm ẩn — partial update):
+```bash
+PATCH /api/admin/exam-papers/:id
+Content-Type: application/json
+
+{ "isActive": false }
+```
+
+> Đề bị `isActive=false` sẽ không được `pickFairExamPaper` chọn cho học sinh
+> nữa, nhưng các phiên thi cũ vẫn xem được kết quả bình thường.
+
+### 7.3 Quản lý câu hỏi trong đề
+
+**Thêm 1 câu hỏi** — `options`/`correctAnswer` phải khớp `questionType`:
+
+| Dạng | `options` | `correctAnswer` |
+|------|-----------|-----------------|
+| `MCQ_4` | 4 chuỗi | số 0-3 (vị trí đáp án đúng) |
+| `TRUE_FALSE_4` | 4 chuỗi (4 phát biểu a/b/c/d) | 4 boolean (theo đúng thứ tự a/b/c/d) |
+| `FILL_BLANK` | không gửi | mảng ≥1 chuỗi (các đáp án được chấp nhận) |
+
+Ví dụ MCQ_4:
+```bash
+POST /api/admin/exam-papers/:id/questions
+Content-Type: application/json
+
+{
+  "chapter": "Hàm số",
+  "difficulty": 2,
+  "questionType": "MCQ_4",
+  "points": 0.25,
+  "questionText": "Hàm số y = x^3 - 3x đồng biến trên khoảng nào?",
+  "options": ["(-1;1)", "(-∞;-1)", "(1;+∞)", "(-∞;-1) và (1;+∞)"],
+  "correctAnswer": 3,
+  "explanation": "y' = 3x^2 - 3 = 3(x-1)(x+1); y' > 0 khi x < -1 hoặc x > 1",
+  "examYear": 2024,
+  "examCode": "Mã đề 101"
+}
+```
+
+Ví dụ TRUE_FALSE_4 (`correctAnswer` = 4 boolean, theo đúng thứ tự
+`options` a/b/c/d):
+```json
+{
+  "chapter": "Hình học",
+  "difficulty": 2,
+  "questionType": "TRUE_FALSE_4",
+  "points": 1,
+  "questionText": "Cho hình chóp S.ABCD có đáy là hình vuông cạnh a, SA vuông góc với đáy, SA = a. Xét tính đúng/sai của các phát biểu sau:",
+  "options": [
+    "a) SA vuông góc với BC",
+    "b) Góc giữa SC và mặt đáy bằng 45°",
+    "c) Thể tích khối chóp S.ABCD bằng a^3/3",
+    "d) SC = a√3"
+  ],
+  "correctAnswer": [true, true, false, false],
+  "explanation": "a, b đúng theo tính chất hình chóp đều có cạnh bên vuông góc đáy; c, d sai do tính toán thể tích/độ dài cạnh."
+}
+```
+
+Ví dụ FILL_BLANK (`correctAnswer` = mảng đáp án chấp nhận, so khớp sau khi
+chuẩn hoá — trim, lowercase, gộp khoảng trắng):
+```json
+{
+  "chapter": "Đại số",
+  "difficulty": 1,
+  "questionType": "FILL_BLANK",
+  "points": 0.5,
+  "questionText": "Giải phương trình 2x + 4 = 10. Đáp án: x = ___",
+  "correctAnswer": ["x = 3", "x=3", "3"]
+}
+```
+
+**Import câu hỏi từ Excel** (`multipart/form-data`, field `file`, tối đa
+5MB):
+```bash
+curl -X POST -H "X-Admin-Secret: <secret>" \
+  -F "file=@de-thi-toan-101.xlsx" \
+  http://localhost:4000/api/admin/exam-papers/<id>/questions/import
+```
+
+Quy ước cột (xem file mẫu sinh bằng lệnh dưới):
+
+| Cột | Ghi chú |
+|-----|---------|
+| Chương, Độ khó, Loại câu hỏi, Điểm, Nội dung câu hỏi | bắt buộc |
+| Lựa chọn 1-4 | dùng cho `MCQ_4`/`TRUE_FALSE_4`, bỏ trống với `FILL_BLANK` |
+| Đáp án đúng | `MCQ_4`: `A`-`D` hoặc `0`-`3`; `TRUE_FALSE_4`: 4 giá trị `D/S` cách nhau bởi dấu phẩy (`"D,S,D,S"`); `FILL_BLANK`: các đáp án cách nhau bởi `\|` (`"Hà Nội\|HN"`) |
+| Giải thích, Năm thi, Mã đề | tùy chọn |
+
+Sinh lại file mẫu:
+```bash
+cd backend
+npm run generate:exam-template
+# → ghi ra docs/templates/mau-import-cau-hoi-thi-thu.xlsx
+```
+
+Import **cho phép thành công một phần** — response trả `inserted` (số câu đã
+thêm) và `errors[]` (danh sách `{ row, message }`, `row` tính cả dòng header =
+dòng 1). Các dòng hợp lệ vẫn được lưu dù có dòng khác lỗi.
+
+**Ẩn 1 câu hỏi** (soft delete — giữ lại để không phá vỡ lịch sử chấm điểm các
+phiên đã làm câu này):
+```bash
+DELETE /api/admin/exam-papers/:id/questions/:qid
+```
+
+**Sửa 1 câu hỏi** (`PATCH /api/admin/exam-papers/:id/questions/:qid`, partial
+update) — endpoint đã hoạt động đầy đủ ở backend nhưng **chưa có giao diện**
+gọi tới (xem mục 7.5). Có thể gọi trực tiếp bằng curl/Postman nếu cần sửa gấp:
+```bash
+PATCH /api/admin/exam-papers/:id/questions/:qid
+Content-Type: application/json
+
+{ "explanation": "Giải thích đã được cập nhật rõ hơn..." }
+```
+
+### 7.4 Kiểm thử nhanh
+
+```bash
+cd backend
+npm run smoke:exam              # 87 test case: chấm điểm, chọn đề, hết giờ...
+npm run smoke:exam:concurrency  # 21 test case: race condition trừ điểm/chốt phiên
+```
+
+### 7.5 Vấn đề đã biết / lưu ý
+
+- **Chưa có nút "Sửa câu hỏi"** trên giao diện (`AdminExamPaperDetailPage`
+  chỉ có nút "Xoá") dù API `PATCH .../questions/:qid` đã hoạt động đầy đủ.
+  Cách sửa hiện tại: xoá (ẩn) câu cũ → thêm câu mới.
+- **`GET /api/admin/exam-papers?subject=`** trả về mảng không phân trang —
+  nếu số đề thi tăng nhiều, danh sách sẽ tải toàn bộ cùng lúc.
+- **Tổng điểm các câu trong 1 đề không bị bắt buộc phải bằng 10** — hệ thống
+  tự quy đổi điểm đạt được sang thang 10 (`score = earned/total*100/10`).
+  Admin nên tự kiểm tra để tổng điểm hợp lý trước khi kích hoạt đề.
+- **Import Excel xử lý tuần tự, không transaction** — nếu request bị ngắt
+  giữa chừng, các câu đã insert trước đó không bị rollback; import lại có thể
+  tạo câu hỏi trùng.
+
+### 7.6 Sự cố thường gặp khi quản lý Thi thử
+
+**Học sinh báo lỗi "Bạn cần tối thiểu 60 điểm tích lũy để vào thi thử"**
+→ `409 EXAM_INSUFFICIENT_POINTS` — đúng như thiết kế (`EXAM_ENTRY_FEE = 60`),
+không phải lỗi hệ thống. Học sinh cần làm thêm Ôn tập để tích điểm.
+
+**Học sinh báo lỗi "Môn học này hiện chưa có đề thi thử"**
+→ `404 EXAM_PAPER_EMPTY` — môn đó chưa có đề nào `isActive=true` có ≥1 câu hỏi
+`isActive=true`. Vào tab "Đề thi thử" (mục 5.5), tạo đề mới hoặc kích hoạt lại
+đề đã tạm ẩn, đảm bảo đề có ít nhất 1 câu hỏi đang hoạt động.
+
+**Import Excel báo lỗi `EXAM_IMPORT_FILE_INVALID`**
+- File > 5MB, hoặc không phải `.xlsx`/`.xls`, hoặc không đọc được sheet/dữ
+  liệu → kiểm tra lại file, dùng file mẫu (`npm run generate:exam-template`)
+  làm chuẩn.
+- Nếu `errors[]` báo lỗi theo dòng cụ thể (ví dụ "Loai cau hoi '...' khong hop
+  le", "Dap an dung '...' khong hop le") → sửa đúng dòng đó trong Excel (`row`
+  tính cả dòng header) và import lại — các câu đã import thành công trước đó
+  **không cần** import lại.
+
+**Thêm câu hỏi báo lỗi `EXAM_QUESTION_INVALID`**
+→ `options`/`correctAnswer` không khớp `questionType` (ví dụ chọn
+`questionType: MCQ_4` nhưng `correctAnswer` không phải số 0-3, hoặc
+`TRUE_FALSE_4` mà `correctAnswer` không có đúng 4 phần tử boolean). Kiểm tra
+lại theo bảng ở mục 7.3.

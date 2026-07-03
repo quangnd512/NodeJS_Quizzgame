@@ -1,12 +1,13 @@
 openapi: 3.0.3
 info:
-  title: QuizzGame API — Practice Module & Admin
-  version: "1.1.0"
+  title: QuizzGame API — Practice, Thi thử & Admin
+  version: "1.2.0"
   description: >-
-    Contract cho module Ôn tập (Practice) và các endpoint Admin liên quan
-    (quản lý câu hỏi + xử lý báo cáo câu hỏi). Khớp với
-    `docs/FEATURE_LOG.md` Section 4 (Practice Module) và Section 5
-    (Admin Dashboard – Quản lý báo cáo câu hỏi).
+    Contract cho module Ôn tập (Practice), module Thi thử (Exam/Mock Exam) và
+    các endpoint Admin liên quan (quản lý câu hỏi, xử lý báo cáo câu hỏi, quản
+    lý đề thi thử). Khớp với `docs/FEATURE_LOG.md` Section 4 (Practice
+    Module), Section 5 (Admin Dashboard – Quản lý báo cáo câu hỏi) và
+    Section 6 (Exam Module – Thi thử).
 
     Các endpoint khác của hệ thống (Auth, Onboarding, Points, Leaderboard...)
     chưa được mô tả trong file này.
@@ -18,6 +19,8 @@ servers:
 tags:
   - name: Practice
     description: Endpoint cho người dùng đã đăng nhập (session token)
+  - name: Exam
+    description: Endpoint Thi thử (Mock Exam) cho người dùng đã đăng nhập (session token)
   - name: Admin
     description: Endpoint quản trị (X-Admin-Secret)
 
@@ -369,6 +372,286 @@ paths:
                 error: REPORT_ALREADY_SUBMITTED
                 message: 'Ban da bao cao cau hoi nay roi.'
 
+  # ───────────────────────────── Exam (Thi thử) ─────────────────────────────
+  /api/exam/start:
+    post:
+      tags: [Exam]
+      summary: Bắt đầu phiên thi thử mới (trừ điểm, chọn đề công bằng)
+      description: >-
+        Trừ `EXAM_ENTRY_FEE` (60) điểm tích lũy, chọn 1 đề thi đang active
+        theo thuật toán "công bằng" (`pickFairExamPaper` — ưu tiên đề mà user
+        thi ít lần nhất), tạo `ExamSession` và trả về toàn bộ câu hỏi (đã xáo
+        trộn, ẨN `correctAnswer`/`explanation`).
+      security: [{ SessionToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartExamRequest'
+            example:
+              subject: TOAN
+      responses:
+        '201':
+          description: Phiên thi thử đã được tạo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartExamResponse'
+              example:
+                sessionId: a1b2c3d4-0001-4a3a-9b6e-9b6c1a2b3c4d
+                examPaperId: b2c3d4e5-0001-4a3a-9b6e-9b6c1a2b3c4d
+                subject: TOAN
+                title: 'Đề thi thử THPT QG 2024 - Mã đề 101'
+                durationMinutes: 50
+                startedAt: '2026-06-15T08:00:00.000Z'
+                questions:
+                  - id: a1b2c3d4-0003-4a3a-9b6e-9b6c1a2b3c4d
+                    chapter: 'Hàm số'
+                    difficulty: 2
+                    questionType: MCQ_4
+                    points: 0.25
+                    questionText: 'Hàm số y = x^3 - 3x đồng biến trên khoảng nào?'
+                    options: ['(-1;1)', '(-∞;-1)', '(1;+∞)', '(-∞;-1) và (1;+∞)']
+                  - id: a1b2c3d4-0004-4a3a-9b6e-9b6c1a2b3c4d
+                    chapter: 'Hình học'
+                    difficulty: 2
+                    questionType: TRUE_FALSE_4
+                    points: 1
+                    questionText: >-
+                      Cho hình chóp S.ABCD có đáy là hình vuông cạnh a, SA
+                      vuông góc với đáy, SA = a. Xét tính đúng/sai của các
+                      phát biểu sau:
+                    options:
+                      - 'a) SA vuông góc với BC'
+                      - 'b) Góc giữa SC và mặt đáy bằng 45°'
+                      - 'c) Thể tích khối chóp S.ABCD bằng a^3/3'
+                      - 'd) SC = a√3'
+                  - id: a1b2c3d4-0005-4a3a-9b6e-9b6c1a2b3c4d
+                    chapter: 'Đại số'
+                    difficulty: 1
+                    questionType: FILL_BLANK
+                    points: 0.5
+                    questionText: 'Giải phương trình 2x + 4 = 10. Đáp án: x = ___'
+                    options: null
+        '400':
+          description: Thiếu `subject`, hoặc `subject` không thuộc `SUBJECT_CATALOG`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidBody:
+                  value: { error: INVALID_REQUEST_BODY, message: 'Du lieu khong hop le' }
+                invalidSubject:
+                  value: { error: EXAM_INVALID_SUBJECT, message: "Mon hoc '...' khong hop le." }
+        '404':
+          description: Môn học chưa có đề thi `isActive=true` nào có ≥1 câu hỏi `isActive=true`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: EXAM_PAPER_EMPTY
+                message: "Mon hoc 'TOAN' hien chua co de thi thu nao."
+        '409':
+          description: Không đủ `EXAM_ENTRY_FEE` (60) điểm tích lũy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: EXAM_INSUFFICIENT_POINTS
+                message: 'Ban can toi thieu 60 diem tich luy de vao thi thu.'
+
+  /api/exam/submit:
+    post:
+      tags: [Exam]
+      summary: Nộp bài thi thử — chấm điểm + thưởng điểm tích lũy
+      description: >-
+        Chấm điểm theo `gradeQuestion()` cho từng dạng câu hỏi (MCQ_4,
+        TRUE_FALSE_4 — điểm thành phần theo `TRUE_FALSE_SCORE_RATIOS`,
+        FILL_BLANK — so khớp sau `normalizeAnswer()`), tính `score` (thang
+        10, 1 chữ số thập phân) và `pointsAwarded` theo
+        `getExamBonusPoints(score)`. Nếu quá `durationMinutes*60 +
+        EXAM_GRACE_SECONDS` (30s) tính từ `startedAt` → trả `410
+        EXAM_EXPIRED`, không chấm điểm, không hoàn 60 điểm đã trừ lúc
+        `/start`.
+      security: [{ SessionToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitExamRequest'
+            example:
+              sessionId: a1b2c3d4-0001-4a3a-9b6e-9b6c1a2b3c4d
+              answers:
+                - examQuestionId: a1b2c3d4-0003-4a3a-9b6e-9b6c1a2b3c4d
+                  selectedAnswer: 3
+                - examQuestionId: a1b2c3d4-0004-4a3a-9b6e-9b6c1a2b3c4d
+                  selectedAnswer: [true, false, false, false]
+                - examQuestionId: a1b2c3d4-0005-4a3a-9b6e-9b6c1a2b3c4d
+                  selectedAnswer: 'x = 3'
+      responses:
+        '200':
+          description: >-
+            Điểm số + điểm thưởng. Ví dụ: MCQ_4 (0.25đ) đúng hoàn toàn
+            (+0.25), TRUE_FALSE_4 (1đ) đúng 3/4 ý →
+            `TRUE_FALSE_SCORE_RATIOS[3] = 0.5` (+0.5), FILL_BLANK (0.5đ) đúng
+            hoàn toàn (+0.5) →
+            `score = round((0.25+0.5+0.5)/(0.25+1+0.5)*100)/10 = 7.1` →
+            `getExamBonusPoints(7.1) = 10`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitExamResponse'
+              example:
+                sessionId: a1b2c3d4-0001-4a3a-9b6e-9b6c1a2b3c4d
+                score: 7.1
+                pointsAwarded: 10
+        '400':
+          description: '`sessionId` không phải UUID, hoặc `answers[].selectedAnswer` sai kiểu (Zod)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: INVALID_REQUEST_BODY
+                message: 'Du lieu khong hop le'
+        '403':
+          description: Phiên không thuộc về user hiện tại
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: EXAM_SESSION_NOT_OWNED
+                message: "Phien thi thu '...' khong thuoc ve ban."
+        '404':
+          description: '`sessionId` không tồn tại'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: EXAM_SESSION_NOT_FOUND
+                message: "Khong tim thay phien thi thu '...'."
+        '409':
+          description: >-
+            Phiên đã được nộp trước đó — hoặc bị 1 request đồng thời khác
+            "chốt" trước (race condition khi `pointsAwarded = 0`, xem
+            `docs/FEATURE_LOG.md` Section 6 — Ghi chú kỹ thuật #7)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: EXAM_SESSION_ALREADY_COMPLETED
+                message: "Phien thi thu '...' da hoan thanh."
+        '410':
+          description: >-
+            Đã quá `durationMinutes*60 + 30s` tính từ `startedAt` — phiên bị
+            đánh dấu `EXPIRED`, không chấm điểm, không hoàn 60 điểm đã trừ.
+            Frontend tự coi như `{ score: 0, pointsAwarded: 0 }` và chuyển
+            sang `ExamResultScreen`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: EXAM_EXPIRED
+                message: "Phien thi thu '...' da het thoi gian lam bai - bai khong duoc cham diem."
+
+  /api/exam/{id}/result:
+    get:
+      tags: [Exam]
+      summary: Xem kết quả chi tiết 1 phiên thi thử đã hoàn thành
+      description: >-
+        Trả về điểm, điểm thưởng, phân tích theo chương (`chapterAnalysis`)
+        và danh sách câu chưa đạt trọn điểm kèm đáp án đúng + giải thích
+        (`wrongAnswers`).
+      security: [{ SessionToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      responses:
+        '200':
+          description: Kết quả chi tiết phiên thi thử
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExamResultResponse'
+              example:
+                sessionId: a1b2c3d4-0001-4a3a-9b6e-9b6c1a2b3c4d
+                status: COMPLETED
+                score: 7.1
+                pointsAwarded: 10
+                totalQuestions: 3
+                chapterAnalysis:
+                  - chapter: 'Hàm số'
+                    correctCount: 1
+                    totalCount: 1
+                    pointsEarned: 0.25
+                    pointsTotal: 0.25
+                  - chapter: 'Hình học'
+                    correctCount: 0
+                    totalCount: 1
+                    pointsEarned: 0.5
+                    pointsTotal: 1
+                  - chapter: 'Đại số'
+                    correctCount: 1
+                    totalCount: 1
+                    pointsEarned: 0.5
+                    pointsTotal: 0.5
+                wrongAnswers:
+                  - examQuestionId: a1b2c3d4-0004-4a3a-9b6e-9b6c1a2b3c4d
+                    questionText: >-
+                      Cho hình chóp S.ABCD có đáy là hình vuông cạnh a, SA
+                      vuông góc với đáy, SA = a. Xét tính đúng/sai của các
+                      phát biểu sau:
+                    questionType: TRUE_FALSE_4
+                    chapter: 'Hình học'
+                    options:
+                      - 'a) SA vuông góc với BC'
+                      - 'b) Góc giữa SC và mặt đáy bằng 45°'
+                      - 'c) Thể tích khối chóp S.ABCD bằng a^3/3'
+                      - 'd) SC = a√3'
+                    correctAnswer: [true, true, false, false]
+                    selectedAnswer: [true, false, false, false]
+                    explanation: >-
+                      a, b đúng theo tính chất hình chóp đều có cạnh bên
+                      vuông góc đáy; c, d sai do tính toán thể tích/độ dài
+                      cạnh.
+                    points: 1
+                    pointsEarned: 0.5
+        '403':
+          description: Phiên không thuộc về user hiện tại
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: EXAM_SESSION_NOT_OWNED
+                message: "Phien thi thu '...' khong thuoc ve ban."
+        '404':
+          description: '`id` không tồn tại'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: EXAM_SESSION_NOT_FOUND
+                message: "Khong tim thay phien thi thu '...'."
+        '409':
+          description: Phiên đang `IN_PROGRESS` — chưa có kết quả
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: EXAM_SESSION_NOT_COMPLETED
+                message: "Phien thi thu '...' chua hoan thanh."
+
   # ───────────────────────────── Admin: câu hỏi ─────────────────────────────
   /api/admin/questions:
     get:
@@ -689,6 +972,431 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  # ───────────────── Admin: đề thi thử (Exam Papers) ─────────────────
+  /api/admin/exam-papers:
+    post:
+      tags: [Admin]
+      summary: Tạo đề thi thử mới (chưa có câu hỏi)
+      security: [{ AdminSecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExamPaperInput'
+            example:
+              subject: TOAN
+              title: 'Đề thi thử THPT QG 2024 - Mã đề 101'
+              durationMinutes: 50
+      responses:
+        '201':
+          description: Đề thi đã được tạo (chưa có câu hỏi)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExamPaperSummaryDto'
+              example:
+                id: b2c3d4e5-0001-4a3a-9b6e-9b6c1a2b3c4d
+                subject: TOAN
+                title: 'Đề thi thử THPT QG 2024 - Mã đề 101'
+                durationMinutes: 50
+                isActive: true
+                questionCount: 0
+                createdAt: '2026-06-15T08:00:00.000Z'
+        '400':
+          description: '`subject` không thuộc `SUBJECT_CATALOG`, `title` rỗng/>300, hoặc `durationMinutes` không hợp lệ (Zod)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+    get:
+      tags: [Admin]
+      summary: Danh sách đề thi thử (lọc theo môn)
+      description: >-
+        ⚠️ Trả về **mảng trực tiếp**, KHÔNG phân trang, KHÔNG bọc `items`
+        (khác với `GET /api/admin/questions`).
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - name: subject
+          in: query
+          required: false
+          description: Nếu không truyền, trả tất cả đề (mọi môn)
+          schema:
+            $ref: '#/components/schemas/SubjectId'
+      responses:
+        '200':
+          description: 'Danh sách đề thi (`questionCount` chỉ đếm câu `isActive=true`)'
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ExamPaperSummaryDto' }
+              example:
+                - id: b2c3d4e5-0001-4a3a-9b6e-9b6c1a2b3c4d
+                  subject: TOAN
+                  title: 'Đề thi thử THPT QG 2024 - Mã đề 101'
+                  durationMinutes: 50
+                  isActive: true
+                  questionCount: 3
+                  createdAt: '2026-06-15T08:00:00.000Z'
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+
+  /api/admin/exam-papers/{id}:
+    get:
+      tags: [Admin]
+      summary: Chi tiết 1 đề thi thử (kèm toàn bộ câu hỏi + đáp án đúng)
+      description: >-
+        `questions[]` gồm CẢ câu đã bị ẩn (`isActive=false`), kèm
+        `correctAnswer`/`explanation` (`ExamQuestionFullDto`).
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      responses:
+        '200':
+          description: Chi tiết đề thi
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExamPaperDetailDto'
+              example:
+                id: b2c3d4e5-0001-4a3a-9b6e-9b6c1a2b3c4d
+                subject: TOAN
+                title: 'Đề thi thử THPT QG 2024 - Mã đề 101'
+                durationMinutes: 50
+                isActive: true
+                questionCount: 1
+                createdAt: '2026-06-15T08:00:00.000Z'
+                questions:
+                  - id: a1b2c3d4-0003-4a3a-9b6e-9b6c1a2b3c4d
+                    examPaperId: b2c3d4e5-0001-4a3a-9b6e-9b6c1a2b3c4d
+                    chapter: 'Hàm số'
+                    difficulty: 2
+                    questionType: MCQ_4
+                    points: 0.25
+                    questionText: 'Hàm số y = x^3 - 3x đồng biến trên khoảng nào?'
+                    options: ['(-1;1)', '(-∞;-1)', '(1;+∞)', '(-∞;-1) và (1;+∞)']
+                    correctAnswer: 3
+                    explanation: "y' = 3x^2 - 3 = 3(x-1)(x+1); y' > 0 khi x < -1 hoặc x > 1"
+                    examYear: 2024
+                    examCode: 'Mã đề 101'
+                    isActive: true
+                    createdAt: '2026-06-15T08:00:00.000Z'
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+        '404':
+          description: '`id` không tồn tại'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: EXAM_PAPER_NOT_FOUND
+                message: "Khong tim thay de thi thu '...'."
+    patch:
+      tags: [Admin]
+      summary: Cập nhật tiêu đề/thời gian/trạng thái active của đề thi
+      description: >-
+        Tất cả field đều tùy chọn (partial update). Dùng cho nút "Tạm ẩn /
+        Kích hoạt" trên `AdminExamPaperDetailPage`.
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateExamPaperInput'
+            example:
+              isActive: false
+      responses:
+        '200':
+          description: 'Đề thi sau khi cập nhật (không kèm `questions`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExamPaperSummaryDto'
+              example:
+                id: b2c3d4e5-0001-4a3a-9b6e-9b6c1a2b3c4d
+                subject: TOAN
+                title: 'Đề thi thử THPT QG 2024 - Mã đề 101'
+                durationMinutes: 50
+                isActive: false
+                questionCount: 1
+                createdAt: '2026-06-15T08:00:00.000Z'
+        '400':
+          description: '`title` rỗng/>300, `durationMinutes` không hợp lệ, hoặc `isActive` không phải boolean (Zod)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+        '404':
+          description: '`id` không tồn tại'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: EXAM_PAPER_NOT_FOUND
+                message: "Khong tim thay de thi thu '...'."
+
+  /api/admin/exam-papers/{id}/questions:
+    post:
+      tags: [Admin]
+      summary: Thêm 1 câu hỏi vào đề thi thử
+      description: >-
+        `options`/`correctAnswer` phải khớp `questionType` (kiểm tra bởi
+        `validateQuestionShape()`): `MCQ_4` → `options` 4 chuỗi,
+        `correctAnswer` số 0-3; `TRUE_FALSE_4` → `options` 4 chuỗi,
+        `correctAnswer` 4 boolean (theo đúng thứ tự a/b/c/d); `FILL_BLANK` →
+        không có `options`, `correctAnswer` mảng ≥1 chuỗi (so khớp sau
+        `normalizeAnswer()`).
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExamQuestionInput'
+            examples:
+              MCQ_4:
+                summary: Trắc nghiệm 4 lựa chọn
+                value:
+                  chapter: 'Hàm số'
+                  difficulty: 2
+                  questionType: MCQ_4
+                  points: 0.25
+                  questionText: 'Hàm số y = x^3 - 3x đồng biến trên khoảng nào?'
+                  options: ['(-1;1)', '(-∞;-1)', '(1;+∞)', '(-∞;-1) và (1;+∞)']
+                  correctAnswer: 3
+                  explanation: "y' = 3x^2 - 3 = 3(x-1)(x+1); y' > 0 khi x < -1 hoặc x > 1"
+                  examYear: 2024
+                  examCode: 'Mã đề 101'
+              TRUE_FALSE_4:
+                summary: 'Đúng/Sai 4 phát biểu (correctAnswer = 4 boolean)'
+                value:
+                  chapter: 'Hình học'
+                  difficulty: 2
+                  questionType: TRUE_FALSE_4
+                  points: 1
+                  questionText: >-
+                    Cho hình chóp S.ABCD có đáy là hình vuông cạnh a, SA
+                    vuông góc với đáy, SA = a. Xét tính đúng/sai của các
+                    phát biểu sau:
+                  options:
+                    - 'a) SA vuông góc với BC'
+                    - 'b) Góc giữa SC và mặt đáy bằng 45°'
+                    - 'c) Thể tích khối chóp S.ABCD bằng a^3/3'
+                    - 'd) SC = a√3'
+                  correctAnswer: [true, true, false, false]
+                  explanation: >-
+                    a, b đúng theo tính chất hình chóp đều có cạnh bên vuông
+                    góc đáy; c, d sai do tính toán thể tích/độ dài cạnh.
+              FILL_BLANK:
+                summary: 'Điền đáp án (correctAnswer = mảng đáp án chấp nhận)'
+                value:
+                  chapter: 'Đại số'
+                  difficulty: 1
+                  questionType: FILL_BLANK
+                  points: 0.5
+                  questionText: 'Giải phương trình 2x + 4 = 10. Đáp án: x = ___'
+                  correctAnswer: ['x = 3', 'x=3', '3']
+      responses:
+        '201':
+          description: Câu hỏi đã được tạo (`ExamQuestionFullDto`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExamQuestionFullDto'
+        '400':
+          description: 'Lỗi schema Zod, hoặc `options`/`correctAnswer` không khớp `questionType`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidBody:
+                  value: { error: INVALID_REQUEST_BODY, message: 'Du lieu khong hop le' }
+                invalidShape:
+                  value: { error: EXAM_QUESTION_INVALID, message: "Du lieu cau hoi khong hop le voi dang 'MCQ_4'." }
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+        '404':
+          description: '`id` (đề thi) không tồn tại'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: EXAM_PAPER_NOT_FOUND
+                message: "Khong tim thay de thi thu '...'."
+
+  /api/admin/exam-papers/{id}/questions/import:
+    post:
+      tags: [Admin]
+      summary: Import câu hỏi từ file Excel (.xlsx/.xls, tối đa 5MB)
+      description: >-
+        `multipart/form-data`, field `file`. Quy ước cột (xem file mẫu
+        `docs/templates/mau-import-cau-hoi-thi-thu.xlsx`, sinh bằng `npm run
+        generate:exam-template`): **Chương, Độ khó, Loại câu hỏi, Điểm, Nội
+        dung câu hỏi** (bắt buộc); **Lựa chọn 1-4** (dùng cho
+        `MCQ_4`/`TRUE_FALSE_4`, bỏ trống với `FILL_BLANK`); **Đáp án đúng**
+        (`MCQ_4`: `A`-`D` hoặc `0`-`3`; `TRUE_FALSE_4`: 4 giá trị `D/S` cách
+        nhau bởi dấu phẩy, ví dụ `"D,S,D,S"`; `FILL_BLANK`: các đáp án cách
+        nhau bởi `|`, ví dụ `"Hà Nội|HN"`); **Giải thích, Năm thi, Mã đề**
+        (tùy chọn).
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: >-
+            Cho phép THÀNH CÔNG MỘT PHẦN — các dòng hợp lệ vẫn được lưu dù có
+            dòng khác lỗi (xử lý tuần tự, không bọc transaction chung). `row`
+            tính cả dòng header (dòng 1).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExamImportResult'
+              example:
+                inserted: 18
+                errors:
+                  - row: 5
+                    message: "Loai cau hoi 'TRAC_NGHIEM' khong hop le (phai la MCQ_4, TRUE_FALSE_4 hoac FILL_BLANK)."
+                  - row: 12
+                    message: "Dap an dung 'E' khong hop le (phai la A/B/C/D hoac 0-3)."
+        '400':
+          description: >-
+            Thiếu file, sai định dạng (không đọc được bằng `xlsx`), không có
+            sheet/dữ liệu, hoặc vượt 5MB (`MulterError` → 400 qua
+            `uploadExcelFile()`, xem fix Review #5)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: EXAM_IMPORT_FILE_INVALID
+                message: 'Loi tai file len: File too large'
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+        '404':
+          description: '`id` (đề thi) không tồn tại'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: EXAM_PAPER_NOT_FOUND
+                message: "Khong tim thay de thi thu '...'."
+
+  /api/admin/exam-papers/{id}/questions/{qid}:
+    patch:
+      tags: [Admin]
+      summary: Cập nhật 1 câu hỏi (partial update)
+      description: >-
+        ⚠️ Endpoint đã implement đầy đủ ở backend nhưng hiện **CHƯA có nơi
+        nào ở frontend gọi tới** (`frontend/src/lib/api.ts` không có
+        `adminUpdateExamQuestion`, `AdminExamPaperDetailPage` chỉ có nút
+        "Xoá"). Xem `docs/FEATURE_LOG.md` Section 6 — Ghi chú kỹ thuật #11.
+        Nếu request có `questionType`/`options`/`correctAnswer`, server
+        validate lại toàn bộ shape theo dạng câu hỏi MỚI (lấy giá trị cũ cho
+        field không đổi).
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+        - name: qid
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateExamQuestionInput'
+            example:
+              explanation: 'Giải thích đã được cập nhật rõ hơn...'
+      responses:
+        '200':
+          description: Câu hỏi sau khi cập nhật (`ExamQuestionFullDto`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExamQuestionFullDto'
+        '400':
+          description: 'Lỗi schema Zod (partial), hoặc sau khi áp input mới `options`/`correctAnswer` không khớp `questionType`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidBody:
+                  value: { error: INVALID_REQUEST_BODY, message: 'Du lieu khong hop le' }
+                invalidShape:
+                  value: { error: EXAM_QUESTION_INVALID, message: "Du lieu cau hoi khong hop le voi dang 'MCQ_4'." }
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+        '404':
+          description: '`qid` không tồn tại hoặc không thuộc đề `id`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: EXAM_QUESTION_NOT_FOUND
+                message: "Khong tim thay cau hoi '...'."
+    delete:
+      tags: [Admin]
+      summary: Ẩn 1 câu hỏi (soft delete — set isActive=false)
+      description: >-
+        Giữ lại bản ghi để không phá vỡ lịch sử chấm điểm các phiên đã làm
+        câu này.
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+        - name: qid
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Đã ẩn câu hỏi
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: 'Da an cau hoi thanh cong.' }
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+        '404':
+          description: '`qid` không tồn tại hoặc không thuộc đề `id`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: EXAM_QUESTION_NOT_FOUND
+                message: "Khong tim thay cau hoi '...'."
+
 components:
   securitySchemes:
     SessionToken:
@@ -958,3 +1666,251 @@ components:
             properties:
               questionId: { type: string, format: uuid }
               count: { type: integer }
+
+    # ───────────────────────── Exam (Thi thử) ─────────────────────────
+    ExamQuestionType:
+      type: string
+      enum: [MCQ_4, TRUE_FALSE_4, FILL_BLANK]
+
+    ExamSessionStatus:
+      type: string
+      enum: [IN_PROGRESS, COMPLETED, EXPIRED]
+
+    ExamQuestionOptions:
+      description: >-
+        4 lựa chọn (MCQ_4) hoặc 4 phát biểu (TRUE_FALSE_4); null với
+        FILL_BLANK.
+      nullable: true
+      type: array
+      items: { type: string }
+
+    ExamCorrectAnswer:
+      description: >-
+        Đáp án đúng — kiểu dữ liệu phụ thuộc `questionType`: MCQ_4 là số
+        nguyên 0-3, TRUE_FALSE_4 là mảng 4 boolean (theo đúng thứ tự options
+        a/b/c/d), FILL_BLANK là mảng ≥1 chuỗi (các đáp án được chấp nhận, so
+        khớp sau `normalizeAnswer()`).
+      oneOf:
+        - type: integer
+          minimum: 0
+          maximum: 3
+        - type: array
+          items: { type: boolean }
+          minItems: 4
+          maxItems: 4
+        - type: array
+          items: { type: string }
+          minItems: 1
+
+    ExamSelectedAnswer:
+      description: >-
+        Đáp án học sinh chọn — kiểu dữ liệu phụ thuộc `questionType`: MCQ_4
+        là số nguyên 0-3, TRUE_FALSE_4 là mảng 4 boolean, FILL_BLANK là
+        chuỗi. Gửi `{}` cho câu chưa trả lời (sentinel, luôn được tính là
+        sai).
+      oneOf:
+        - type: integer
+        - type: string
+        - type: array
+          items: { type: boolean }
+        - type: object
+          description: 'Sentinel cho câu chưa trả lời: `{}`'
+
+    ExamQuestionPublicDto:
+      type: object
+      description: >-
+        Câu hỏi gửi cho học sinh khi bắt đầu phiên — ẨN
+        `correctAnswer`/`explanation`.
+      properties:
+        id: { type: string, format: uuid }
+        chapter: { type: string, nullable: true }
+        difficulty: { type: integer, enum: [1, 2, 3] }
+        questionType: { $ref: '#/components/schemas/ExamQuestionType' }
+        points: { type: number, example: 0.25 }
+        questionText: { type: string }
+        options: { $ref: '#/components/schemas/ExamQuestionOptions' }
+
+    ExamQuestionFullDto:
+      allOf:
+        - $ref: '#/components/schemas/ExamQuestionPublicDto'
+        - type: object
+          properties:
+            examPaperId: { type: string, format: uuid }
+            correctAnswer: { $ref: '#/components/schemas/ExamCorrectAnswer' }
+            explanation: { type: string, nullable: true }
+            examYear: { type: integer, nullable: true }
+            examCode: { type: string, nullable: true }
+            isActive: { type: boolean }
+            createdAt: { type: string, format: date-time }
+
+    ExamPaperSummaryDto:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        subject: { $ref: '#/components/schemas/SubjectId' }
+        title: { type: string }
+        durationMinutes: { type: integer }
+        isActive: { type: boolean }
+        questionCount:
+          type: integer
+          description: Số câu hỏi ĐANG KÍCH HOẠT (isActive=true) trong đề
+        createdAt: { type: string, format: date-time }
+
+    ExamPaperDetailDto:
+      allOf:
+        - $ref: '#/components/schemas/ExamPaperSummaryDto'
+        - type: object
+          properties:
+            questions:
+              type: array
+              description: Toàn bộ câu hỏi (kể cả isActive=false), kèm đáp án đúng
+              items: { $ref: '#/components/schemas/ExamQuestionFullDto' }
+
+    CreateExamPaperInput:
+      type: object
+      required: [subject, title, durationMinutes]
+      properties:
+        subject: { $ref: '#/components/schemas/SubjectId' }
+        title: { type: string, minLength: 1, maxLength: 300 }
+        durationMinutes: { type: integer, minimum: 1, maximum: 600 }
+
+    UpdateExamPaperInput:
+      type: object
+      description: Tất cả field đều tùy chọn (partial update)
+      properties:
+        title: { type: string, minLength: 1, maxLength: 300 }
+        durationMinutes: { type: integer, minimum: 1, maximum: 600 }
+        isActive: { type: boolean }
+
+    CreateExamQuestionInput:
+      type: object
+      required: [difficulty, questionType, points, questionText, correctAnswer]
+      properties:
+        chapter: { type: string, maxLength: 200 }
+        difficulty: { type: integer, enum: [1, 2, 3] }
+        questionType: { $ref: '#/components/schemas/ExamQuestionType' }
+        points: { type: number, exclusiveMinimum: 0, example: 0.25 }
+        questionText: { type: string, minLength: 1, maxLength: 4000 }
+        options:
+          type: array
+          items: { type: string, minLength: 1 }
+          minItems: 4
+          maxItems: 4
+          description: 'Bắt buộc với MCQ_4/TRUE_FALSE_4, không gửi với FILL_BLANK'
+        correctAnswer: { $ref: '#/components/schemas/ExamCorrectAnswer' }
+        explanation: { type: string, maxLength: 4000 }
+        examYear: { type: integer, minimum: 2000, maximum: 2100 }
+        examCode: { type: string, maxLength: 50 }
+
+    UpdateExamQuestionInput:
+      allOf:
+        - $ref: '#/components/schemas/CreateExamQuestionInput'
+      description: Tất cả field đều tùy chọn (partial update)
+
+    StartExamRequest:
+      type: object
+      required: [subject]
+      properties:
+        subject: { $ref: '#/components/schemas/SubjectId' }
+
+    StartExamResponse:
+      type: object
+      properties:
+        sessionId: { type: string, format: uuid }
+        examPaperId: { type: string, format: uuid }
+        subject: { $ref: '#/components/schemas/SubjectId' }
+        title: { type: string }
+        durationMinutes: { type: integer }
+        startedAt: { type: string, format: date-time }
+        questions:
+          type: array
+          items: { $ref: '#/components/schemas/ExamQuestionPublicDto' }
+
+    SubmitExamRequest:
+      type: object
+      required: [sessionId, answers]
+      properties:
+        sessionId: { type: string, format: uuid }
+        answers:
+          type: array
+          items:
+            type: object
+            required: [examQuestionId, selectedAnswer]
+            properties:
+              examQuestionId: { type: string, format: uuid }
+              selectedAnswer: { $ref: '#/components/schemas/ExamSelectedAnswer' }
+
+    SubmitExamResponse:
+      type: object
+      properties:
+        sessionId: { type: string, format: uuid }
+        score:
+          type: number
+          description: Điểm theo thang 10 (1 chữ số thập phân)
+          example: 7.1
+        pointsAwarded:
+          type: integer
+          description: Điểm tích lũy được thưởng (0/10/20/50/120)
+          example: 10
+
+    ExamChapterAnalysis:
+      type: object
+      properties:
+        chapter:
+          type: string
+          description: '"Khác" nếu câu hỏi không gán chương'
+          example: 'Hàm số'
+        correctCount:
+          type: integer
+          description: Số câu làm ĐÚNG HOÀN TOÀN (đạt trọn điểm) trong chương này
+        totalCount: { type: integer }
+        pointsEarned: { type: number }
+        pointsTotal: { type: number }
+
+    ExamWrongAnswerItem:
+      type: object
+      description: >-
+        1 câu chưa đạt trọn điểm (pointsEarned < points), kèm đáp án đúng +
+        giải thích
+      properties:
+        examQuestionId: { type: string, format: uuid }
+        questionText: { type: string }
+        questionType: { $ref: '#/components/schemas/ExamQuestionType' }
+        chapter: { type: string, nullable: true }
+        options: { $ref: '#/components/schemas/ExamQuestionOptions' }
+        correctAnswer: { $ref: '#/components/schemas/ExamCorrectAnswer' }
+        selectedAnswer: { $ref: '#/components/schemas/ExamSelectedAnswer' }
+        explanation: { type: string, nullable: true }
+        points: { type: number }
+        pointsEarned: { type: number }
+
+    ExamResultResponse:
+      type: object
+      properties:
+        sessionId: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/ExamSessionStatus' }
+        score: { type: number }
+        pointsAwarded: { type: integer }
+        totalQuestions: { type: integer }
+        chapterAnalysis:
+          type: array
+          items: { $ref: '#/components/schemas/ExamChapterAnalysis' }
+        wrongAnswers:
+          type: array
+          items: { $ref: '#/components/schemas/ExamWrongAnswerItem' }
+
+    ExamImportRowError:
+      type: object
+      properties:
+        row:
+          type: integer
+          description: Số thứ tự dòng trong file Excel (tính cả dòng header = dòng 1)
+        message: { type: string }
+
+    ExamImportResult:
+      type: object
+      properties:
+        inserted: { type: integer }
+        errors:
+          type: array
+          items: { $ref: '#/components/schemas/ExamImportRowError' }

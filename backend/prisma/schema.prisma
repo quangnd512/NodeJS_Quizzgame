@@ -232,3 +232,147 @@ model QuestionReport {
   @@index([status, createdAt])
   @@map("question_reports")
 }
+
+// ============================================================================
+// MODULE THI THU (Mock Exam Module)
+// ============================================================================
+
+/// Bang luu thong tin 1 de thi thu - do admin tao, gom nhieu cau hoi (ExamQuestion).
+model ExamPaper {
+  id              String   @id @default(uuid())
+
+  /// Ma mon hoc (vi du: "TOAN", "VAN") - khop voi SUBJECT_CATALOG.
+  subject         String
+
+  /// Ten de thi - vi du "De thi thu THPT QG 2024 - Mon Toan - De 101".
+  title           String
+
+  /// Thoi gian lam bai (phut) - dung de tinh han nop bai (xem ExamSession.durationMinutes).
+  durationMinutes Int
+
+  /// Trang thai kich hoat - false neu admin tam an de (khong duoc rut khi chon de ngau nhien).
+  isActive        Boolean  @default(true)
+
+  createdAt       DateTime @default(now())
+
+  @@index([subject, isActive])
+  @@map("exam_papers")
+}
+
+/// Bang luu tung cau hoi trong 1 de thi thu - ho tro 3 dang: MCQ_4, TRUE_FALSE_4, FILL_BLANK.
+model ExamQuestion {
+  id            String   @id @default(uuid())
+
+  /// De thi ma cau hoi nay thuoc ve.
+  examPaperId   String
+
+  /// Ten chuong/chu de (tuy chon) - dung de phan tich ket qua theo chuong sau khi nop bai.
+  chapter       String?
+
+  /// Do kho: 1=de, 2=trung binh, 3=kho.
+  difficulty    Int
+
+  /// Dang cau hoi:
+  ///   - "MCQ_4": trac nghiem 4 lua chon, chon 1 dap an dung
+  ///   - "TRUE_FALSE_4": 4 phat bieu dung/sai (a/b/c/d)
+  ///   - "FILL_BLANK": dien dap an dang tu do
+  questionType  String
+
+  /// So diem cua cau hoi nay trong de. Tong diem cac cau KHONG can bang 10 -
+  /// he thong tu quy doi diem dat duoc ve thang 10 khi cham bai (xem exam.service.ts).
+  points        Float
+
+  /// Noi dung cau hoi.
+  questionText  String
+
+  /// Du lieu lua chon/phat bieu dang JSON, theo tung dang:
+  ///   - MCQ_4: mang 4 string (lua chon A-D)
+  ///   - TRUE_FALSE_4: mang 4 string (4 phat bieu a/b/c/d)
+  ///   - FILL_BLANK: null (khong co lua chon)
+  options       Json?
+
+  /// Dap an dung dang JSON, theo tung dang:
+  ///   - MCQ_4: so (0-3) - chi so lua chon dung trong `options`
+  ///   - TRUE_FALSE_4: mang 4 boolean - dung/sai cho tung phat bieu a/b/c/d
+  ///   - FILL_BLANK: mang string - cac dap an duoc chap nhan (chi can khop 1 trong mang)
+  correctAnswer Json
+
+  /// Giai thich (tuy chon) - hien thi trong trang ket qua sau khi nop bai.
+  explanation   String?
+
+  /// Nam de thi goc (tuy chon) - vi du 2023, 2024.
+  examYear      Int?
+
+  /// Ma de thi goc (tuy chon) - vi du "Ma de 101" (phan biet voi ExamPaper.id noi bo).
+  examCode      String?
+
+  /// Trang thai kich hoat - false neu bi an (soft delete).
+  isActive      Boolean  @default(true)
+
+  createdAt     DateTime @default(now())
+
+  @@index([examPaperId, isActive])
+  @@map("exam_questions")
+}
+
+/// Bang luu thong tin 1 phien thi thu (moi lan user bam "Thi thu" va duoc rut 1 de ngau nhien).
+model ExamSession {
+  id              String    @id @default(uuid())
+
+  /// ID nguoi dung lam bai.
+  userId          String
+
+  /// De thi duoc rut cho phien nay.
+  examPaperId     String
+
+  /// Ma mon hoc da chon thi thu (dung de thong ke, doc lap voi ExamPaper.subject ve sau).
+  subjectId       String
+
+  /// Thoi gian lam bai (phut) - SNAPSHOT tu ExamPaper.durationMinutes tai thoi diem bat dau,
+  /// de neu admin sua de sau do se khong anh huong den cac phien dang dien ra.
+  durationMinutes Int
+
+  startedAt       DateTime  @default(now())
+
+  /// Trang thai: "IN_PROGRESS" (dang lam) | "COMPLETED" (da nop, da cham diem)
+  /// | "EXPIRED" (qua gio nop bai, khong duoc cham diem).
+  status          String    @default("IN_PROGRESS")
+
+  /// Diem so theo thang 10 (1 chu so thap phan) - null khi chua nop bai/het gio.
+  score           Float?
+
+  /// So diem tich luy duoc thuong them tu ket qua thi (0 neu score < 7.0 - khong cong diem).
+  pointsAwarded   Int       @default(0)
+
+  completedAt     DateTime?
+
+  // Index theo (userId, examPaperId) phuc vu thuat toan chon de cong bang
+  // (dem so lan user da thi tung de). Index theo (userId, completedAt) phuc vu lich su.
+  @@index([userId, examPaperId])
+  @@index([userId, completedAt])
+  @@map("exam_sessions")
+}
+
+/// Bang luu tung cau tra loi cua user trong 1 phien thi thu.
+model ExamAnswer {
+  id             String   @id @default(uuid())
+
+  sessionId      String
+
+  examQuestionId String
+
+  /// Dap an user da chon/nhap khi nop bai, dang JSON theo tung dang cau hoi:
+  ///   - MCQ_4: so (0-3) hoac null neu chua chon
+  ///   - TRUE_FALSE_4: mang 4 boolean|null - y chua chon tinh la sai
+  ///   - FILL_BLANK: string (co the rong neu chua dien)
+  selectedAnswer Json
+
+  /// So diem cau nay dat duoc - co the la so le (vi du TRUE_FALSE_4 dung 2/4 y).
+  pointsEarned   Float    @default(0)
+
+  answeredAt     DateTime @default(now())
+
+  /// Moi cau hoi trong 1 phien chi co 1 ban ghi tra loi.
+  @@unique([sessionId, examQuestionId])
+  @@map("exam_answers")
+}
