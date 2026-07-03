@@ -1,13 +1,14 @@
 openapi: 3.0.3
 info:
-  title: QuizzGame API — Practice, Thi thử & Admin
-  version: "1.2.0"
+  title: QuizzGame API — Practice, Thi thử, Admin & Ngân hàng câu hỏi
+  version: "1.3.0"
   description: >-
-    Contract cho module Ôn tập (Practice), module Thi thử (Exam/Mock Exam) và
-    các endpoint Admin liên quan (quản lý câu hỏi, xử lý báo cáo câu hỏi, quản
-    lý đề thi thử). Khớp với `docs/FEATURE_LOG.md` Section 4 (Practice
-    Module), Section 5 (Admin Dashboard – Quản lý báo cáo câu hỏi) và
-    Section 6 (Exam Module – Thi thử).
+    Contract cho module Ôn tập (Practice), module Thi thử (Exam/Mock Exam),
+    các endpoint Admin liên quan (quản lý câu hỏi, xử lý báo cáo câu hỏi,
+    quản lý đề thi thử) và Ngân hàng câu hỏi (Question Bank).
+    Khớp với `docs/FEATURE_LOG.md` Section 4 (Practice Module), Section 5
+    (Admin Dashboard – Quản lý báo cáo câu hỏi), Section 6 (Exam Module –
+    Thi thử) và Section 7 (Ngân hàng câu hỏi).
 
     Các endpoint khác của hệ thống (Auth, Onboarding, Points, Leaderboard...)
     chưa được mô tả trong file này.
@@ -23,6 +24,8 @@ tags:
     description: Endpoint Thi thử (Mock Exam) cho người dùng đã đăng nhập (session token)
   - name: Admin
     description: Endpoint quản trị (X-Admin-Secret)
+  - name: QuestionBank
+    description: Ngân hàng câu hỏi — CRUD kho câu hỏi dùng chung (X-Admin-Secret)
 
 security: []
 
@@ -1914,3 +1917,346 @@ components:
         errors:
           type: array
           items: { $ref: '#/components/schemas/ExamImportRowError' }
+
+    QuestionBankSummaryDto:
+      type: object
+      required: [id, subject, difficulty, questionType, points, questionText, correctAnswer, isActive, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        subject: { $ref: '#/components/schemas/SubjectId' }
+        chapter: { type: string, nullable: true }
+        difficulty: { type: integer, enum: [1, 2, 3] }
+        questionType: { type: string, enum: [MCQ_4, TRUE_FALSE_4, FILL_BLANK] }
+        points: { type: number }
+        questionText: { type: string }
+        options:
+          nullable: true
+          oneOf:
+            - type: array
+              items: { type: string }
+        correctAnswer:
+          oneOf:
+            - type: integer
+              description: MCQ_4 — chỉ số đáp án đúng (0-3)
+            - type: array
+              items: { type: boolean }
+              description: TRUE_FALSE_4 — mảng 4 boolean
+            - type: array
+              items: { type: string }
+              description: FILL_BLANK — mảng đáp án chấp nhận
+        explanation: { type: string, nullable: true }
+        examYear: { type: integer, nullable: true }
+        examCode: { type: string, nullable: true }
+        isActive: { type: boolean }
+        createdAt: { type: string, format: date-time }
+
+    QuestionBankListResult:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/QuestionBankSummaryDto' }
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+
+    QuestionBankUsageDto:
+      type: object
+      required: [examPapers, totalExamPapers, hasActiveSession]
+      properties:
+        examPapers:
+          type: array
+          items:
+            type: object
+            required: [paperId, paperTitle, subject, isActive, hasActiveSession]
+            properties:
+              paperId: { type: string, format: uuid }
+              paperTitle: { type: string }
+              subject: { $ref: '#/components/schemas/SubjectId' }
+              isActive: { type: boolean }
+              hasActiveSession: { type: boolean }
+        totalExamPapers: { type: integer }
+        hasActiveSession: { type: boolean }
+
+    AddFromBankResult:
+      type: object
+      required: [added, skipped]
+      properties:
+        added: { type: integer, description: Số câu được thêm vào đề }
+        skipped: { type: integer, description: Số câu bỏ qua (đã có trong đề hoặc isActive=false) }
+
+    AutoFillFromBankResult:
+      type: object
+      required: [added, skipped, shortage]
+      properties:
+        added: { type: integer, description: Số câu đã được thêm vào đề thành công }
+        skipped: { type: integer, description: Luôn 0 (auto-fill không đếm duplicate riêng) }
+        shortage:
+          type: integer
+          description: >
+            Số câu thiếu so với `count` yêu cầu (= count - added).
+            > 0 khi kho không đủ câu cho môn/độ khó tương ứng.
+
+# ─────────────────────── Question Bank paths ─────────────────────────
+  /api/admin/question-bank:
+    get:
+      tags: [QuestionBank]
+      summary: Danh sách câu hỏi trong kho (filter + phân trang)
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - name: subject
+          in: query
+          schema: { $ref: '#/components/schemas/SubjectId' }
+        - name: chapter
+          in: query
+          schema: { type: string, maxLength: 200 }
+        - name: difficulty
+          in: query
+          schema: { type: integer, enum: [1, 2, 3] }
+        - name: search
+          in: query
+          schema: { type: string, maxLength: 200 }
+          description: Tìm kiếm theo nội dung câu hỏi (contains, case-insensitive)
+        - name: isActive
+          in: query
+          schema: { type: string, enum: ['true', 'false'] }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: Danh sách câu hỏi
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuestionBankListResult' }
+        '400':
+          description: Query param không hợp lệ
+        '401':
+          description: Thiếu hoặc sai X-Admin-Secret
+
+    post:
+      tags: [QuestionBank]
+      summary: Tạo câu hỏi mới trong kho
+      security: [{ AdminSecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject, difficulty, questionType, points, questionText, correctAnswer]
+              properties:
+                subject: { $ref: '#/components/schemas/SubjectId' }
+                chapter: { type: string, maxLength: 200 }
+                difficulty: { type: integer, enum: [1, 2, 3] }
+                questionType: { type: string, enum: [MCQ_4, TRUE_FALSE_4, FILL_BLANK] }
+                points: { type: number, minimum: 0.01 }
+                questionText: { type: string, minLength: 1, maxLength: 4000 }
+                options:
+                  type: array
+                  items: { type: string, minLength: 1 }
+                  minItems: 4
+                  maxItems: 4
+                  description: Bắt buộc với MCQ_4 và TRUE_FALSE_4; bỏ qua với FILL_BLANK
+                correctAnswer:
+                  oneOf:
+                    - type: integer
+                    - type: array
+                      items: { type: boolean }
+                    - type: array
+                      items: { type: string }
+                explanation: { type: string, maxLength: 4000 }
+                examYear: { type: integer, minimum: 2000, maximum: 2100 }
+                examCode: { type: string, maxLength: 50 }
+      responses:
+        '201':
+          description: Câu hỏi đã được tạo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuestionBankSummaryDto' }
+        '400':
+          description: Dữ liệu không hợp lệ (thiếu trường, sai định dạng, options/correctAnswer không khớp questionType)
+        '401':
+          description: Thiếu hoặc sai X-Admin-Secret
+
+  /api/admin/question-bank/{id}/usage:
+    get:
+      tags: [QuestionBank]
+      summary: Kiểm tra câu hỏi đang được dùng ở đề nào
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Thông tin usage của câu hỏi
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuestionBankUsageDto' }
+        '401':
+          description: Thiếu hoặc sai X-Admin-Secret
+        '404':
+          description: Câu hỏi không tồn tại trong kho
+
+  /api/admin/question-bank/{id}:
+    put:
+      tags: [QuestionBank]
+      summary: Cập nhật câu hỏi trong kho (partial update)
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Tất cả trường đều tùy chọn — chỉ trường có trong body mới được cập nhật
+              properties:
+                subject: { $ref: '#/components/schemas/SubjectId' }
+                chapter: { type: string, maxLength: 200, nullable: true }
+                difficulty: { type: integer, enum: [1, 2, 3] }
+                questionType: { type: string, enum: [MCQ_4, TRUE_FALSE_4, FILL_BLANK] }
+                points: { type: number, minimum: 0.01 }
+                questionText: { type: string, minLength: 1, maxLength: 4000 }
+                options:
+                  type: array
+                  items: { type: string }
+                correctAnswer:
+                  oneOf:
+                    - type: integer
+                    - type: array
+                      items: { type: boolean }
+                    - type: array
+                      items: { type: string }
+                explanation: { type: string, maxLength: 4000, nullable: true }
+                examYear: { type: integer, nullable: true }
+                examCode: { type: string, nullable: true }
+                isActive: { type: boolean }
+      responses:
+        '200':
+          description: Câu hỏi sau khi cập nhật
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuestionBankSummaryDto' }
+        '400':
+          description: Dữ liệu không hợp lệ
+        '401':
+          description: Thiếu hoặc sai X-Admin-Secret
+        '404':
+          description: Câu hỏi không tồn tại trong kho
+
+    delete:
+      tags: [QuestionBank]
+      summary: Hard delete câu hỏi khỏi kho (có guard phiên IN_PROGRESS)
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Xóa thành công
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: "Da xoa cau hoi khoi ngan hang thanh cong." }
+        '401':
+          description: Thiếu hoặc sai X-Admin-Secret
+        '404':
+          description: Câu hỏi không tồn tại trong kho
+        '409':
+          description: Không thể xóa vì còn ExamSession IN_PROGRESS đang dùng câu này
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string, example: QUESTION_BANK_DELETE_BLOCKED }
+                  message: { type: string }
+
+  /api/admin/exam-papers/{id}/questions/from-bank:
+    post:
+      tags: [QuestionBank, Admin]
+      summary: Thêm nhiều câu từ kho vào đề thi (batch, skip duplicate)
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: ID của đề thi (`examPaperId`)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [questionBankIds]
+              properties:
+                questionBankIds:
+                  type: array
+                  items: { type: string, format: uuid }
+                  minItems: 1
+                  maxItems: 100
+      responses:
+        '200':
+          description: Kết quả thêm câu từ kho
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AddFromBankResult' }
+        '400':
+          description: questionBankIds rỗng, vượt 100, hoặc không phải UUID
+        '401':
+          description: Thiếu hoặc sai X-Admin-Secret
+        '404':
+          description: examPaperId không tồn tại
+
+  /api/admin/exam-papers/{id}/questions/auto-fill:
+    post:
+      tags: [QuestionBank, Admin]
+      summary: Tự động lấy N câu ngẫu nhiên từ kho vào đề thi (50% dễ / 30% TB / 20% khó)
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: ID của đề thi (`examPaperId`)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [count]
+              properties:
+                count:
+                  type: integer
+                  minimum: 1
+                  maximum: 200
+                  description: Tổng số câu cần thêm (phân phối 50% dễ / 30% TB / 20% khó)
+      responses:
+        '200':
+          description: Kết quả tự động điền câu từ kho
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutoFillFromBankResult' }
+        '400':
+          description: count không hợp lệ (không phải số nguyên dương hoặc vượt 200)
+        '401':
+          description: Thiếu hoặc sai X-Admin-Secret
+        '404':
+          description: examPaperId không tồn tại

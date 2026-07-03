@@ -8,13 +8,17 @@ import {
   startExam, submitExam, getExamResult,
   adminListReports, adminUpdateReportStatus, adminGetReportsSummary,
   adminListExamPapers, adminGetExamPaperDetail, adminCreateExamPaper, adminUpdateExamPaper,
-  adminCreateExamQuestion, adminUpdateExamQuestion, adminDeleteExamQuestion, adminRestoreExamQuestion, adminImportExamQuestions,
+  adminUpdateExamQuestion, adminDeleteExamQuestion, adminRestoreExamQuestion, adminImportExamQuestions,
+  adminAutoFillFromBank,
+  adminListQuestionBank, adminCreateQuestionBankItem, adminUpdateQuestionBankItem,
+  adminGetQuestionBankUsage, adminDeleteQuestionBankItem, adminAddFromBank,
 } from './lib/api.js';
 import type {
   UserProfile, StartSessionResult, AnswerResult, CompleteResult,
   HistoryItem, SubjectStat, QuestionReportDto, ReportsSummary, ReportStatus,
   StartExamResult, SubmitExamResult, ExamResult, ExamAnswerValue, ExamQuestionType, ExamQuestionPublic,
-  ExamPaperSummary, ExamPaperDetail, CreateExamQuestionPayload, ExamImportResultDto,
+  ExamPaperSummary, ExamPaperDetail, ExamImportResultDto,
+  QuestionBankItem, QuestionBankUsage,
 } from './lib/api.js';
 import './App.css';
 
@@ -1305,7 +1309,7 @@ const REPORT_REASON_LABEL: Record<string, string> = Object.fromEntries(
   REPORT_REASONS.map((r) => [r.value, r.label]),
 );
 
-type AdminTab = 'reports' | 'exams';
+type AdminTab = 'reports' | 'exams' | 'bank';
 
 function AdminPage() {
   const [secret, setSecret] = useState(() => sessionStorage.getItem('adminSecret') ?? '');
@@ -1334,10 +1338,13 @@ function AdminPage() {
         <button className={`admin-tab ${tab === 'exams' ? 'active' : ''}`} onClick={() => setTab('exams')}>
           Đề thi thử
         </button>
+        <button className={`admin-tab ${tab === 'bank' ? 'active' : ''}`} onClick={() => setTab('bank')}>
+          Ngân hàng câu hỏi
+        </button>
       </div>
-      {tab === 'reports'
-        ? <AdminReportsPage secret={secret} onLogout={handleLogout} />
-        : <AdminExamPage secret={secret} onLogout={handleLogout} />}
+      {tab === 'reports' && <AdminReportsPage secret={secret} onLogout={handleLogout} />}
+      {tab === 'exams'   && <AdminExamPage secret={secret} onLogout={handleLogout} />}
+      {tab === 'bank'    && <AdminQuestionBankPage secret={secret} onLogout={handleLogout} />}
     </div>
   );
 }
@@ -1897,7 +1904,14 @@ function AdminExamPaperDetailPage({
 
       <AdminExamImportBox secret={secret} paperId={paper.id} onDone={() => void load()} />
 
-      <AdminExamQuestionForm secret={secret} paperId={paper.id} onDone={() => void load()} />
+      <AdminFromBankModal
+        secret={secret}
+        paperId={paper.id}
+        paperSubject={paper.subject}
+        onDone={() => void load()}
+      />
+
+      <AdminAutoFillBox secret={secret} paperId={paper.id} onDone={() => void load()} />
 
       <section className="card-section">
         <h3 className="section-title" style={{ marginBottom: '.75rem' }}>
@@ -2022,12 +2036,12 @@ function AdminExamPaperDetailPage({
                     {q.isActive ? (
                       <button className="btn-link" style={{ color: 'var(--danger)' }} disabled={busy}
                         onClick={() => void handleDeleteQuestion(q.id)}>
-                        Xoá khỏi đề ↓
+                        Xoá khỏi đề 🗑️
                       </button>
                     ) : (
-                      <button className="btn-link" style={{ color: 'var(--success)' }} disabled={busy}
+                      <button className="btn-link" style={{ color: 'var(--success, #38a169)' }} disabled={busy}
                         onClick={() => void handleRestoreQuestion(q.id)}>
-                        Khôi phục ↑
+                        Khôi phục ↩️
                       </button>
                     )}
                   </div>
@@ -2041,9 +2055,9 @@ function AdminExamPaperDetailPage({
   );
 }
 
-// ─── AdminExamQuestionForm ──────────────────────────────────────────────────────
+// ─── AdminAutoFillBox ───────────────────────────────────────────────────────────
 
-function AdminExamQuestionForm({
+function AdminAutoFillBox({
   secret, paperId, onDone,
 }: {
   secret: string;
@@ -2051,99 +2065,20 @@ function AdminExamQuestionForm({
   onDone: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [questionType, setQuestionType] = useState<ExamQuestionType>('MCQ_4');
-  const [chapter, setChapter] = useState('');
-  const [difficulty, setDifficulty] = useState(1);
-  const [points, setPoints] = useState(0.25);
-  const [questionText, setQuestionText] = useState('');
-  const [options, setOptions] = useState(['', '', '', '']);
-  const [mcqCorrect, setMcqCorrect] = useState(0);
-  const [tfCorrect, setTfCorrect] = useState<boolean[]>([true, true, true, true]);
-  const [fillAnswers, setFillAnswers] = useState('');
-  const [explanation, setExplanation] = useState('');
-  const [examYear, setExamYear] = useState('');
-  const [examCode, setExamCode] = useState('');
+  const [count, setCount] = useState(40);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [result, setResult] = useState<{ added: number; shortage: number } | null>(null);
 
-  function resetForm() {
-    setChapter('');
-    setDifficulty(1);
-    setPoints(0.25);
-    setQuestionText('');
-    setOptions(['', '', '', '']);
-    setMcqCorrect(0);
-    setTfCorrect([true, true, true, true]);
-    setFillAnswers('');
-    setExplanation('');
-    setExamYear('');
-    setExamCode('');
-  }
-
-  async function handleSubmit() {
-    if (busy) return;
-    if (!questionText.trim()) {
-      setError('Vui lòng nhập nội dung câu hỏi.');
-      return;
-    }
-
-    let payload: CreateExamQuestionPayload;
-    if (questionType === 'MCQ_4') {
-      const opts = options.map((o) => o.trim());
-      if (opts.some((o) => !o)) {
-        setError('Vui lòng nhập đủ 4 lựa chọn.');
-        return;
-      }
-      payload = {
-        chapter: chapter.trim() || undefined,
-        difficulty, points, questionType,
-        questionText: questionText.trim(),
-        options: opts,
-        correctAnswer: mcqCorrect,
-        explanation: explanation.trim() || undefined,
-        examYear: examYear ? Number(examYear) : undefined,
-        examCode: examCode.trim() || undefined,
-      };
-    } else if (questionType === 'TRUE_FALSE_4') {
-      const opts = options.map((o) => o.trim());
-      if (opts.some((o) => !o)) {
-        setError('Vui lòng nhập đủ 4 phát biểu.');
-        return;
-      }
-      payload = {
-        chapter: chapter.trim() || undefined,
-        difficulty, points, questionType,
-        questionText: questionText.trim(),
-        options: opts,
-        correctAnswer: tfCorrect,
-        explanation: explanation.trim() || undefined,
-        examYear: examYear ? Number(examYear) : undefined,
-        examCode: examCode.trim() || undefined,
-      };
-    } else {
-      const answers = fillAnswers.split('|').map((a) => a.trim()).filter(Boolean);
-      if (answers.length === 0) {
-        setError('Vui lòng nhập ít nhất 1 đáp án (phân tách bởi "|").');
-        return;
-      }
-      payload = {
-        chapter: chapter.trim() || undefined,
-        difficulty, points, questionType,
-        questionText: questionText.trim(),
-        correctAnswer: answers,
-        explanation: explanation.trim() || undefined,
-        examYear: examYear ? Number(examYear) : undefined,
-        examCode: examCode.trim() || undefined,
-      };
-    }
-
-    setError('');
+  async function handleAutoFill() {
+    if (busy || count < 1) return;
     setBusy(true);
+    setError('');
+    setResult(null);
     try {
-      await adminCreateExamQuestion(secret, paperId, payload);
-      resetForm();
-      setOpen(false);
-      onDone();
+      const res = await adminAutoFillFromBank(secret, paperId, count);
+      setResult({ added: res.added, shortage: res.shortage });
+      if (res.added > 0) onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Lỗi không xác định');
     } finally {
@@ -2154,7 +2089,9 @@ function AdminExamQuestionForm({
   if (!open) {
     return (
       <div className="admin-msg">
-        <button className="btn-secondary" onClick={() => setOpen(true)}>+ Thêm câu hỏi</button>
+        <button className="btn-secondary" onClick={() => { setOpen(true); setResult(null); setError(''); }}>
+          Lấy câu tự động
+        </button>
       </div>
     );
   }
@@ -2162,113 +2099,541 @@ function AdminExamQuestionForm({
   return (
     <section className="card-section">
       <div className="section-row">
-        <h3 className="section-title">Thêm câu hỏi mới</h3>
+        <h3 className="section-title">Lấy câu tự động từ ngân hàng</h3>
         <button className="btn-link" onClick={() => setOpen(false)}>Đóng</button>
       </div>
-
+      <p className="admin-exam-meta" style={{ marginBottom: '.75rem' }}>
+        Hệ thống chọn ngẫu nhiên từ ngân hàng câu hỏi (cùng môn) theo tỷ lệ:
+        <strong> 50% dễ / 30% trung bình / 20% khó</strong>.
+        Câu đã có trong đề sẽ không bị thêm lại.
+      </p>
       <div className="edit-form">
         <label className="form-field">
-          <span className="field-label">Dạng câu hỏi</span>
-          <select className="field-input" value={questionType}
-            onChange={(e) => setQuestionType(e.target.value as ExamQuestionType)}>
-            <option value="MCQ_4">Trắc nghiệm 4 đáp án</option>
-            <option value="TRUE_FALSE_4">Đúng/Sai 4 ý</option>
-            <option value="FILL_BLANK">Điền đáp án</option>
-          </select>
+          <span className="field-label">Số câu hỏi cần lấy</span>
+          <input
+            className="field-input"
+            type="number"
+            min={1}
+            max={200}
+            value={count}
+            style={{ maxWidth: '120px' }}
+            onChange={(e) => setCount(Math.max(1, Math.min(200, Number(e.target.value))))}
+          />
         </label>
-
-        <label className="form-field">
-          <span className="field-label">Nội dung câu hỏi</span>
-          <textarea className="report-desc" style={{ minHeight: '4rem' }} value={questionText}
-            onChange={(e) => setQuestionText(e.target.value)} />
-        </label>
-
-        <div className="admin-exam-row3">
-          <label className="form-field">
-            <span className="field-label">Chương (tuỳ chọn)</span>
-            <input className="field-input" value={chapter} onChange={(e) => setChapter(e.target.value)} />
-          </label>
-          <label className="form-field">
-            <span className="field-label">Độ khó</span>
-            <select className="field-input" value={difficulty} onChange={(e) => setDifficulty(Number(e.target.value))}>
-              <option value={1}>Dễ</option>
-              <option value={2}>Trung bình</option>
-              <option value={3}>Khó</option>
-            </select>
-          </label>
-          <label className="form-field">
-            <span className="field-label">Điểm</span>
-            <input className="field-input" type="number" step="0.25" min="0.25" value={points}
-              onChange={(e) => setPoints(Number(e.target.value))} />
-          </label>
-        </div>
-
-        {questionType === 'MCQ_4' && (
-          <div className="form-field">
-            <span className="field-label">4 lựa chọn (chọn radio cho đáp án đúng)</span>
-            {options.map((opt, idx) => (
-              <div key={idx} className="admin-exam-option-row">
-                <input type="radio" name="mcqCorrect" checked={mcqCorrect === idx} onChange={() => setMcqCorrect(idx)} />
-                <span className="opt-label">{OPTION_LABELS[idx]}</span>
-                <input className="field-input" value={opt}
-                  onChange={(e) => setOptions((o) => o.map((v, i) => i === idx ? e.target.value : v))} />
-              </div>
-            ))}
+        {result && (
+          <div>
+            {result.added > 0 && (
+              <p className="admin-notice">✓ Đã thêm {result.added} câu hỏi vào đề thi.</p>
+            )}
+            {result.shortage > 0 && (
+              <p className="report-error" style={{ marginTop: '.25rem' }}>
+                Ngân hàng không đủ câu: thiếu {result.shortage} câu theo tỷ lệ đã chọn.
+              </p>
+            )}
+            {result.added === 0 && result.shortage === 0 && (
+              <p className="admin-notice">Không có câu hỏi mới nào được thêm (đã đủ hoặc kho trống).</p>
+            )}
           </div>
         )}
-
-        {questionType === 'TRUE_FALSE_4' && (
-          <div className="form-field">
-            <span className="field-label">4 phát biểu (chọn Đúng/Sai cho từng ý)</span>
-            {options.map((opt, idx) => (
-              <div key={idx} className="admin-exam-option-row">
-                <input className="field-input" value={opt} placeholder={`Phát biểu ${OPTION_LABELS[idx]}`}
-                  onChange={(e) => setOptions((o) => o.map((v, i) => i === idx ? e.target.value : v))} />
-                <div className="exam-tf-toggle">
-                  <button type="button" className={`exam-tf-btn ${tfCorrect[idx] ? 'active-true' : ''}`}
-                    onClick={() => setTfCorrect((c) => c.map((v, i) => i === idx ? true : v))}>
-                    Đúng
-                  </button>
-                  <button type="button" className={`exam-tf-btn ${!tfCorrect[idx] ? 'active-false' : ''}`}
-                    onClick={() => setTfCorrect((c) => c.map((v, i) => i === idx ? false : v))}>
-                    Sai
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {questionType === 'FILL_BLANK' && (
-          <label className="form-field">
-            <span className="field-label">Đáp án chấp nhận (phân tách bởi "|", ví dụ: Hà Nội|Ha Noi)</span>
-            <input className="field-input" value={fillAnswers} onChange={(e) => setFillAnswers(e.target.value)} />
-          </label>
-        )}
-
-        <label className="form-field">
-          <span className="field-label">Giải thích (tuỳ chọn)</span>
-          <textarea className="report-desc" value={explanation} onChange={(e) => setExplanation(e.target.value)} />
-        </label>
-
-        <div className="admin-exam-row3">
-          <label className="form-field">
-            <span className="field-label">Năm thi (tuỳ chọn)</span>
-            <input className="field-input" type="number" value={examYear} onChange={(e) => setExamYear(e.target.value)} />
-          </label>
-          <label className="form-field">
-            <span className="field-label">Mã đề (tuỳ chọn)</span>
-            <input className="field-input" value={examCode} onChange={(e) => setExamCode(e.target.value)} />
-          </label>
-        </div>
-
         {error && <p className="report-error">{error}</p>}
-
-        <button className="btn-primary" disabled={busy} onClick={() => void handleSubmit()}>
-          {busy && <Spinner />}{busy ? 'Đang lưu…' : 'Thêm câu hỏi'}
+        <button className="btn-primary" disabled={busy || count < 1} onClick={() => void handleAutoFill()}>
+          {busy && <Spinner />}{busy ? 'Đang lấy câu…' : `Lấy ${count} câu tự động`}
         </button>
       </div>
     </section>
+  );
+}
+
+// ─── AdminQuestionBankPage ──────────────────────────────────────────────────────
+
+const QB_PAGE_SIZE = 20;
+
+function AdminQuestionBankPage({ secret, onLogout }: { secret: string; onLogout: () => void }) {
+  const [items, setItems] = useState<QuestionBankItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const [filterSubject, setFilterSubject] = useState('');
+  const [filterDifficulty, setFilterDifficulty] = useState('');
+  const [filterSearch, setFilterSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+
+  const [showForm, setShowForm] = useState(false);
+  const [editingItem, setEditingItem] = useState<QuestionBankItem | null>(null);
+  const [formError, setFormError] = useState('');
+  const [formBusy, setFormBusy] = useState(false);
+
+  const [deleteTarget, setDeleteTarget] = useState<QuestionBankItem | null>(null);
+  const [usage, setUsage] = useState<QuestionBankUsage | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageFailed, setUsageFailed] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+
+  const [form, setForm] = useState({
+    subject: SUBJECTS[0]!.id,
+    chapter: '',
+    difficulty: 1,
+    questionType: 'MCQ_4' as ExamQuestionType,
+    points: 0.25,
+    questionText: '',
+    options: ['', '', '', ''] as string[],
+    mcqCorrect: 0,
+    tfCorrect: [true, true, true, true] as boolean[],
+    fillAnswers: '',
+    explanation: '',
+    examYear: '',
+    examCode: '',
+  });
+
+  async function load(pg = page) {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await adminListQuestionBank(secret, {
+        subject: filterSubject || undefined,
+        difficulty: filterDifficulty ? Number(filterDifficulty) : undefined,
+        search: filterSearch || undefined,
+        page: pg,
+        pageSize: QB_PAGE_SIZE,
+      });
+      setItems(res.items);
+      setTotal(res.total);
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) { onLogout(); return; }
+      setError(err instanceof Error ? err.message : 'Lỗi không xác định');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
+  useEffect(() => { void load(1); setPage(1); }, [filterSubject, filterDifficulty, filterSearch]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
+  useEffect(() => { void load(page); }, [page]);
+
+  function resetForm(item?: QuestionBankItem) {
+    if (item) {
+      const mcqCorrect = item.questionType === 'MCQ_4' && typeof item.correctAnswer === 'number' ? item.correctAnswer : 0;
+      const tfCorrect = item.questionType === 'TRUE_FALSE_4' && Array.isArray(item.correctAnswer) && item.correctAnswer.length === 4
+        ? (item.correctAnswer as boolean[]) : [true, true, true, true];
+      const fillAnswers = item.questionType === 'FILL_BLANK' && Array.isArray(item.correctAnswer)
+        ? (item.correctAnswer as string[]).join(' | ') : '';
+      setForm({
+        subject: item.subject,
+        chapter: item.chapter ?? '',
+        difficulty: item.difficulty,
+        questionType: item.questionType,
+        points: item.points,
+        questionText: item.questionText,
+        options: (item.options && item.options.length === 4) ? [...item.options] : ['', '', '', ''],
+        mcqCorrect,
+        tfCorrect: tfCorrect as boolean[],
+        fillAnswers,
+        explanation: item.explanation ?? '',
+        examYear: item.examYear ? String(item.examYear) : '',
+        examCode: item.examCode ?? '',
+      });
+    } else {
+      setForm({
+        subject: SUBJECTS[0]!.id,
+        chapter: '',
+        difficulty: 1,
+        questionType: 'MCQ_4',
+        points: 0.25,
+        questionText: '',
+        options: ['', '', '', ''],
+        mcqCorrect: 0,
+        tfCorrect: [true, true, true, true],
+        fillAnswers: '',
+        explanation: '',
+        examYear: '',
+        examCode: '',
+      });
+    }
+    setFormError('');
+  }
+
+  function openCreate() {
+    setEditingItem(null);
+    resetForm();
+    setShowForm(true);
+  }
+
+  function openEdit(item: QuestionBankItem) {
+    setEditingItem(item);
+    resetForm(item);
+    setShowForm(true);
+  }
+
+  async function handleSubmitForm() {
+    if (formBusy) return;
+    if (!form.questionText.trim()) { setFormError('Vui lòng nhập nội dung câu hỏi.'); return; }
+
+    let correctAnswer: unknown;
+    let options: string[] | undefined;
+    if (form.questionType === 'MCQ_4') {
+      const opts = form.options.map((o) => o.trim());
+      if (opts.some((o) => !o)) { setFormError('Vui lòng nhập đủ 4 lựa chọn.'); return; }
+      options = opts;
+      correctAnswer = form.mcqCorrect;
+    } else if (form.questionType === 'TRUE_FALSE_4') {
+      const opts = form.options.map((o) => o.trim());
+      if (opts.some((o) => !o)) { setFormError('Vui lòng nhập đủ 4 phát biểu.'); return; }
+      options = opts;
+      correctAnswer = form.tfCorrect;
+    } else {
+      const answers = form.fillAnswers.split('|').map((a) => a.trim()).filter(Boolean);
+      if (answers.length === 0) { setFormError('Vui lòng nhập ít nhất 1 đáp án.'); return; }
+      correctAnswer = answers;
+    }
+
+    const payload = {
+      subject: form.subject,
+      chapter: form.chapter.trim() || undefined,
+      difficulty: form.difficulty,
+      questionType: form.questionType,
+      points: form.points,
+      questionText: form.questionText.trim(),
+      options,
+      correctAnswer,
+      explanation: form.explanation.trim() || undefined,
+      examYear: form.examYear ? Number(form.examYear) : undefined,
+      examCode: form.examCode.trim() || undefined,
+    };
+
+    setFormError('');
+    setFormBusy(true);
+    try {
+      if (editingItem) {
+        await adminUpdateQuestionBankItem(secret, editingItem.id, payload);
+      } else {
+        await adminCreateQuestionBankItem(secret, payload);
+      }
+      setShowForm(false);
+      setEditingItem(null);
+      await load(1);
+      setPage(1);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Lỗi không xác định');
+    } finally {
+      setFormBusy(false);
+    }
+  }
+
+  async function openDeleteDialog(item: QuestionBankItem) {
+    setDeleteTarget(item);
+    setDeleteError('');
+    setUsage(null);
+    setUsageFailed(false);
+    setUsageLoading(true);
+    try {
+      const u = await adminGetQuestionBankUsage(secret, item.id);
+      setUsage(u);
+    } catch {
+      setUsageFailed(true);
+      setDeleteError('Không thể kiểm tra thông tin sử dụng. Vui lòng đóng và thử lại.');
+    } finally {
+      setUsageLoading(false);
+    }
+  }
+
+  async function handleConfirmDelete() {
+    if (!deleteTarget || deleteBusy) return;
+    if (usage?.hasActiveSession) return;
+    setDeleteBusy(true);
+    setDeleteError('');
+    try {
+      await adminDeleteQuestionBankItem(secret, deleteTarget.id);
+      setDeleteTarget(null);
+      setUsage(null);
+      await load(1);
+      setPage(1);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Lỗi không xác định');
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / QB_PAGE_SIZE));
+
+  return (
+    <div className="screen screen-admin">
+      <div className="admin-header">
+        <h2 className="page-title">Ngân hàng câu hỏi</h2>
+        <button className="btn-link" onClick={onLogout}>Đăng xuất</button>
+      </div>
+
+      {/* Filter */}
+      <div className="admin-filter" style={{ display: 'flex', gap: '.5rem', flexWrap: 'wrap' }}>
+        <select className="field-input" style={{ flex: '1 1 130px' }}
+          value={filterSubject} onChange={(e) => setFilterSubject(e.target.value)}>
+          <option value="">Tất cả môn</option>
+          {SUBJECTS.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+        <select className="field-input" style={{ flex: '1 1 120px' }}
+          value={filterDifficulty} onChange={(e) => setFilterDifficulty(e.target.value)}>
+          <option value="">Tất cả độ khó</option>
+          <option value="1">Dễ</option>
+          <option value="2">Trung bình</option>
+          <option value="3">Khó</option>
+        </select>
+        <input className="field-input" style={{ flex: '2 1 180px' }}
+          placeholder="Tìm kiếm nội dung câu hỏi…"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') setFilterSearch(searchInput); }}
+        />
+        <button className="btn-secondary" onClick={() => setFilterSearch(searchInput)}>Tìm</button>
+      </div>
+
+      {error && <p className="report-error admin-msg">{error}</p>}
+
+      <div className="admin-msg">
+        <button className="btn-secondary" onClick={openCreate}>+ Thêm câu hỏi vào kho</button>
+        <span style={{ marginLeft: '.75rem', fontSize: '.84rem', color: 'var(--muted)' }}>
+          Tổng: {total} câu
+        </span>
+      </div>
+
+      {/* Form thêm/sửa */}
+      {showForm && (
+        <section className="card-section">
+          <div className="section-row">
+            <h3 className="section-title">{editingItem ? 'Sửa câu hỏi' : 'Thêm câu hỏi mới'}</h3>
+            <button className="btn-link" onClick={() => { setShowForm(false); setEditingItem(null); }}>Đóng</button>
+          </div>
+          <div className="edit-form">
+            <div className="admin-exam-row3">
+              <label className="form-field">
+                <span className="field-label">Môn học</span>
+                <select className="field-input" value={form.subject}
+                  onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))}>
+                  {SUBJECTS.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </label>
+              <label className="form-field">
+                <span className="field-label">Dạng câu hỏi</span>
+                <select className="field-input" value={form.questionType}
+                  onChange={(e) => setForm((f) => ({ ...f, questionType: e.target.value as ExamQuestionType }))}>
+                  <option value="MCQ_4">Trắc nghiệm 4 đáp án</option>
+                  <option value="TRUE_FALSE_4">Đúng/Sai 4 ý</option>
+                  <option value="FILL_BLANK">Điền đáp án</option>
+                </select>
+              </label>
+            </div>
+
+            <label className="form-field">
+              <span className="field-label">Nội dung câu hỏi</span>
+              <textarea className="report-desc" style={{ minHeight: '4rem' }}
+                value={form.questionText}
+                onChange={(e) => setForm((f) => ({ ...f, questionText: e.target.value }))} />
+            </label>
+
+            <div className="admin-exam-row3">
+              <label className="form-field">
+                <span className="field-label">Chương (tuỳ chọn)</span>
+                <input className="field-input" value={form.chapter}
+                  onChange={(e) => setForm((f) => ({ ...f, chapter: e.target.value }))} />
+              </label>
+              <label className="form-field">
+                <span className="field-label">Độ khó</span>
+                <select className="field-input" value={form.difficulty}
+                  onChange={(e) => setForm((f) => ({ ...f, difficulty: Number(e.target.value) }))}>
+                  <option value={1}>Dễ</option>
+                  <option value={2}>Trung bình</option>
+                  <option value={3}>Khó</option>
+                </select>
+              </label>
+              <label className="form-field">
+                <span className="field-label">Điểm</span>
+                <input className="field-input" type="number" step="0.25" min="0.25"
+                  value={form.points}
+                  onChange={(e) => setForm((f) => ({ ...f, points: Number(e.target.value) }))} />
+              </label>
+            </div>
+
+            {(form.questionType === 'MCQ_4' || form.questionType === 'TRUE_FALSE_4') && (
+              <div className="form-field">
+                <span className="field-label">
+                  {form.questionType === 'MCQ_4' ? '4 lựa chọn (radio = đáp án đúng)' : '4 phát biểu'}
+                </span>
+                {form.options.map((opt, idx) => (
+                  <div key={idx} className="admin-exam-option-row">
+                    {form.questionType === 'MCQ_4' ? (
+                      <input type="radio" name="qb-mcq" checked={form.mcqCorrect === idx}
+                        onChange={() => setForm((f) => ({ ...f, mcqCorrect: idx }))} />
+                    ) : (
+                      <div className="exam-tf-toggle">
+                        <button type="button"
+                          className={`exam-tf-btn ${form.tfCorrect[idx] ? 'active-true' : ''}`}
+                          onClick={() => setForm((f) => { const t = [...f.tfCorrect]; t[idx] = true; return { ...f, tfCorrect: t }; })}>
+                          Đúng
+                        </button>
+                        <button type="button"
+                          className={`exam-tf-btn ${!form.tfCorrect[idx] ? 'active-false' : ''}`}
+                          onClick={() => setForm((f) => { const t = [...f.tfCorrect]; t[idx] = false; return { ...f, tfCorrect: t }; })}>
+                          Sai
+                        </button>
+                      </div>
+                    )}
+                    <span className="opt-label">{OPTION_LABELS[idx]}</span>
+                    <input className="field-input" value={opt}
+                      onChange={(e) => setForm((f) => {
+                        const opts = [...f.options];
+                        opts[idx] = e.target.value;
+                        return { ...f, options: opts };
+                      })} />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {form.questionType === 'FILL_BLANK' && (
+              <label className="form-field">
+                <span className="field-label">Đáp án chấp nhận (phân tách bởi "|")</span>
+                <input className="field-input" value={form.fillAnswers}
+                  placeholder="Hà Nội | Ha Noi"
+                  onChange={(e) => setForm((f) => ({ ...f, fillAnswers: e.target.value }))} />
+              </label>
+            )}
+
+            <label className="form-field">
+              <span className="field-label">Giải thích (tuỳ chọn)</span>
+              <textarea className="report-desc" value={form.explanation}
+                onChange={(e) => setForm((f) => ({ ...f, explanation: e.target.value }))} />
+            </label>
+
+            <div className="admin-exam-row3">
+              <label className="form-field">
+                <span className="field-label">Năm thi</span>
+                <input className="field-input" type="number" value={form.examYear}
+                  onChange={(e) => setForm((f) => ({ ...f, examYear: e.target.value }))} />
+              </label>
+              <label className="form-field">
+                <span className="field-label">Mã đề</span>
+                <input className="field-input" value={form.examCode}
+                  onChange={(e) => setForm((f) => ({ ...f, examCode: e.target.value }))} />
+              </label>
+            </div>
+
+            {formError && <p className="report-error">{formError}</p>}
+
+            <button className="btn-primary" disabled={formBusy} onClick={() => void handleSubmitForm()}>
+              {formBusy && <Spinner />}{formBusy ? 'Đang lưu…' : (editingItem ? 'Cập nhật câu hỏi' : 'Thêm câu hỏi')}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* Danh sách câu hỏi */}
+      {loading ? (
+        <div className="screen-center"><Spinner /></div>
+      ) : items.length === 0 ? (
+        <p className="empty admin-msg">Không có câu hỏi nào trong kho.</p>
+      ) : (
+        <div className="admin-exam-question-list" style={{ margin: '0 1rem' }}>
+          {items.map((q) => (
+            <div key={q.id} className="admin-exam-question-row">
+              <div className="admin-exam-question-head">
+                <span className="admin-exam-subject">{SUBJECTS_MAP[q.subject]?.name ?? q.subject}</span>
+                <span className={`diff-badge diff-${q.difficulty}`}>{DIFF_LABEL[q.difficulty] ?? 'N/A'}</span>
+                <span className="admin-exam-qtype">{QUESTION_TYPE_LABEL[q.questionType]}</span>
+                {q.chapter && <span className="exam-chapter-tag">{q.chapter}</span>}
+              </div>
+              <p className="exam-question-text">{q.questionText}</p>
+              <div style={{ display: 'flex', gap: '.75rem', marginTop: '.5rem' }}>
+                <button className="btn-link" onClick={() => openEdit(q)}>Sửa ✏️</button>
+                <button className="btn-link" style={{ color: 'var(--danger)' }}
+                  onClick={() => void openDeleteDialog(q)}>
+                  Xoá khỏi kho 🗑️
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="admin-pagination">
+          <button className="btn-secondary" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>← Trước</button>
+          <span>Trang {page}/{totalPages}</span>
+          <button className="btn-secondary" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Sau →</button>
+        </div>
+      )}
+
+      {/* Dialog xác nhận xoá */}
+      {deleteTarget && (
+        <div className="modal-overlay" onClick={() => { if (!deleteBusy) { setDeleteTarget(null); setUsage(null); } }}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+            <h3 className="section-title" style={{ marginBottom: '.75rem' }}>Xác nhận xoá câu hỏi khỏi kho</h3>
+            <p style={{ fontSize: '.9rem', marginBottom: '.75rem' }}>
+              <strong>"{deleteTarget.questionText.slice(0, 100)}{deleteTarget.questionText.length > 100 ? '…' : ''}"</strong>
+            </p>
+
+            {usageLoading ? (
+              <div style={{ textAlign: 'center', padding: '.75rem' }}><Spinner /></div>
+            ) : usage !== null ? (
+              <div>
+                {usage.totalExamPapers === 0 ? (
+                  <p className="admin-notice" style={{ marginBottom: '.75rem' }}>
+                    Câu hỏi này chưa được dùng trong đề thi nào. Có thể xoá an toàn.
+                  </p>
+                ) : (
+                  <div style={{ marginBottom: '.75rem' }}>
+                    <p style={{ fontSize: '.88rem', marginBottom: '.5rem' }}>
+                      Câu hỏi đang được dùng trong <strong>{usage.totalExamPapers}</strong> đề thi:
+                    </p>
+                    <ul style={{ fontSize: '.84rem', paddingLeft: '1.25rem', margin: '0 0 .5rem' }}>
+                      {usage.examPapers.map((p) => (
+                        <li key={p.paperId} style={{ marginBottom: '.25rem' }}>
+                          {p.paperTitle}
+                          {p.hasActiveSession && (
+                            <span style={{ color: 'var(--danger)', marginLeft: '.4rem', fontWeight: 700 }}>
+                              [Đang có phiên thi đang diễn ra]
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    {usage.hasActiveSession ? (
+                      <p className="report-error" style={{ marginBottom: 0 }}>
+                        Không thể xoá: còn phiên thi đang diễn ra tham chiếu câu hỏi này. Vui lòng chờ phiên kết thúc.
+                      </p>
+                    ) : (
+                      <p className="admin-notice" style={{ marginBottom: 0 }}>
+                        Khi xoá, câu hỏi sẽ bị xoá khỏi kho nhưng vẫn tồn tại trong các đề thi đã dùng (dạng câu hỏi tự do).
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : null}
+
+            {deleteError && <p className="report-error">{deleteError}</p>}
+
+            <div style={{ display: 'flex', gap: '.75rem', marginTop: '.75rem' }}>
+              <button className="btn-secondary" disabled={deleteBusy}
+                onClick={() => { setDeleteTarget(null); setUsage(null); setUsageFailed(false); setDeleteError(''); }}>
+                Huỷ
+              </button>
+              <button
+                className="btn-primary"
+                style={{ background: 'var(--danger)' }}
+                disabled={deleteBusy || usageLoading || usageFailed || (usage?.hasActiveSession ?? false)}
+                onClick={() => void handleConfirmDelete()}
+              >
+                {deleteBusy ? <Spinner /> : null}
+                {deleteBusy ? 'Đang xoá…' : 'Xác nhận xoá'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -2333,5 +2698,199 @@ function AdminExamImportBox({
         </div>
       )}
     </section>
+  );
+}
+
+// ─── AdminFromBankModal ─────────────────────────────────────────────────────────
+
+function AdminFromBankModal({
+  secret, paperId, paperSubject, onDone,
+}: {
+  secret: string;
+  paperId: string;
+  paperSubject: string;
+  onDone: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<QuestionBankItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  // Mon hoc bi khoa theo de thi — chi hien cau cung mon, khong cho doi mon.
+  const filterSubject = paperSubject;
+  const [filterDifficulty, setFilterDifficulty] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [filterSearch, setFilterSearch] = useState('');
+
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ added: number; skipped: number } | null>(null);
+
+  const PAGE_SIZE = 20;
+
+  async function loadBank(pg = 1) {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await adminListQuestionBank(secret, {
+        subject: filterSubject,
+        difficulty: filterDifficulty ? Number(filterDifficulty) : undefined,
+        search: filterSearch || undefined,
+        isActive: true,
+        page: pg,
+        pageSize: PAGE_SIZE,
+      });
+      setItems(res.items);
+      setTotal(res.total);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Lỗi không xác định');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleOpen() {
+    setOpen(true);
+    setSelected(new Set());
+    setResult(null);
+    setPage(1);
+    void loadBank(1);
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
+  useEffect(() => { if (open) { setPage(1); void loadBank(1); } }, [filterDifficulty, filterSearch]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
+  useEffect(() => { if (open) { void loadBank(page); } }, [page]);
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleAddSelected() {
+    if (selected.size === 0 || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const res = await adminAddFromBank(secret, paperId, [...selected]);
+      setResult(res);
+      setSelected(new Set());
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Lỗi không xác định');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  if (!open) {
+    return (
+      <div className="admin-msg">
+        <button className="btn-secondary" onClick={handleOpen}>
+          Lấy câu từ ngân hàng
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="modal-overlay" onClick={() => { if (!busy) setOpen(false); }}>
+      <div className="modal-box modal-box-wide" onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '.75rem' }}>
+          <h3 className="section-title" style={{ margin: 0 }}>Lấy câu từ ngân hàng</h3>
+          <button className="btn-link" onClick={() => setOpen(false)}>Đóng ✕</button>
+        </div>
+
+        {/* Filter — môn học bị khoá theo đề thi, chỉ lọc độ khó và tìm kiếm */}
+        <div style={{ display: 'flex', gap: '.5rem', flexWrap: 'wrap', marginBottom: '.75rem' }}>
+          <select className="field-input" style={{ flex: '1 1 110px' }}
+            value={filterDifficulty} onChange={(e) => setFilterDifficulty(e.target.value)}>
+            <option value="">Tất cả độ khó</option>
+            <option value="1">Dễ</option>
+            <option value="2">Trung bình</option>
+            <option value="3">Khó</option>
+          </select>
+          <input className="field-input" style={{ flex: '2 1 160px' }}
+            placeholder="Tìm kiếm câu hỏi…"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') setFilterSearch(searchInput); }}
+          />
+          <button className="btn-secondary" onClick={() => setFilterSearch(searchInput)}>Tìm</button>
+        </div>
+
+        {selected.size > 0 && (
+          <div style={{ marginBottom: '.5rem', padding: '.5rem .75rem', background: 'var(--cream)', borderRadius: '8px', fontSize: '.88rem' }}>
+            Đã chọn <strong>{selected.size}</strong> câu hỏi.
+          </div>
+        )}
+
+        {error && <p className="report-error" style={{ marginBottom: '.5rem' }}>{error}</p>}
+        {result && (
+          <p className="admin-notice" style={{ marginBottom: '.5rem' }}>
+            ✓ Đã thêm {result.added} câu vào đề.{result.skipped > 0 ? ` (${result.skipped} câu đã tồn tại, bỏ qua)` : ''}
+          </p>
+        )}
+
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: '1rem' }}><Spinner /></div>
+        ) : items.length === 0 ? (
+          <p className="empty" style={{ textAlign: 'center', padding: '.75rem' }}>Không có câu hỏi nào phù hợp.</p>
+        ) : (
+          <div style={{ maxHeight: '50vh', overflowY: 'auto' }}>
+            {items.map((q) => {
+              const isChecked = selected.has(q.id);
+              return (
+                <div
+                  key={q.id}
+                  className="admin-exam-question-row"
+                  style={{ cursor: 'pointer', background: isChecked ? 'rgba(59,130,246,.08)' : undefined }}
+                  onClick={() => toggleSelect(q.id)}
+                >
+                  <div style={{ display: 'flex', gap: '.75rem', alignItems: 'flex-start' }}>
+                    <input type="checkbox" checked={isChecked} onChange={() => toggleSelect(q.id)}
+                      onClick={(e) => e.stopPropagation()} style={{ marginTop: '.2rem', flexShrink: 0 }} />
+                    <div style={{ flex: 1 }}>
+                      <div className="admin-exam-question-head">
+                        <span className="admin-exam-subject">{SUBJECTS_MAP[q.subject]?.name ?? q.subject}</span>
+                        <span className={`diff-badge diff-${q.difficulty}`}>{DIFF_LABEL[q.difficulty] ?? 'N/A'}</span>
+                        <span className="admin-exam-qtype">{QUESTION_TYPE_LABEL[q.questionType]}</span>
+                        {q.chapter && <span className="exam-chapter-tag">{q.chapter}</span>}
+                        <span style={{ fontSize: '.78rem', color: 'var(--muted)' }}>{q.points}đ</span>
+                      </div>
+                      <p className="exam-question-text" style={{ margin: '.25rem 0 0' }}>{q.questionText}</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {totalPages > 1 && (
+          <div className="admin-pagination" style={{ marginTop: '.5rem' }}>
+            <button className="btn-secondary" disabled={page <= 1 || loading} onClick={() => setPage((p) => p - 1)}>← Trước</button>
+            <span>Trang {page}/{totalPages}</span>
+            <button className="btn-secondary" disabled={page >= totalPages || loading} onClick={() => setPage((p) => p + 1)}>Sau →</button>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: '.75rem', marginTop: '1rem' }}>
+          <button className="btn-secondary" onClick={() => setOpen(false)} disabled={busy}>Đóng</button>
+          <button className="btn-primary" disabled={selected.size === 0 || busy} onClick={() => void handleAddSelected()}>
+            {busy && <Spinner />}
+            {busy ? 'Đang thêm…' : `Thêm ${selected.size > 0 ? selected.size : ''} câu vào đề`}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

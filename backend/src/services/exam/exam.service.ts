@@ -485,17 +485,23 @@ export class ExamService {
     return toFullDto(q);
   }
 
-  /** Soft delete 1 cau hoi (set isActive = false) - khong xoa du lieu de giu lich su cham diem cu. */
+  /**
+   * Xoa cau hoi khoi de thi.
+   * Hard delete neu chua co ExamAnswer nao tham chieu den cau nay (chua ai lam).
+   * Soft delete (isActive=false) neu da co ExamAnswer - giu lich su de trang ket qua cu khong bi vo.
+   */
   async deleteExamQuestion(examPaperId: string, questionId: string): Promise<void> {
     const existing = await prisma.examQuestion.findUnique({ where: { id: questionId } });
     if (!existing || existing.examPaperId !== examPaperId) {
       throw new ExamQuestionNotFoundError(questionId);
     }
 
-    await prisma.examQuestion.update({
-      where: { id: questionId },
-      data: { isActive: false },
-    });
+    const answerCount = await prisma.examAnswer.count({ where: { examQuestionId: questionId } });
+    if (answerCount > 0) {
+      await prisma.examQuestion.update({ where: { id: questionId }, data: { isActive: false } });
+    } else {
+      await prisma.examQuestion.delete({ where: { id: questionId } });
+    }
   }
 
   // -------------------------------------------------------------------------

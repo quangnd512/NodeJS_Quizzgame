@@ -8,6 +8,7 @@ import { practiceRouter } from './routes/practice.route.js';
 import { adminRouter } from './routes/admin.route.js';
 import { examRouter } from './routes/exam.route.js';
 import { examAdminRouter } from './routes/exam-admin.route.js';
+import { questionBankRouter } from './routes/question-bank.route.js';
 import type { ZodIssue } from 'zod';
 
 /**
@@ -48,6 +49,10 @@ const ERROR_CODE_TO_HTTP_STATUS: Readonly<Record<string, number>> = {
   ADMIN_UNAUTHORIZED: 401,
   // Reports
   REPORT_ALREADY_SUBMITTED: 409,
+  // Ngan hang cau hoi (Question Bank)
+  QUESTION_BANK_NOT_FOUND: 404,
+  QUESTION_BANK_DELETE_BLOCKED: 409,
+  QUESTION_BANK_DUPLICATE: 409,
   // Thi thu (Exam)
   EXAM_PAPER_NOT_FOUND: 404,
   EXAM_QUESTION_NOT_FOUND: 404,
@@ -101,6 +106,7 @@ export function createApp(): Application {
   app.use('/api/practice', practiceRouter);
   app.use('/api/admin', adminRouter);
   app.use('/api/admin/exam-papers', examAdminRouter);
+  app.use('/api/admin/question-bank', questionBankRouter);
   app.use('/api/exam', examRouter);
 
   // Route kiem tra suc khoe server
