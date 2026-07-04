@@ -14,6 +14,7 @@ import {
   adminGetQuestionBankUsage, adminDeleteQuestionBankItem, adminAddFromBank,
   uploadAvatar, deleteAvatar,
   getLeaderboard, getMyLeaderboardRank,
+  getProgressSummary, getExamHistory,
 } from './lib/api.js';
 import type {
   UserProfile, StartSessionResult, AnswerResult, CompleteResult,
@@ -22,6 +23,7 @@ import type {
   ExamPaperSummary, ExamPaperDetail, ExamImportResultDto,
   QuestionBankItem, QuestionBankUsage,
   LeaderboardEntry, MyRankResponse,
+  ProgressSummary, ExamHistoryItem, PaginatedExamHistory,
 } from './lib/api.js';
 import './App.css';
 
@@ -39,7 +41,7 @@ const SUBJECTS = [
   { id: 'GDCD', name: 'Giáo dục công dân', emoji: '⚖️' },
 ];
 
-type Screen = 'loading' | 'login' | 'onboarding' | 'profile' | 'practice' | 'exam' | 'admin' | 'leaderboard';
+type Screen = 'loading' | 'login' | 'onboarding' | 'profile' | 'practice' | 'exam' | 'admin' | 'leaderboard' | 'progress';
 
 function getInitials(name: string | null, email: string | null): string {
   const src = name ?? email ?? '?';
@@ -131,6 +133,7 @@ export default function App() {
           onPractice={() => setScreen('practice')}
           onExam={() => setScreen('exam')}
           onLeaderboard={() => setScreen('leaderboard')}
+          onProgress={() => setScreen('progress')}
           onError={handleApiError}
           onLogout={() => void signOut(firebaseAuth)}
         />
@@ -155,6 +158,14 @@ export default function App() {
       )}
       {screen === 'leaderboard' && profile && (
         <LeaderboardPage
+          profile={profile}
+          sessionToken={sessionToken}
+          onBack={() => setScreen('profile')}
+          onError={handleApiError}
+        />
+      )}
+      {screen === 'progress' && profile && (
+        <ProgressPage
           profile={profile}
           sessionToken={sessionToken}
           onBack={() => setScreen('profile')}
@@ -293,7 +304,7 @@ function OnboardingPage({
 // ─── ProfilePage ──────────────────────────────────────────────────────────────
 
 function ProfilePage({
-  profile, sessionToken, onProfileUpdate, onChangeSubjects, onPractice, onExam, onLeaderboard, onError, onLogout,
+  profile, sessionToken, onProfileUpdate, onChangeSubjects, onPractice, onExam, onLeaderboard, onProgress, onError, onLogout,
 }: {
   profile: UserProfile;
   sessionToken: string;
@@ -302,6 +313,7 @@ function ProfilePage({
   onPractice: () => void;
   onExam: () => void;
   onLeaderboard: () => void;
+  onProgress: () => void;
   onError: (e: unknown) => void;
   onLogout: () => void;
 }) {
@@ -471,6 +483,9 @@ function ProfilePage({
         </button>
         <button className="btn-secondary btn-lg" onClick={onLeaderboard} style={{ background: 'linear-gradient(135deg,#f6d365,#fda085)', color: '#333', border: 'none' }}>
           🏆 Bảng xếp hạng
+        </button>
+        <button className="btn-secondary btn-lg" onClick={onProgress} style={{ background: 'linear-gradient(135deg,#a8edea,#fed6e3)', color: '#333', border: 'none' }}>
+          📊 Tiến độ của tôi
         </button>
       </div>
 
@@ -3252,6 +3267,256 @@ function AdminFromBankModal({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── ProgressPage (Tien do hoc tap) ──────────────────────────────────────────
+
+const EXAM_PAGE_SIZE = 6;
+
+/** Sparkline SVG don gian tu mang diem so. */
+function ScoreSparkline({ points }: { points: { score: number }[] }) {
+  if (points.length < 2) return <span className="progress-no-data">Chưa đủ dữ liệu</span>;
+  const W = 280;
+  const H = 60;
+  const scores = points.map((p) => p.score);
+  const maxS = Math.max(...scores, 1);
+  const minS = Math.min(...scores);
+  const range = maxS - minS || 1;
+  const step = W / (scores.length - 1);
+  const toY = (s: number) => H - 4 - ((s - minS) / range) * (H - 8);
+  const d = scores
+    .map((s, i) => `${i === 0 ? 'M' : 'L'}${(i * step).toFixed(1)},${toY(s).toFixed(1)}`)
+    .join(' ');
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="sparkline-svg" aria-hidden="true">
+      <polyline points={scores.map((s, i) => `${(i * step).toFixed(1)},${toY(s).toFixed(1)}`).join(' ')}
+        fill="none" stroke="var(--accent,#4f8ef7)" strokeWidth="2" strokeLinejoin="round" />
+      <path d={`${d} L${W},${H} L0,${H} Z`} fill="var(--accent,#4f8ef7)" fillOpacity="0.12" />
+      {scores.map((s, i) => (
+        <circle key={i} cx={(i * step).toFixed(1)} cy={toY(s).toFixed(1)} r="3"
+          fill="var(--accent,#4f8ef7)" />
+      ))}
+    </svg>
+  );
+}
+
+function ProgressPage({
+  profile,
+  sessionToken,
+  onBack,
+  onError,
+}: {
+  profile: UserProfile;
+  sessionToken: string;
+  onBack: () => void;
+  onError: (e: unknown) => void;
+}) {
+  const [summary, setSummary]       = useState<ProgressSummary | null>(null);
+  const [examHistory, setExamHistory] = useState<PaginatedExamHistory | null>(null);
+  const [examPage, setExamPage]     = useState(0); // offset / EXAM_PAGE_SIZE
+  const [loading, setLoading]       = useState(true);
+  const [examLoading, setExamLoading] = useState(false);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoading(true);
+    void getProgressSummary(sessionToken)
+      .then((data) => { setSummary(data); setLoading(false); })
+      .catch((err) => { onError(err); setLoading(false); });
+  }, [sessionToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setExamLoading(true);
+    void getExamHistory(sessionToken, EXAM_PAGE_SIZE, examPage * EXAM_PAGE_SIZE)
+      .then((data) => { setExamHistory(data); setExamLoading(false); })
+      .catch((err) => { onError(err); setExamLoading(false); });
+  }, [sessionToken, examPage]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const totalExamPages = examHistory ? Math.ceil(examHistory.total / EXAM_PAGE_SIZE) : 0;
+
+  return (
+    <div className="screen screen-progress">
+      {/* Header */}
+      <div className="page-header">
+        <button className="btn-back" onClick={onBack}>← Quay lại</button>
+        <h2 className="page-title">📊 Tiến độ — {profile.displayName ?? 'của tôi'}</h2>
+      </div>
+
+      {loading ? (
+        <div className="progress-loading"><Spinner /> Đang tải…</div>
+      ) : !summary ? null : (
+        <>
+          {/* 4 ô tổng quan */}
+          <section className="progress-overview-grid">
+            <div className="progress-stat-card">
+              <span className="pstat-label">Phiên ôn tập</span>
+              <span className="pstat-value">{summary.overview.totalPracticeSessions}</span>
+            </div>
+            <div className="progress-stat-card">
+              <span className="pstat-label">Lần thi thử</span>
+              <span className="pstat-value">{summary.overview.totalExamSessions}</span>
+            </div>
+            <div className="progress-stat-card">
+              <span className="pstat-label">Điểm tích lũy</span>
+              <span className="pstat-value">{summary.overview.currentPoints.toLocaleString('vi-VN')}</span>
+            </div>
+            <div className="progress-stat-card progress-streak">
+              <span className="pstat-label">Số ngày giữ chuỗi</span>
+              <span className="pstat-value">
+                {summary.overview.currentStreak}
+                <span className="pstat-unit"> ngày 🐝</span>
+              </span>
+              <span className="pstat-sub">Tốt nhất: {summary.bestStreak} ngày</span>
+            </div>
+          </section>
+
+          {/* So sánh tháng */}
+          <section className="card-section">
+            <h3 className="section-title">So sánh tháng này vs tháng trước</h3>
+            <div className="month-compare-grid">
+              <div className="month-col">
+                <span className="month-label">Tháng này</span>
+                <div className="month-row">
+                  <span>Phiên ôn tập</span>
+                  <strong>{summary.monthComparison.thisMonth.practiceSessions}</strong>
+                </div>
+                <div className="month-row">
+                  <span>Điểm thi TB</span>
+                  <strong>
+                    {summary.monthComparison.thisMonth.examAvgScore !== null
+                      ? summary.monthComparison.thisMonth.examAvgScore.toFixed(1)
+                      : '—'}
+                  </strong>
+                </div>
+              </div>
+              <div className="month-divider" />
+              <div className="month-col">
+                <span className="month-label">Tháng trước</span>
+                <div className="month-row">
+                  <span>Phiên ôn tập</span>
+                  <strong>{summary.monthComparison.lastMonth.practiceSessions}</strong>
+                </div>
+                <div className="month-row">
+                  <span>Điểm thi TB</span>
+                  <strong>
+                    {summary.monthComparison.lastMonth.examAvgScore !== null
+                      ? summary.monthComparison.lastMonth.examAvgScore.toFixed(1)
+                      : '—'}
+                  </strong>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Thống kê theo môn */}
+          <section className="card-section">
+            <h3 className="section-title">Thống kê theo môn</h3>
+            {summary.practiceStatsBySubject.length === 0 ? (
+              <p className="empty">Chưa có dữ liệu ôn tập.</p>
+            ) : (
+              <div className="progress-table-wrap">
+                <table className="progress-table">
+                  <thead>
+                    <tr>
+                      <th>Môn</th>
+                      <th>Phiên</th>
+                      <th>TB</th>
+                      <th>Tốt nhất</th>
+                      <th>Dễ</th>
+                      <th>TB</th>
+                      <th>Khó</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.practiceStatsBySubject.map((s) => (
+                      <tr key={s.subject}>
+                        <td>{SUBJECTS_MAP[s.subject]?.name ?? s.subject}</td>
+                        <td>{s.totalSessions}</td>
+                        <td>{s.avgScore.toFixed(1)}</td>
+                        <td>{s.bestScore}</td>
+                        <td>{Math.round((s.accuracyByDifficulty[1] ?? 0) * 100)}%</td>
+                        <td>{Math.round((s.accuracyByDifficulty[2] ?? 0) * 100)}%</td>
+                        <td>{Math.round((s.accuracyByDifficulty[3] ?? 0) * 100)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          {/* Biểu đồ xu hướng điểm */}
+          <section className="card-section">
+            <h3 className="section-title">Xu hướng điểm (30 phiên gần nhất)</h3>
+            {summary.scoreTrend.length === 0 ? (
+              <p className="empty">Chưa có dữ liệu.</p>
+            ) : (
+              <div className="sparkline-wrap">
+                <ScoreSparkline points={summary.scoreTrend} />
+                <div className="sparkline-meta">
+                  <span>Điểm thấp nhất: <strong>{Math.min(...summary.scoreTrend.map((p) => p.score))}</strong></span>
+                  <span>Điểm cao nhất: <strong>{Math.max(...summary.scoreTrend.map((p) => p.score))}</strong></span>
+                </div>
+              </div>
+            )}
+          </section>
+        </>
+      )}
+
+      {/* Lịch sử thi thử */}
+      <section className="card-section">
+        <h3 className="section-title">Lịch sử thi thử</h3>
+        {examLoading ? (
+          <div className="progress-loading"><Spinner /></div>
+        ) : !examHistory || examHistory.items.length === 0 ? (
+          <p className="empty">Chưa có lần thi nào.</p>
+        ) : (
+          <>
+            <div className="progress-table-wrap">
+              <table className="progress-table">
+                <thead>
+                  <tr>
+                    <th>Môn</th>
+                    <th>Đề thi</th>
+                    <th>Điểm</th>
+                    <th>Thưởng</th>
+                    <th>Ngày thi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {examHistory.items.map((item: ExamHistoryItem) => (
+                    <tr key={item.id}>
+                      <td>{SUBJECTS_MAP[item.subject]?.name ?? item.subject}</td>
+                      <td className="exam-history-title">{item.title}</td>
+                      <td>
+                        <span className={`exam-score-badge ${item.score !== null && item.score >= 7 ? 'score-high' : 'score-low'}`}>
+                          {item.score !== null ? item.score.toFixed(1) : '—'}/10
+                        </span>
+                      </td>
+                      <td>+{item.pointsAwarded}</td>
+                      <td className="exam-history-date">
+                        {new Date(item.completedAt).toLocaleDateString('vi-VN')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {totalExamPages > 1 && (
+              <div className="admin-pagination">
+                <button className="btn-secondary" disabled={examPage <= 0 || examLoading}
+                  onClick={() => setExamPage((p) => p - 1)}>← Trước</button>
+                <span>Trang {examPage + 1}/{totalExamPages}</span>
+                <button className="btn-secondary" disabled={examPage >= totalExamPages - 1 || examLoading}
+                  onClick={() => setExamPage((p) => p + 1)}>Sau →</button>
+              </div>
+            )}
+          </>
+        )}
+      </section>
     </div>
   );
 }

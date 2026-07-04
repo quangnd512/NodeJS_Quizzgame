@@ -771,3 +771,77 @@ export async function getMyLeaderboardRank(
   const params = subject ? `?subject=${subject}` : '';
   return request<MyRankResponse>(`/api/leaderboard/me${params}`, sessionToken);
 }
+
+// ─── Progress (Tien do hoc tap) ───────────────────────────────────────────────
+
+export interface ProgressOverview {
+  totalPracticeSessions: number;
+  totalExamSessions: number;
+  currentPoints: number;
+  currentStreak: number;
+}
+
+export interface MonthStats {
+  practiceSessions: number;
+  examAvgScore: number | null;
+}
+
+export interface MonthComparison {
+  thisMonth: MonthStats;
+  lastMonth: MonthStats;
+}
+
+export interface ScoreTrendPoint {
+  date: string;
+  score: number;
+  subject: string;
+}
+
+export interface PracticeStatItem {
+  subject: string;
+  totalSessions: number;
+  avgScore: number;
+  bestScore: number;
+  accuracyByDifficulty: Record<number, number>;
+}
+
+export interface ProgressSummary {
+  overview: ProgressOverview;
+  bestStreak: number;
+  monthComparison: MonthComparison;
+  practiceStatsBySubject: PracticeStatItem[];
+  scoreTrend: ScoreTrendPoint[];
+}
+
+export interface ExamHistoryItem {
+  id: string;
+  examPaperId: string;
+  title: string;
+  subject: string;
+  score: number | null;
+  pointsAwarded: number;
+  completedAt: string;
+}
+
+export interface PaginatedExamHistory {
+  items: ExamHistoryItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** GET /api/progress/summary */
+export async function getProgressSummary(sessionToken: string): Promise<ProgressSummary> {
+  return request<ProgressSummary>('/api/progress/summary', sessionToken);
+}
+
+/** GET /api/progress/exam-history?limit=&offset= */
+export async function getExamHistory(
+  sessionToken: string,
+  limit = 10,
+  offset = 0,
+): Promise<PaginatedExamHistory> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  return request<PaginatedExamHistory>(`/api/progress/exam-history?${params.toString()}`, sessionToken);
+}
+

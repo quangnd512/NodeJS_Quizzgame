@@ -11,6 +11,7 @@ import { examRouter } from './routes/exam.route.js';
 import { examAdminRouter } from './routes/exam-admin.route.js';
 import { questionBankRouter } from './routes/question-bank.route.js';
 import { leaderboardRouter } from './routes/leaderboard.route.js';
+import { progressRouter } from './routes/progress.route.js';
 import type { ZodIssue } from 'zod';
 
 /**
@@ -120,6 +121,7 @@ export function createApp(): Application {
   app.use('/api/admin/question-bank', questionBankRouter);
   app.use('/api/exam', examRouter);
   app.use('/api/leaderboard', leaderboardRouter);
+  app.use('/api/progress', progressRouter);
 
   // Route kiem tra suc khoe server
   app.get('/api/health', (_req: Request, res: Response) => {

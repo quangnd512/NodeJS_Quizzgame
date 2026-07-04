@@ -30,6 +30,8 @@ tags:
     description: Bảng xếp hạng học sinh theo Điểm Uy Tín (session token)
   - name: Users
     description: Quản lý profile và ảnh đại diện (session token)
+  - name: Progress
+    description: Tiến độ học tập — tổng quan, streak, lịch sử thi (session token)
 
 security: []
 
@@ -2459,5 +2461,109 @@ components:
               schema: { $ref: '#/components/schemas/UserMeDto' }
         '400':
           description: AVATAR_NOT_FOUND — User chưa có ảnh đại diện
+        '401':
+          description: Thiếu hoặc sai session token
+
+  # ─── Progress ─────────────────────────────────────────────────────────────
+
+  /api/progress/summary:
+    get:
+      summary: Tổng hợp tiến độ học tập của user đang đăng nhập
+      tags: [Progress]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: ProgressSummary đầy đủ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  overview:
+                    type: object
+                    properties:
+                      totalPracticeSessions: { type: integer, example: 15 }
+                      totalExamSessions:     { type: integer, example: 3 }
+                      currentPoints:         { type: integer, example: 500 }
+                      currentStreak:         { type: integer, example: 3 }
+                  bestStreak:
+                    type: integer
+                    example: 7
+                  monthComparison:
+                    type: object
+                    properties:
+                      thisMonth:
+                        type: object
+                        properties:
+                          practiceSessions: { type: integer, example: 8 }
+                          examAvgScore:     { type: number, nullable: true, example: 7.5 }
+                      lastMonth:
+                        type: object
+                        properties:
+                          practiceSessions: { type: integer, example: 7 }
+                          examAvgScore:     { type: number, nullable: true, example: null }
+                  practiceStatsBySubject:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        subject:        { type: string, example: "TOAN" }
+                        totalSessions:  { type: integer, example: 10 }
+                        avgScore:       { type: number, example: 10.2 }
+                        bestScore:      { type: integer, example: 13 }
+                        accuracyByDifficulty:
+                          type: object
+                          additionalProperties: { type: number }
+                          example: { "1": 0.96, "2": 0.74, "3": 0.52 }
+                  scoreTrend:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        date:    { type: string, format: date-time }
+                        score:   { type: integer }
+                        subject: { type: string }
+        '401':
+          description: Thiếu hoặc sai session token
+
+  /api/progress/exam-history:
+    get:
+      summary: Lịch sử thi thử đã hoàn thành của user (có phân trang)
+      tags: [Progress]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 10, minimum: 1, maximum: 50 }
+          description: Số bản ghi mỗi trang (clamp 1–50)
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0, minimum: 0 }
+          description: Vị trí bắt đầu
+      responses:
+        '200':
+          description: Danh sách phiên thi thử đã hoàn thành
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:            { type: string, format: uuid }
+                        examPaperId:   { type: string, format: uuid }
+                        title:         { type: string, example: "Đề thi thử THPT QG 2024" }
+                        subject:       { type: string, example: "TOAN" }
+                        score:         { type: number, nullable: true, example: 8.5 }
+                        pointsAwarded: { type: integer, example: 80 }
+                        completedAt:   { type: string, format: date-time }
+                  total:  { type: integer, example: 3 }
+                  limit:  { type: integer, example: 10 }
+                  offset: { type: integer, example: 0 }
         '401':
           description: Thiếu hoặc sai session token
