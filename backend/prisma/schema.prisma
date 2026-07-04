@@ -56,6 +56,10 @@ model User {
   /// (xem `SUBJECT_CATALOG` trong `users.types.ts`).
   subjects    String[] @default([])
 
+  /// URL anh dai dien (tuong doi, vi du /uploads/avatars/<userId>.jpg).
+  /// null = chua upload, FE hien thi avatar chu cai thay the.
+  avatarUrl   String?
+
   /// Thoi diem dang nhap gan nhat - cap nhat moi lan goi POST /api/auth/login
   /// thanh cong. Phuc vu thong ke "user hoat dong" va debug (vi du phat hien
   /// tai khoan "ma" lau ngay khong dung).

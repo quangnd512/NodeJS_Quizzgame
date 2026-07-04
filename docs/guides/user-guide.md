@@ -13,6 +13,8 @@
 4. [Quản lý hồ sơ cá nhân](#4-quản-lý-hồ-sơ-cá-nhân)
 5. [FAQ — Câu hỏi thường gặp](#5-faq--câu-hỏi-thường-gặp)
 6. [Chế độ Thi thử (Mock Exam)](#6-chế-độ-thi-thử-mock-exam)
+7. [Ảnh đại diện (Avatar)](#7-ảnh-đại-diện-avatar)
+8. [Bảng xếp hạng (Leaderboard)](#8-bảng-xếp-hạng-leaderboard)
 
 ---
 
@@ -850,3 +852,162 @@ Authorization: Bearer <session-token>
 | `404 EXAM_SESSION_NOT_FOUND` | `sessionId` không tồn tại | Bug FE |
 | `403 EXAM_SESSION_NOT_OWNED` | Phiên không thuộc về tài khoản hiện tại | Bug FE |
 | `409 EXAM_SESSION_NOT_COMPLETED` | Phiên đang `IN_PROGRESS`, chưa nộp bài | Gọi `POST /api/exam/submit` trước khi xem kết quả |
+
+---
+
+## 7. Ảnh đại diện (Avatar)
+
+### 7.1 Upload ảnh đại diện
+
+Từ màn hình **Profile**, nhấn vào vùng ảnh đại diện (có biểu tượng 📷) để chọn
+ảnh mới từ thiết bị:
+
+1. Chọn file ảnh JPG hoặc PNG (tối đa **2MB**).
+2. Xem trước ảnh trước khi lưu.
+3. Nhấn **"Lưu ảnh"** để xác nhận.
+
+**Gọi API:**
+```
+POST /api/users/me/avatar
+Authorization: Bearer <session-token>
+Content-Type: multipart/form-data
+
+Field "avatar": <file ảnh JPG hoặc PNG>
+```
+
+**Response (200):** Profile đầy đủ với `avatarUrl` đã được cập nhật.
+
+**Lỗi có thể gặp:**
+
+| Lỗi | Nguyên nhân | Cách xử lý |
+|-----|-------------|------------|
+| `400 AVATAR_INVALID_TYPE` | File không phải JPG hoặc PNG | Chọn lại file đúng định dạng |
+| `400 AVATAR_FILE_TOO_LARGE` | File lớn hơn 2MB | Nén ảnh hoặc chọn ảnh nhỏ hơn |
+| `400 AVATAR_NO_FILE` | Không có file trong form | Bug FE — kiểm tra lại |
+
+---
+
+### 7.2 Xóa ảnh đại diện
+
+Để xóa ảnh hiện tại, nhấn **"Xóa ảnh đại diện"** ở màn hình Profile.
+Khi không có ảnh, hệ thống hiển thị chữ cái đầu tên (initials) thay thế.
+
+**Gọi API:**
+```
+DELETE /api/users/me/avatar
+Authorization: Bearer <session-token>
+```
+
+**Response (200):** Profile với `avatarUrl: null`.
+
+**Lỗi:**
+- `400 AVATAR_NOT_FOUND`: Bạn chưa có ảnh đại diện để xóa.
+
+---
+
+## 8. Bảng xếp hạng (Leaderboard)
+
+### 8.1 Xem Bảng xếp hạng
+
+Từ màn hình Profile, nhấn **"Bảng xếp hạng 🏆"** để xem thứ hạng của tất cả
+học sinh theo **Điểm Uy Tín**.
+
+**Giao diện:**
+- **Podium Top 3**: Vị trí 2 — 1 — 3 được hiển thị nổi bật, kèm ảnh đại diện.
+- **Bảng hạng từ 4 trở đi**: Cuộn xuống để xem thêm, bấm **"Xem thêm"** để tải
+  trang tiếp theo.
+- **Thanh hạng bản thân** (cuối trang): Ghim thứ hạng của bạn kèm Điểm Uy Tín,
+  điểm trung bình, số lần thi, và xu hướng thay đổi.
+- **Lọc theo môn**: Dùng dropdown "Tất cả môn" để lọc xếp hạng theo từng môn học.
+
+**Gọi API:**
+```
+GET /api/leaderboard?page=1&subject=TOAN   (subject tùy chọn)
+Authorization: Bearer <session-token>
+```
+
+---
+
+### 8.2 Điểm Uy Tín là gì?
+
+**Điểm Uy Tín** phản ánh cả **điểm trung bình**, **sự ổn định**, và **kinh nghiệm**
+của bạn:
+
+```
+Điểm Uy Tín = (Điểm TB − 0.5 × Độ lệch chuẩn) × (1 − 1/(n+1))
+```
+
+- **Điểm TB**: trung bình cộng điểm các lần thi thử đã hoàn thành.
+- **Độ lệch chuẩn**: đo độ ổn định — thi đều điểm cao sẽ tốt hơn thi lên xuống
+  thất thường.
+- **n**: số lần thi thử thành công — thi nhiều lần giúp tăng hệ số tích lũy.
+
+> **Ví dụ:** Thi 5 lần, trung bình 9.2 điểm, độ lệch chuẩn 0.5:
+> `Điểm Uy Tín = (9.2 − 0.5×0.5) × (1 − 1/6) ≈ 7.71`
+
+---
+
+### 8.3 Xu hướng (Trend)
+
+Biểu tượng bên cạnh hạng của mỗi người thể hiện xu hướng so với **30 ngày trước**:
+
+| Biểu tượng | Ý nghĩa |
+|-----------|---------|
+| ↑ (up) | Hạng tăng (số hạng nhỏ hơn = tốt hơn) |
+| ↓ (down) | Hạng giảm |
+| → (same) | Hạng không đổi |
+| ★ (new) | Mới tham gia (chưa có dữ liệu 30 ngày trước) |
+
+---
+
+### 8.4 Xem hạng bản thân
+
+```
+GET /api/leaderboard/me?subject=TOAN   (subject tùy chọn)
+Authorization: Bearer <session-token>
+```
+
+**Response:**
+```json
+{
+  "rank": 5,
+  "reputationScore": 6.72,
+  "avgScore": 7.8,
+  "examCount": 4,
+  "trend": "up"
+}
+```
+
+> Nếu bạn chưa thi lần nào: `rank: null`, `examCount: 0`.
+
+---
+
+### FAQ Bảng xếp hạng
+
+**Q: Tại sao tôi thi thử nhiều lần nhưng hạng không tăng?**
+
+A: Điểm Uy Tín tăng dần theo số lần thi nhưng cũng phụ thuộc vào điểm trung bình
+và độ ổn định. Nếu điểm gần đây thấp hơn điểm cũ, Điểm Uy Tín có thể không tăng
+hoặc giảm. Tập trung vào thi đều và điểm cao ổn định để cải thiện hạng.
+
+---
+
+**Q: Tại sao hạng của tôi thay đổi dù tôi không thi thêm?**
+
+A: Vì người khác cũng đang thi thử. Khi có thêm người có Điểm Uy Tín cao hơn
+bạn tham gia, hạng của bạn sẽ giảm xuống.
+
+---
+
+**Q: Bảng xếp hạng cập nhật bao lâu 1 lần?**
+
+A: Bảng xếp hạng được tính **thời gian thực** mỗi khi bạn mở trang — không có
+cache trì hoãn. Kết quả thi thử ảnh hưởng đến hạng ngay lập tức.
+
+---
+
+**Q: Lọc theo môn nghĩa là gì?**
+
+A: Khi chọn lọc theo môn (ví dụ "Toán"), bảng xếp hạng chỉ tính điểm từ các
+phiên thi thử môn Toán. Một học sinh có thể hạng khác nhau ở từng môn tùy vào
+kết quả thi môn đó.

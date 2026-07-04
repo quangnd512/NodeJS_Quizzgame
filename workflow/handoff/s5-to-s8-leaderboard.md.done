@@ -1,0 +1,76 @@
+# Handoff S5 → S8: Leaderboard & Avatar
+
+**Ngày:** 2026-07-04  
+**Branch:** `feature/leaderboard`  
+**S5:** ThuNghiem
+
+---
+
+## Kết quả kiểm thử
+
+| # | Test Case | Kết quả |
+|---|-----------|---------|
+| 1 | Upload avatar lần đầu | ✅ PASS |
+| 2 | Huỷ preview trước khi lưu | ✅ PASS |
+| 3 | Upload ảnh mới ghi đè ảnh cũ | ✅ PASS |
+| 4 | Xóa avatar | ✅ PASS |
+| 5 | Mở Leaderboard từ ProfilePage | ✅ PASS |
+| 6 | Podium Top 3 (thứ tự 2-1-3) | ✅ PASS |
+| 7 | Danh sách hạng 4+ | ✅ PASS |
+| 8 | Thanh ghim hạng bản thân | ✅ PASS (sau khi fix bug) |
+| 9 | Lọc theo môn học | ✅ PASS |
+| 10 | Xem thêm / phân trang | ✅ PASS |
+| 11 | User chưa thi — thanh ghim "Chưa có dữ liệu" | ✅ PASS |
+| 12 | Upload PNG | ✅ PASS |
+| 13 | Avatar hiển thị trên Leaderboard | ✅ PASS |
+| 14 | Quay lại Profile từ Leaderboard | ✅ PASS |
+| 15 | Upload file sai định dạng | ✅ PASS |
+| 16 | Upload file quá 2MB | ✅ PASS |
+| 17 | Xóa avatar khi chưa có ảnh | ✅ PASS |
+
+**Tổng: 17/17 PASS**
+
+---
+
+## Bug đã sửa
+
+### Bug: `getMyRank` luôn trả về hạng #1
+- **File:** `backend/src/services/leaderboard/leaderboard.service.ts`
+- **Nguyên nhân:** `WHERE "userId" = X` áp dụng trước `ROW_NUMBER()` trong SQL, khiến window function chỉ thấy 1 dòng → luôn trả hạng #1
+- **Fix:** Tách thành CTE riêng (`ranked`, `old_ranked`) để tính `ROW_NUMBER()` trên toàn bộ user trước rồi mới filter
+
+---
+
+## ⚠️ Xung đột cần S8 xử lý: PAGE_SIZE
+
+**Vấn đề:** Có xung đột giữa spec và yêu cầu người dùng:
+
+| Nguồn | Giá trị |
+|-------|---------|
+| Spec S1 | `PAGE_SIZE = 20` |
+| Smoke test assert | `pageSize === 20` |
+| **Yêu cầu người dùng** | **`PAGE_SIZE = 10`** |
+
+**Hiện tại:** `PAGE_SIZE = 10` theo yêu cầu người dùng → smoke test sẽ FAIL ở assertion `pageSize === 20`.
+
+**Đề xuất cho S8:** Quyết định một trong hai:
+1. Giữ `PAGE_SIZE = 10` và cập nhật smoke test + spec → đây là ý muốn của người dùng
+2. Đổi lại `PAGE_SIZE = 20` theo spec và thuyết phục người dùng
+
+---
+
+## Thay đổi UI theo yêu cầu người dùng
+
+1. **PAGE_SIZE = 10** (hiển thị 10 người/trang thay vì 20)
+2. **Modal thông tin** khi click vào user trên BXH (hạng, Điểm Uy Tín, Điểm TB, số lần thi, xu hướng)
+3. **Thanh ghim tự ẩn** khi entry bản thân đã được load vào danh sách
+
+---
+
+## Smoke test kết quả (với PAGE_SIZE = 20 tạm thời)
+
+```
+=== KET QUA: 8 pass, 0 fail ===
+```
+
+> Lưu ý: Smoke test chạy với PAGE_SIZE = 20 tạm thời và pass. Sau khi khôi phục PAGE_SIZE = 10 theo yêu cầu người dùng, smoke test sẽ fail assertion `pageSize === 20`.

@@ -10,6 +10,7 @@ export interface UserProfile {
   school: string | null;
   province: string | null;
   subjects: { id: string; name: string }[];
+  avatarUrl: string | null;
   createdAt: string;
   lastLoginAt: string | null;
   points: number;
@@ -696,4 +697,77 @@ export async function adminImportExamQuestions(
   }
 
   return body;
+}
+
+// ─── Avatar ───────────────────────────────────────────────────────────────────
+
+/** POST /api/users/me/avatar — upload anh dai dien (multipart/form-data). */
+export async function uploadAvatar(sessionToken: string, file: File): Promise<UserProfile> {
+  const formData = new FormData();
+  formData.append('avatar', file);
+
+  const res = await fetch('/api/users/me/avatar', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${sessionToken}` },
+    body: formData,
+  });
+
+  const body = await parseJsonBody<UserProfile>(res);
+  if (!res.ok) throw new ApiError(body.error ?? 'UNKNOWN_ERROR', body.message ?? `Loi HTTP ${res.status}`, res.status);
+  return body;
+}
+
+/** DELETE /api/users/me/avatar — xoa anh dai dien. */
+export async function deleteAvatar(sessionToken: string): Promise<UserProfile> {
+  return request<UserProfile>('/api/users/me/avatar', sessionToken, { method: 'DELETE' });
+}
+
+// ─── Leaderboard ─────────────────────────────────────────────────────────────
+
+export type Trend = 'up' | 'down' | 'same' | 'new';
+
+export interface LeaderboardEntry {
+  rank: number;
+  userId: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  reputationScore: number;
+  avgScore: number;
+  examCount: number;
+  trend: Trend;
+}
+
+export interface LeaderboardResponse {
+  data: LeaderboardEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface MyRankResponse {
+  rank: number | null;
+  reputationScore: number | null;
+  avgScore: number | null;
+  examCount: number;
+  trend: Trend | null;
+}
+
+/** GET /api/leaderboard?subject=<optional>&page=<n> */
+export async function getLeaderboard(
+  sessionToken: string,
+  page = 1,
+  subject?: string,
+): Promise<LeaderboardResponse> {
+  const params = new URLSearchParams({ page: String(page) });
+  if (subject) params.set('subject', subject);
+  return request<LeaderboardResponse>(`/api/leaderboard?${params.toString()}`, sessionToken);
+}
+
+/** GET /api/leaderboard/me */
+export async function getMyLeaderboardRank(
+  sessionToken: string,
+  subject?: string,
+): Promise<MyRankResponse> {
+  const params = subject ? `?subject=${subject}` : '';
+  return request<MyRankResponse>(`/api/leaderboard/me${params}`, sessionToken);
 }

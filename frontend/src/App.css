@@ -339,6 +339,45 @@ body {
   letter-spacing: .04em;
 }
 
+/* Avatar upload (ProfilePage) */
+.avatar-wrapper { position: relative; flex-shrink: 0; }
+.avatar-btn {
+  position: relative;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  display: block;
+}
+.avatar-btn:hover .avatar-overlay { opacity: 1; }
+.avatar-img {
+  width: 52px; height: 52px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid rgba(255,255,255,.4);
+}
+.avatar-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(0,0,0,.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity .2s;
+  font-size: 1.2rem;
+}
+.avatar-preview-bar {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  padding: .5rem 1.25rem;
+  background: rgba(99,102,241,.12);
+  font-size: .85rem;
+  font-weight: 500;
+}
+
 .profile-id { flex: 1; min-width: 0; }
 .profile-name {
   font-size: 1rem;

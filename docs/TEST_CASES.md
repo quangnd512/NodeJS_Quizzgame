@@ -416,3 +416,41 @@
 | 25 | autoFill happy path, kho đủ câu | `count: 2`, kho có câu medium + hard cùng môn | `{ added >= 0, shortage >= 0, added + shortage == 2 }` |
 | 26 | autoFill shortage: yêu cầu nhiều hơn tổng kho | `count = bankCount + 1` | `shortage > 0`, `added + shortage == count` |
 | 27 | autoFill gọi lần 2: không thêm câu trùng | Gọi lại autoFill cùng đề sau lần 1 | `skipped == 0`, không có duplicate questionBankId trong đề |
+
+---
+
+## Test Cases: Leaderboard — Bảng xếp hạng học sinh
+
+### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | Lấy bảng xếp hạng tất cả môn | `GET /api/leaderboard?page=1` | `200`, `{ data: [...], total: N, page: 1, pageSize: 10 }` |
+| 2 | Rank giảm dần theo Điểm Uy Tín | `GET /api/leaderboard` | `data[0].reputationScore >= data[1].reputationScore` |
+| 3 | User thi nhiều môn: 5 lần, avg=9 → rank 1 | Smoke: USER_A 5 ExamSession | `rank=1`, `examCount=5`, `reputationScore≈7.26` |
+| 4 | Lấy bảng xếp hạng lọc theo môn | `GET /api/leaderboard?subject=TOAN` | Chỉ trả về user thi môn Toán |
+| 5 | getMyRank có dữ liệu | `GET /api/leaderboard/me` | `rank≠null`, `examCount>0`, `reputationScore>0`, `avgScore>0` |
+| 6 | getMyRank lọc theo môn | `GET /api/leaderboard/me?subject=TOAN` | rank theo môn Toán riêng |
+| 7 | Upload avatar: JPG hợp lệ | `POST /api/users/me/avatar` file JPG <2MB | `200`, `avatarUrl` ≠ null trong response |
+| 8 | Xóa avatar | `DELETE /api/users/me/avatar` | `200`, `avatarUrl = null` |
+
+### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 9 | User chưa thi lần nào | `GET /api/leaderboard/me` với user không có ExamSession | `{ rank: null, examCount: 0, reputationScore: null, trend: null }` |
+| 10 | Trend = "new" khi không có dữ liệu 30 ngày trước | User chỉ thi trong 30 ngày gần đây | `trend: "new"` |
+| 11 | Trend ≠ "new" khi có dữ liệu 30 ngày trước | User có session cả cũ lẫn mới | `trend: "same" | "up" | "down"` |
+| 12 | Lọc môn không có ai thi | `GET /api/leaderboard?subject=HOA` (không có dữ liệu) | `{ data: [], total: 0 }` |
+| 13 | Phân trang trang 2 rỗng khi tổng ≤ 20 | `GET /api/leaderboard?page=2` | `data: []` |
+| 14 | User thi môn VAN không xuất hiện khi filter TOAN | filter môn Toán | user chỉ thi VAN không có trong kết quả |
+| 15 | page=0 bị clamp lên page=1 | `GET /api/leaderboard?page=0` | `page: 1` |
+
+### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 16 | Upload avatar khi chưa đăng nhập | `POST /api/users/me/avatar` không có token | 401 | `MISSING_AUTH_TOKEN` |
+| 17 | Upload file không phải ảnh | `POST /api/users/me/avatar` file .pdf | 400 | `AVATAR_INVALID_TYPE` |
+| 18 | Upload ảnh quá 2MB | `POST /api/users/me/avatar` file >2MB | 413 | `AVATAR_FILE_TOO_LARGE` |
+| 19 | Upload thiếu field "avatar" | `POST /api/users/me/avatar` không có file | 400 | `AVATAR_NO_FILE` |
+| 20 | Xóa avatar khi chưa có ảnh | `DELETE /api/users/me/avatar` (avatarUrl=null) | 404 | `AVATAR_NOT_FOUND` |
+| 21 | GET /api/leaderboard không có token | Không có Authorization header | 401 | `MISSING_AUTH_TOKEN` |
+| 22 | GET /api/leaderboard/me không có token | Không có Authorization header | 401 | `MISSING_AUTH_TOKEN` |

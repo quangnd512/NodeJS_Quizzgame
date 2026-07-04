@@ -40,3 +40,10 @@ export class UserNotFoundError extends UsersError {
 
   public readonly identifier: string;
 }
+
+/** Loi lien quan den upload/xoa anh dai dien. */
+export class AvatarError extends UsersError {
+  constructor(message: string, code: string) {
+    super(message, code);
+  }
+}

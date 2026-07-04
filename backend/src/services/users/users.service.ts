@@ -1,9 +1,11 @@
 // UsersService - quan ly profile nguoi dung va qua trinh "onboarding"
 // (chon mon hoc dang ky on thi).
+import fs from 'node:fs';
+import path from 'node:path';
 import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrismaClient } from '../../lib/prisma.js';
 import { PointsService, pointsService } from '../points/points.service.js';
-import { InvalidProfileInputError, InvalidSubjectsError, UserNotFoundError } from './users.errors.js';
+import { AvatarError, InvalidProfileInputError, InvalidSubjectsError, UserNotFoundError } from './users.errors.js';
 import {
   MAX_PROFILE_FIELD_LENGTH,
   MAX_SUBJECTS,
@@ -166,10 +168,81 @@ export class UsersService {
       school: user.school,
       province: user.province,
       subjects: user.subjects.map((id) => ({ id, name: getSubjectDisplayName(id) })),
+      avatarUrl: user.avatarUrl,
       createdAt: user.createdAt,
       lastLoginAt: user.lastLoginAt,
       points: balance.currentPoints,
     };
+  }
+
+  /**
+   * Luu anh dai dien moi cho user: cap nhat DB va xoa file cu neu co.
+   * `newFilePath` la duong dan tuyet doi den file vua duoc Multer luu.
+   * `newRelativeUrl` la URL tuong doi se luu vao DB (vi du `/uploads/avatars/<id>.jpg`).
+   *
+   * @throws UserNotFoundError neu khong tim thay user
+   */
+  public async uploadAvatar(userId: string, newFilePath: string, newRelativeUrl: string): Promise<UserMeDto> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { avatarUrl: true } });
+    if (!user) {
+      throw new UserNotFoundError(userId);
+    }
+
+    // Xoa file cu truoc khi luu moi de tranh ron file
+    if (user.avatarUrl) {
+      this.deleteAvatarFileIfExists(user.avatarUrl);
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatarUrl: newRelativeUrl },
+    });
+
+    // Neu file moi cung trung ten voi file cu (userId.jpg), Multer da overwrite roi,
+    // khong can xoa rieng. Ket qua getProfile se tra ve url moi.
+    void newFilePath; // da xu ly qua Multer diskStorage
+
+    return this.getProfile(userId);
+  }
+
+  /**
+   * Xoa anh dai dien: xoa file vat ly va dat avatarUrl = null trong DB.
+   *
+   * @throws UserNotFoundError neu khong tim thay user
+   * @throws AvatarError neu user chua co avatar de xoa
+   */
+  public async removeAvatar(userId: string): Promise<UserMeDto> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { avatarUrl: true } });
+    if (!user) {
+      throw new UserNotFoundError(userId);
+    }
+    if (!user.avatarUrl) {
+      throw new AvatarError('Nguoi dung chua co anh dai dien.', 'AVATAR_NOT_FOUND');
+    }
+
+    this.deleteAvatarFileIfExists(user.avatarUrl);
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatarUrl: null },
+    });
+
+    return this.getProfile(userId);
+  }
+
+  /** Xoa file vat ly dua tren URL tuong doi. Neu file khong ton tai thi bo qua (khong nem loi). */
+  private deleteAvatarFileIfExists(relativeUrl: string): void {
+    try {
+      // relativeUrl dang "/uploads/avatars/<file>" -> strip leading "/"
+      const relativePath = relativeUrl.startsWith('/') ? relativeUrl.slice(1) : relativeUrl;
+      const absPath = path.join(process.cwd(), relativePath);
+      if (fs.existsSync(absPath)) {
+        fs.unlinkSync(absPath);
+      }
+    } catch {
+      // Loi xoa file khong chan xu ly chinh - ghi log de debug
+      console.warn('[UsersService] Khong the xoa file avatar cu:', relativeUrl);
+    }
   }
 
   // --------------------------------------------------------------------

@@ -1,9 +1,42 @@
 // Routes lien quan den User profile & Onboarding (chon mon hoc).
+import fs from 'node:fs';
+import path from 'node:path';
 import { Router, type NextFunction, type Request, type Response } from 'express';
+import multer, { MulterError } from 'multer';
 import { verifyAppToken } from '../middleware/auth.middleware.js';
-import { UsersError } from '../services/users/users.errors.js';
+import { AvatarError, UsersError } from '../services/users/users.errors.js';
 import { usersService, type ProfileUpdateInput, type SubjectInput } from '../services/users/users.service.js';
 import type { SubjectCatalogEntry, UserMeDto } from '../services/users/users.types.js';
+
+// ─── Multer setup ─────────────────────────────────────────────────────────────
+
+const AVATARS_DIR = path.join(process.cwd(), 'uploads', 'avatars');
+
+// Dam bao thu muc ton tai khi server khoi dong (co the bi xoa tay)
+if (!fs.existsSync(AVATARS_DIR)) {
+  fs.mkdirSync(AVATARS_DIR, { recursive: true });
+}
+
+const avatarStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, AVATARS_DIR),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase() === '.png' ? '.png' : '.jpg';
+    // Dung userId lam ten file -> overwrite tu dong khi upload lai
+    cb(null, `${req.currentUser!.id}${ext}`);
+  },
+});
+
+const avatarUpload = multer({
+  storage: avatarStorage,
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === 'image/jpeg' || file.mimetype === 'image/png') {
+      cb(null, true);
+    } else {
+      cb(new AvatarError('Chi chap nhan file JPG hoac PNG.', 'AVATAR_INVALID_TYPE'));
+    }
+  },
+});
 
 export const usersRouter = Router();
 
@@ -122,6 +155,65 @@ usersRouter.put(
 
       // `verifyAppToken` da dam bao `req.currentUser` ton tai.
       const profile = await usersService.updateProfile(req.currentUser!.id, update);
+      res.status(200).json(profile);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * POST /api/users/me/avatar
+ *
+ * Upload anh dai dien (multipart/form-data, field "avatar").
+ * Cho phep JPG/PNG, toi da 2MB. File cu se bi xoa truoc khi luu moi.
+ */
+usersRouter.post(
+  '/me/avatar',
+  (req: Request, res: Response, next: NextFunction) => {
+    avatarUpload.single('avatar')(req, res, (err) => {
+      if (err instanceof MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return next(new AvatarError('Anh qua lon, toi da 2MB.', 'AVATAR_FILE_TOO_LARGE'));
+        }
+        return next(new AvatarError(err.message, 'AVATAR_UPLOAD_ERROR'));
+      }
+      if (err instanceof AvatarError) {
+        return next(err);
+      }
+      if (err) {
+        return next(err);
+      }
+      next();
+    });
+  },
+  async (req: Request, res: Response<UserMeDto>, next: NextFunction) => {
+    try {
+      if (!req.file) {
+        throw new AvatarError('Khong co file nao duoc gui len (field: "avatar").', 'AVATAR_NO_FILE');
+      }
+
+      const userId = req.currentUser!.id;
+      const ext = path.extname(req.file.filename);
+      const relativeUrl = `/uploads/avatars/${userId}${ext}`;
+      const profile = await usersService.uploadAvatar(userId, req.file.path, relativeUrl);
+      res.status(200).json(profile);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * DELETE /api/users/me/avatar
+ *
+ * Xoa anh dai dien: set avatarUrl = null trong DB va xoa file vat ly.
+ */
+usersRouter.delete(
+  '/me/avatar',
+  async (req: Request, res: Response<UserMeDto>, next: NextFunction) => {
+    try {
+      const profile = await usersService.removeAvatar(req.currentUser!.id);
       res.status(200).json(profile);
     } catch (err) {
       next(err);

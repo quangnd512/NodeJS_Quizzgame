@@ -12,6 +12,8 @@ import {
   adminAutoFillFromBank,
   adminListQuestionBank, adminCreateQuestionBankItem, adminUpdateQuestionBankItem,
   adminGetQuestionBankUsage, adminDeleteQuestionBankItem, adminAddFromBank,
+  uploadAvatar, deleteAvatar,
+  getLeaderboard, getMyLeaderboardRank,
 } from './lib/api.js';
 import type {
   UserProfile, StartSessionResult, AnswerResult, CompleteResult,
@@ -19,6 +21,7 @@ import type {
   StartExamResult, SubmitExamResult, ExamResult, ExamAnswerValue, ExamQuestionType, ExamQuestionPublic,
   ExamPaperSummary, ExamPaperDetail, ExamImportResultDto,
   QuestionBankItem, QuestionBankUsage,
+  LeaderboardEntry, MyRankResponse,
 } from './lib/api.js';
 import './App.css';
 
@@ -36,7 +39,7 @@ const SUBJECTS = [
   { id: 'GDCD', name: 'Giáo dục công dân', emoji: '⚖️' },
 ];
 
-type Screen = 'loading' | 'login' | 'onboarding' | 'profile' | 'practice' | 'exam' | 'admin';
+type Screen = 'loading' | 'login' | 'onboarding' | 'profile' | 'practice' | 'exam' | 'admin' | 'leaderboard';
 
 function getInitials(name: string | null, email: string | null): string {
   const src = name ?? email ?? '?';
@@ -127,6 +130,7 @@ export default function App() {
           onChangeSubjects={() => setScreen('onboarding')}
           onPractice={() => setScreen('practice')}
           onExam={() => setScreen('exam')}
+          onLeaderboard={() => setScreen('leaderboard')}
           onError={handleApiError}
           onLogout={() => void signOut(firebaseAuth)}
         />
@@ -146,6 +150,14 @@ export default function App() {
           sessionToken={sessionToken}
           onBack={() => setScreen('profile')}
           onProfileUpdate={setProfile}
+          onError={handleApiError}
+        />
+      )}
+      {screen === 'leaderboard' && profile && (
+        <LeaderboardPage
+          profile={profile}
+          sessionToken={sessionToken}
+          onBack={() => setScreen('profile')}
           onError={handleApiError}
         />
       )}
@@ -281,7 +293,7 @@ function OnboardingPage({
 // ─── ProfilePage ──────────────────────────────────────────────────────────────
 
 function ProfilePage({
-  profile, sessionToken, onProfileUpdate, onChangeSubjects, onPractice, onExam, onError, onLogout,
+  profile, sessionToken, onProfileUpdate, onChangeSubjects, onPractice, onExam, onLeaderboard, onError, onLogout,
 }: {
   profile: UserProfile;
   sessionToken: string;
@@ -289,13 +301,19 @@ function ProfilePage({
   onChangeSubjects: () => void;
   onPractice: () => void;
   onExam: () => void;
+  onLeaderboard: () => void;
   onError: (e: unknown) => void;
   onLogout: () => void;
 }) {
-  const [editMode, setEditMode] = useState(false);
-  const [busy, setBusy]         = useState(false);
-  const [saved, setSaved]       = useState(false);
-  const [form, setForm]         = useState({
+  const [editMode, setEditMode]         = useState(false);
+  const [busy, setBusy]                 = useState(false);
+  const [saved, setSaved]               = useState(false);
+  const [avatarBusy, setAvatarBusy]     = useState(false);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [pendingFile, setPendingFile]   = useState<File | null>(null);
+  const [avatarErr, setAvatarErr]       = useState('');
+  const fileInputRef                    = useRef<HTMLInputElement>(null);
+  const [form, setForm]                 = useState({
     displayName: profile.displayName ?? '',
     phone:       profile.phone       ?? '',
     school:      profile.school      ?? '',
@@ -332,17 +350,109 @@ function ProfilePage({
     finally { setBusy(false); }
   }
 
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAvatarErr('');
+    if (!['image/jpeg', 'image/png'].includes(file.type)) {
+      setAvatarErr('Chỉ chấp nhận file JPG hoặc PNG.');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setAvatarErr('Ảnh quá lớn, tối đa 2MB.');
+      return;
+    }
+    setPendingFile(file);
+    setAvatarPreview(URL.createObjectURL(file));
+    // Reset input để có thể chọn lại cùng file
+    e.target.value = '';
+  }
+
+  async function handleAvatarSave() {
+    if (!pendingFile) return;
+    setAvatarBusy(true);
+    try {
+      const updated = await uploadAvatar(sessionToken, pendingFile);
+      onProfileUpdate(updated);
+      setPendingFile(null);
+      if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+      setAvatarPreview(null);
+    } catch (err) { onError(err); }
+    finally { setAvatarBusy(false); }
+  }
+
+  function handleAvatarCancel() {
+    setPendingFile(null);
+    if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+    setAvatarPreview(null);
+    setAvatarErr('');
+  }
+
+  async function handleAvatarDelete() {
+    if (!confirm('Xoá ảnh đại diện?')) return;
+    setAvatarBusy(true);
+    try {
+      const updated = await deleteAvatar(sessionToken);
+      onProfileUpdate(updated);
+    } catch (err) { onError(err); }
+    finally { setAvatarBusy(false); }
+  }
+
+  const displayAvatarUrl = avatarPreview ?? profile.avatarUrl;
+
   return (
     <div className="screen screen-profile">
       {/* Header */}
       <div className="profile-header">
-        <div className="avatar">{getInitials(profile.displayName, profile.email)}</div>
+        {/* Avatar có thể click để upload */}
+        <div className="avatar-wrapper">
+          <button
+            className="avatar-btn"
+            onClick={() => !avatarBusy && fileInputRef.current?.click()}
+            title="Đổi ảnh đại diện"
+            disabled={avatarBusy}
+          >
+            {displayAvatarUrl ? (
+              <img src={displayAvatarUrl} alt="avatar" className="avatar-img" />
+            ) : (
+              <div className="avatar">{getInitials(profile.displayName, profile.email)}</div>
+            )}
+            <span className="avatar-overlay">📷</span>
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png"
+            style={{ display: 'none' }}
+            onChange={handleFileChange}
+          />
+        </div>
+
         <div className="profile-id">
           <h2 className="profile-name">{profile.displayName ?? '(Chưa đặt tên)'}</h2>
           <p className="profile-email">{profile.email}</p>
         </div>
         <button className="btn-icon" onClick={onLogout} title="Đăng xuất">↩</button>
       </div>
+
+      {/* Avatar actions (preview / xóa) */}
+      {avatarErr && <p style={{ color: 'var(--color-error, #e53)', padding: '0 1.25rem', fontSize: '.85rem' }}>{avatarErr}</p>}
+      {pendingFile && (
+        <div className="avatar-preview-bar">
+          <span>Preview ảnh mới</span>
+          <button className="btn-secondary" onClick={handleAvatarCancel} disabled={avatarBusy}>Huỷ</button>
+          <button className="btn-primary" onClick={() => void handleAvatarSave()} disabled={avatarBusy}>
+            {avatarBusy ? <><Spinner /> Đang lưu…</> : 'Lưu ảnh'}
+          </button>
+        </div>
+      )}
+      {!pendingFile && profile.avatarUrl && (
+        <div style={{ padding: '0 1.25rem .5rem' }}>
+          <button className="btn-link" style={{ color: '#e53' }} onClick={() => void handleAvatarDelete()} disabled={avatarBusy}>
+            {avatarBusy ? 'Đang xoá…' : 'Xoá ảnh đại diện'}
+          </button>
+        </div>
+      )}
 
       {/* Points */}
       <div className="points-card">
@@ -351,13 +461,16 @@ function ProfilePage({
         <span className="pts-unit">điểm</span>
       </div>
 
-      {/* Practice CTA */}
+      {/* Practice + Exam + Leaderboard CTA */}
       <div style={{ padding: '0 1.25rem .75rem', display: 'flex', flexDirection: 'column', gap: '.625rem' }}>
         <button className="btn-primary btn-lg" onClick={onPractice}>
           Bắt đầu ôn tập 📚
         </button>
         <button className="btn-secondary btn-lg" onClick={onExam}>
           Thi thử 🎯
+        </button>
+        <button className="btn-secondary btn-lg" onClick={onLeaderboard} style={{ background: 'linear-gradient(135deg,#f6d365,#fda085)', color: '#333', border: 'none' }}>
+          🏆 Bảng xếp hạng
         </button>
       </div>
 
@@ -1272,6 +1385,254 @@ function ExamResultScreen({
         <button className="btn-secondary" onClick={onHome}>Về trang chủ</button>
         <button className="btn-primary" onClick={onRetry}>Thi tiếp 🎯</button>
       </div>
+    </div>
+  );
+}
+
+// ─── LeaderboardPage ─────────────────────────────────────────────────────────
+
+const TREND_ICON: Record<string, string> = {
+  up: '↑', down: '↓', same: '→', new: '—',
+};
+const TREND_COLOR: Record<string, string> = {
+  up: '#22c55e', down: '#ef4444', same: '#94a3b8', new: '#94a3b8',
+};
+
+function AvatarCell({ avatarUrl, name, size = 40 }: { avatarUrl: string | null; name: string | null; size?: number }) {
+  const initials = (name ?? '?').split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('');
+  const colors = ['#6366f1','#ec4899','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ef4444'];
+  const color  = colors[(name?.charCodeAt(0) ?? 0) % colors.length];
+  return avatarUrl ? (
+    <img src={avatarUrl} alt={name ?? ''} style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+  ) : (
+    <div style={{ width: size, height: size, borderRadius: '50%', background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: size * 0.38, flexShrink: 0 }}>
+      {initials}
+    </div>
+  );
+}
+
+function LeaderboardPage({
+  profile, sessionToken, onBack, onError,
+}: {
+  profile: UserProfile;
+  sessionToken: string;
+  onBack: () => void;
+  onError: (e: unknown) => void;
+}) {
+  const [subject, setSubject]       = useState('');
+  const [page, setPage]             = useState(1);
+  const [entries, setEntries]       = useState<LeaderboardEntry[]>([]);
+  const [total, setTotal]           = useState(0);
+  const [myRank, setMyRank]         = useState<MyRankResponse | null>(null);
+  const [loading, setLoading]       = useState(true);
+  const [loadMore, setLoadMore]     = useState(false);
+  const [selected, setSelected]     = useState<LeaderboardEntry | null>(null);
+  async function fetchLeaderboard(p: number, subj: string, append: boolean) {
+    if (p === 1) setLoading(true); else setLoadMore(true);
+    try {
+      const [lb, me] = await Promise.all([
+        getLeaderboard(sessionToken, p, subj || undefined),
+        p === 1 ? getMyLeaderboardRank(sessionToken, subj || undefined) : Promise.resolve(null),
+      ]);
+      if (append) {
+        setEntries((prev) => [...prev, ...lb.data]);
+      } else {
+        setEntries(lb.data);
+      }
+      setTotal(lb.total);
+      if (me !== null) setMyRank(me);
+    } catch (err) { onError(err); }
+    finally { setLoading(false); setLoadMore(false); }
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPage(1);
+    setEntries([]);
+    void fetchLeaderboard(1, subject, false);
+  }, [subject]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleLoadMore() {
+    const nextPage = page + 1;
+    setPage(nextPage);
+    await fetchLeaderboard(nextPage, subject, true);
+  }
+
+  const top3    = entries.slice(0, 3);
+  const rest    = entries.slice(3);
+  const hasMore = entries.length < total;
+  // Ẩn thanh ghim khi entry của bản thân đã xuất hiện trong danh sách đã load
+  const myEntryLoaded = entries.some((e) => e.userId === profile.id);
+
+  // Podium order: [1] center top, [0] left, [2] right
+  const podiumOrder = [top3[1], top3[0], top3[2]] as (LeaderboardEntry | undefined)[];
+  const podiumHeight = ['52px', '80px', '36px'];
+
+  return (
+    <div className="screen" style={{ background: 'linear-gradient(160deg,#0f0c29,#302b63,#24243e)', minHeight: '100vh', color: '#fff', paddingBottom: '80px' }}>
+
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '.75rem', padding: '1rem 1.25rem .5rem' }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#fff', fontSize: '1.4rem', cursor: 'pointer', padding: 0 }}>←</button>
+        <h2 style={{ flex: 1, margin: 0, fontSize: '1.2rem', fontWeight: 700 }}>🏆 Bảng Xếp Hạng</h2>
+        <select
+          value={subject}
+          onChange={(e) => setSubject(e.target.value)}
+          style={{ padding: '.35rem .6rem', borderRadius: '8px', border: 'none', background: 'rgba(255,255,255,.12)', color: '#fff', fontSize: '.85rem' }}
+        >
+          <option value="">Tất cả môn</option>
+          {SUBJECTS.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '3rem' }}><Spinner /></div>
+      ) : entries.length === 0 ? (
+        <p style={{ textAlign: 'center', padding: '3rem', opacity: .6 }}>Chưa có dữ liệu xếp hạng</p>
+      ) : (
+        <>
+          {/* ── Podium Top 3 ─────────────────────────────── */}
+          {top3.length >= 1 && (
+            <div style={{ padding: '1.5rem 1.25rem 1rem', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', gap: '1rem' }}>
+              {podiumOrder.map((entry, idx) => {
+                if (!entry) return <div key={idx} style={{ flex: 1 }} />;
+                const isFirst = entry.rank === 1;
+                const medals = ['🥈', '🥇', '🥉'];
+                return (
+                  <div key={entry.userId} onClick={() => setSelected(entry)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '.4rem', cursor: 'pointer' }}>
+                    {isFirst && (
+                      <div style={{ fontSize: '1.6rem', animation: 'pulse 2s infinite' }}>👑</div>
+                    )}
+                    <div style={{ position: 'relative' }}>
+                      <AvatarCell avatarUrl={entry.avatarUrl} name={entry.displayName} size={isFirst ? 72 : 56} />
+                      <span style={{ position: 'absolute', bottom: -6, right: -6, fontSize: isFirst ? '1.4rem' : '1.1rem' }}>{medals[idx]}</span>
+                    </div>
+                    <p style={{ margin: 0, fontSize: '.78rem', fontWeight: 600, textAlign: 'center', maxWidth: '80px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {entry.displayName ?? 'Ẩn danh'}
+                    </p>
+                    <p style={{ margin: 0, fontSize: '.85rem', fontWeight: 700, color: '#fbbf24' }}>{entry.reputationScore.toFixed(1)}</p>
+                    {/* Bục podium */}
+                    <div style={{ width: '100%', height: podiumHeight[idx], background: isFirst ? 'linear-gradient(180deg,#f6d365,#fda085)' : 'rgba(255,255,255,.15)', borderRadius: '8px 8px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '1.1rem', color: isFirst ? '#333' : '#fff' }}>
+                      {entry.rank}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── Danh sách hạng 4+ ───────────────────────── */}
+          {rest.length > 0 && (
+            <div style={{ margin: '0 1rem', background: 'rgba(255,255,255,.06)', borderRadius: '16px', overflow: 'hidden' }}>
+              {rest.map((entry, i) => {
+                const isMe = entry.userId === profile.id;
+                return (
+                  <div key={entry.userId} onClick={() => setSelected(entry)} style={{
+                    display: 'flex', alignItems: 'center', gap: '.75rem',
+                    padding: '.7rem 1rem',
+                    background: isMe ? 'rgba(251,191,36,.15)' : i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,.03)',
+                    borderBottom: '1px solid rgba(255,255,255,.05)',
+                    cursor: 'pointer',
+                  }}>
+                    <span style={{ width: '28px', textAlign: 'center', fontWeight: 700, color: '#94a3b8', fontSize: '.9rem' }}>{entry.rank}</span>
+                    <AvatarCell avatarUrl={entry.avatarUrl} name={entry.displayName} size={36} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ margin: 0, fontWeight: isMe ? 700 : 500, fontSize: '.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {entry.displayName ?? 'Ẩn danh'}{isMe && ' (Bạn)'}
+                      </p>
+                      <p style={{ margin: 0, fontSize: '.75rem', color: '#94a3b8' }}>
+                        TB: {entry.avgScore.toFixed(1)} · {entry.examCount} lần thi
+                      </p>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <p style={{ margin: 0, fontWeight: 700, color: '#fbbf24', fontSize: '.95rem' }}>{entry.reputationScore.toFixed(1)}</p>
+                      <span style={{ fontSize: '1rem', color: TREND_COLOR[entry.trend] }}>{TREND_ICON[entry.trend] ?? '—'}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Nút xem thêm */}
+          {hasMore && (
+            <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+              <button
+                onClick={() => void handleLoadMore()}
+                disabled={loadMore}
+                style={{ background: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.2)', color: '#fff', padding: '.6rem 1.5rem', borderRadius: '24px', cursor: 'pointer', fontSize: '.9rem' }}
+              >
+                {loadMore ? <Spinner /> : `Xem thêm (${total - entries.length} người)`}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Modal thông tin người dùng ───────────────── */}
+      {selected && (
+        <div
+          onClick={() => setSelected(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '1.5rem' }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ background: 'linear-gradient(135deg,#302b63,#24243e)', borderRadius: '20px', padding: '1.5rem', width: '100%', maxWidth: '320px', color: '#fff', boxShadow: '0 20px 60px rgba(0,0,0,.5)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.2rem' }}>
+              <AvatarCell avatarUrl={selected.avatarUrl} name={selected.displayName} size={56} />
+              <div>
+                <p style={{ margin: 0, fontWeight: 700, fontSize: '1.05rem' }}>{selected.displayName ?? 'Ẩn danh'}</p>
+                <p style={{ margin: 0, fontSize: '.85rem', color: '#fbbf24', fontWeight: 600 }}>Hạng #{selected.rank}</p>
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '.75rem', marginBottom: '1.2rem' }}>
+              {[
+                { label: 'Điểm Uy Tín', value: selected.reputationScore.toFixed(2) },
+                { label: 'Điểm TB', value: selected.avgScore.toFixed(2) },
+                { label: 'Số lần thi', value: `${selected.examCount} lần` },
+                { label: 'Xu hướng', value: `${TREND_ICON[selected.trend] ?? '—'} ${selected.trend === 'up' ? 'Tăng' : selected.trend === 'down' ? 'Giảm' : selected.trend === 'new' ? 'Mới' : 'Ổn định'}` },
+              ].map(({ label, value }) => (
+                <div key={label} style={{ background: 'rgba(255,255,255,.08)', borderRadius: '12px', padding: '.75rem', textAlign: 'center' }}>
+                  <p style={{ margin: 0, fontSize: '.72rem', color: '#94a3b8', marginBottom: '.25rem' }}>{label}</p>
+                  <p style={{ margin: 0, fontWeight: 700, fontSize: '1rem' }}>{value}</p>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => setSelected(null)} style={{ width: '100%', padding: '.7rem', borderRadius: '12px', border: 'none', background: 'rgba(255,255,255,.15)', color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: '.9rem' }}>
+              Đóng
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Thanh ghim hạng của tôi ───────────────────── */}
+      {myRank !== null && !myEntryLoaded && (
+        <div style={{
+          position: 'fixed', bottom: 0, left: 0, right: 0,
+          background: 'linear-gradient(90deg,#302b63,#0f0c29)',
+          borderTop: '1px solid rgba(255,255,255,.15)',
+          padding: '.75rem 1.25rem',
+          display: 'flex', alignItems: 'center', gap: '1rem',
+        }}>
+          <AvatarCell avatarUrl={profile.avatarUrl} name={profile.displayName} size={40} />
+          <div style={{ flex: 1 }}>
+            <p style={{ margin: 0, fontWeight: 600, fontSize: '.9rem' }}>{profile.displayName ?? 'Bạn'}</p>
+            {myRank.rank !== null ? (
+              <p style={{ margin: 0, fontSize: '.78rem', color: '#94a3b8' }}>
+                Hạng #{myRank.rank} · TB: {myRank.avgScore?.toFixed(1)} · {myRank.examCount} lần thi
+              </p>
+            ) : (
+              <p style={{ margin: 0, fontSize: '.78rem', color: '#94a3b8' }}>Chưa có dữ liệu xếp hạng</p>
+            )}
+          </div>
+          {myRank.rank !== null && (
+            <div style={{ textAlign: 'right' }}>
+              <p style={{ margin: 0, fontWeight: 700, color: '#fbbf24' }}>{myRank.reputationScore?.toFixed(1)}</p>
+              {myRank.trend && (
+                <span style={{ fontSize: '1rem', color: TREND_COLOR[myRank.trend] }}>{TREND_ICON[myRank.trend]}</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

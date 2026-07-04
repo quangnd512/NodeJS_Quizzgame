@@ -1,4 +1,5 @@
 // Cau hinh Express app: middleware, routes, xu ly loi tap trung
+import path from 'node:path';
 import express, { type Application, type NextFunction, type Request, type Response } from 'express';
 import cors from 'cors';
 import { helloRouter } from './routes/hello.route.js';
@@ -9,6 +10,7 @@ import { adminRouter } from './routes/admin.route.js';
 import { examRouter } from './routes/exam.route.js';
 import { examAdminRouter } from './routes/exam-admin.route.js';
 import { questionBankRouter } from './routes/question-bank.route.js';
+import { leaderboardRouter } from './routes/leaderboard.route.js';
 import type { ZodIssue } from 'zod';
 
 /**
@@ -49,6 +51,12 @@ const ERROR_CODE_TO_HTTP_STATUS: Readonly<Record<string, number>> = {
   ADMIN_UNAUTHORIZED: 401,
   // Reports
   REPORT_ALREADY_SUBMITTED: 409,
+  // Avatar
+  AVATAR_INVALID_TYPE: 400,
+  AVATAR_FILE_TOO_LARGE: 413,
+  AVATAR_NO_FILE: 400,
+  AVATAR_NOT_FOUND: 404,
+  AVATAR_UPLOAD_ERROR: 400,
   // Ngan hang cau hoi (Question Bank)
   QUESTION_BANK_NOT_FOUND: 404,
   QUESTION_BANK_DELETE_BLOCKED: 409,
@@ -99,6 +107,9 @@ export function createApp(): Application {
   app.use(cors());
   app.use(express.json());
 
+  // Phuc vu file tinh: anh dai dien upload boi nguoi dung
+  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
   // Gan cac route API
   app.use('/api/hello', helloRouter);
   app.use('/api/auth', authRouter);
@@ -108,6 +119,7 @@ export function createApp(): Application {
   app.use('/api/admin/exam-papers', examAdminRouter);
   app.use('/api/admin/question-bank', questionBankRouter);
   app.use('/api/exam', examRouter);
+  app.use('/api/leaderboard', leaderboardRouter);
 
   // Route kiem tra suc khoe server
   app.get('/api/health', (_req: Request, res: Response) => {

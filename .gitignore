@@ -6,3 +6,6 @@ build/
 *.log
 .DS_Store
 ~$*.xlsx
+~$*.docx
+backend/tsconfig.tsbuildinfo
+backend/uploads/
