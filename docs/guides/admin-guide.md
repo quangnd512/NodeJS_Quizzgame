@@ -16,6 +16,7 @@
 7. [Quản lý Đề thi thử (Thi thử / Mock Exam)](#7-quản-lý-đề-thi-thử-thi-thử--mock-exam)
 8. [Ngân hàng câu hỏi (Question Bank)](#8-ngân-hàng-câu-hỏi-question-bank)
    - [8.7 Tự động điền câu hỏi (Auto-Fill)](#87-tự-động-điền-câu-hỏi-auto-fill)
+9. [Bảng xếp hạng & Ảnh đại diện](#9-bảng-xếp-hạng--ảnh-đại-diện)
 
 ---
 
@@ -1031,3 +1032,70 @@ vào kho trước (`POST /api/admin/question-bank`) rồi gọi auto-fill lại.
 
 **`EXAM_QUESTION_INVALID` khi tạo/cập nhật câu**
 → Kiểm tra quy tắc `options`/`correctAnswer` theo bảng ở mục 8.1.
+
+---
+
+## 9. Bảng xếp hạng & Ảnh đại diện
+
+### 9.1 Bảng xếp hạng (Leaderboard)
+
+Bảng xếp hạng được tính **tự động từ dữ liệu ExamSession** — không cần thao tác
+gì từ phía admin. Mọi học sinh đã hoàn thành ít nhất 1 phiên thi thử sẽ tự động
+xuất hiện trong bảng xếp hạng.
+
+**API (dùng để kiểm tra / debug):**
+```bash
+# Xem bảng xếp hạng (cần session token user, không cần Admin Secret)
+curl http://localhost:4000/api/leaderboard \
+  -H "Authorization: Bearer <session-token>"
+
+# Lọc theo môn Toán
+curl "http://localhost:4000/api/leaderboard?subject=TOAN" \
+  -H "Authorization: Bearer <session-token>"
+```
+
+**Lưu ý vận hành:**
+- Bảng xếp hạng dùng raw SQL với CTE phức tạp (STDDEV_POP, ROW_NUMBER) —
+  trên DB nhỏ (< 10.000 user) thời gian phản hồi nhanh. Khi lượng ExamSession
+  tăng lớn, cân nhắc thêm index hoặc materialized view.
+- Không có API admin riêng để can thiệp thứ hạng — dữ liệu xếp hạng hoàn toàn
+  phụ thuộc vào `exam_sessions`.
+
+---
+
+### 9.2 Ảnh đại diện — Quản lý file
+
+Ảnh đại diện của người dùng được lưu tại:
+```
+backend/uploads/avatars/<userId>.jpg   (hoặc .png)
+```
+
+**Lưu ý vận hành:**
+
+| Tình huống | Hành động |
+|-----------|-----------|
+| Server restart | Ảnh vẫn còn vì lưu trên disk (không mất) |
+| Deploy lên production | Cần cấu hình **persistent volume** — nếu dùng container (Docker/Heroku), thư mục `uploads/` bị xóa khi redeploy |
+| Disk đầy | Kiểm tra `du -sh backend/uploads/avatars/` — mỗi file ≤ 2MB |
+| Muốn xóa ảnh 1 user | Xóa file `backend/uploads/avatars/<userId>.*` VÀ set `avatarUrl = NULL` trong DB |
+
+**Kiểm tra ảnh qua HTTP:**
+```bash
+# Lấy ảnh trực tiếp (không cần token)
+curl http://localhost:4000/uploads/avatars/<userId>.jpg -o /tmp/check.jpg
+```
+
+**Xóa ảnh user qua SQL (khi cần xử lý admin thủ công):**
+```sql
+-- Bước 1: Lấy avatarUrl hiện tại
+SELECT id, "avatarUrl" FROM users WHERE id = '<userId>';
+
+-- Bước 2: Xóa URL trong DB
+UPDATE users SET "avatarUrl" = NULL WHERE id = '<userId>';
+
+-- Bước 3: Xóa file vật lý (chạy từ thư mục backend)
+-- rm uploads/avatars/<userId>.jpg
+```
+
+> ⚠️ Không xóa chỉ file mà không cập nhật DB (hoặc ngược lại) — sẽ gây lỗi
+> "ảnh bị thiếu" trên UI hoặc tốn dung lượng rác.

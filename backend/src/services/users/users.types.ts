@@ -65,6 +65,8 @@ export interface UserMeDto {
   province: string | null;
   /** Danh sach mon hoc DAY DU thong tin (ca id lan ten hien thi) - tien loi cho FE render truc tiep. */
   subjects: SubjectCatalogEntry[];
+  /** URL tuong doi anh dai dien (/uploads/avatars/<userId>.jpg), null neu chua co. */
+  avatarUrl: string | null;
   createdAt: Date;
   /** Thoi diem dang nhap gan nhat (cap nhat moi lan goi POST /api/auth/login thanh cong). */
   lastLoginAt: Date | null;

@@ -3421,3 +3421,513 @@ curl -X DELETE http://localhost:4000/api/admin/question-bank/<BANK_ID> \
 - **Chưa có audit log:** Các thao tác xóa câu chưa được ghi lịch sử (ai xóa, lúc nào).
   Cân nhắc thêm bảng `admin_audit_log` nếu cần truy vết.
 - TODO tiếp theo: Xây dựng UI tab "Ngân hàng câu hỏi" trong admin dashboard frontend.
+
+---
+
+## 8. Leaderboard & Avatar – Bảng xếp hạng & Ảnh đại diện
+
+**Trạng thái:** ✅ Hoàn thành
+**Ngày hoàn thành:** 2026-07-04
+**Branch:** `feature/leaderboard`
+
+---
+
+### Tổng quan
+
+Module này gồm 2 tính năng đi kèm nhau:
+
+1. **Ảnh đại diện (Avatar):** Người dùng có thể upload ảnh đại diện JPG/PNG (≤ 2MB)
+   từ màn hình Profile. Ảnh được lưu trên server (`backend/uploads/avatars/`) và
+   hiển thị trên Bảng xếp hạng. Click vào avatar để chọn ảnh mới; có nút xem trước
+   (preview) trước khi lưu và nút xóa ảnh.
+
+2. **Bảng xếp hạng (Leaderboard):** Xếp hạng học sinh theo **Điểm Uy Tín** — công
+   thức tổng hợp điểm trung bình, độ ổn định, và số lần thi. Hiển thị podium Top 3,
+   bảng hạng từ vị trí 4 trở đi (phân trang), có thể lọc theo môn học, và thanh
+   ghim hiển thị hạng của bản thân.
+
+---
+
+### Data Model
+
+#### Bảng `users` — Thêm cột mới
+
+| Cột | Kiểu | Mô tả |
+|-----|------|-------|
+| `avatarUrl` | `TEXT?` | URL tương đối đến file ảnh, ví dụ `/uploads/avatars/<userId>.jpg`. `NULL` = chưa có ảnh. |
+
+**Migration:** `20260703175302_add_user_avatar_url`
+
+#### File ảnh — lưu trên disk
+
+| Đường dẫn | Mô tả |
+|-----------|-------|
+| `backend/uploads/avatars/<userId>.jpg` | Ảnh định dạng JPG |
+| `backend/uploads/avatars/<userId>.png` | Ảnh định dạng PNG |
+
+Mỗi user chỉ có tối đa 1 file ảnh. Khi upload lại, file cũ bị ghi đè (overwrite)
+hoặc xóa trước khi lưu file mới (nếu đổi định dạng).
+
+---
+
+### API Reference
+
+#### Tổng hợp endpoints
+
+| Method | Path | Auth | Mô tả |
+|--------|------|------|-------|
+| `POST` | `/api/users/me/avatar` | Bearer token | Upload ảnh đại diện |
+| `DELETE` | `/api/users/me/avatar` | Bearer token | Xóa ảnh đại diện |
+| `GET` | `/api/leaderboard` | Bearer token | Danh sách xếp hạng (phân trang) |
+| `GET` | `/api/leaderboard/me` | Bearer token | Hạng và chỉ số của user đang đăng nhập |
+
+---
+
+#### POST /api/users/me/avatar
+
+**Mục đích:** Upload ảnh đại diện mới, thay thế ảnh cũ nếu đã có.
+
+**Content-Type:** `multipart/form-data` — field tên là `avatar`.
+
+**Ràng buộc:**
+- Chỉ chấp nhận `image/jpeg` hoặc `image/png`
+- Dung lượng tối đa 2MB
+- Tên file lưu: `<userId>.<ext>` — Multer tự đặt, không phụ thuộc tên file gốc
+
+**Request (curl mẫu):**
+```bash
+curl -X POST http://localhost:4000/api/users/me/avatar \
+  -H "Authorization: Bearer <session-token>" \
+  -F "avatar=@/path/to/photo.jpg"
+```
+
+**Luồng xử lý:**
+```
+1. verifyAppToken → req.currentUser
+2. Multer middleware:
+   ├─ Kiểm tra mimetype (JPG/PNG) → từ chối nếu sai: AVATAR_INVALID_TYPE (400)
+   ├─ Kiểm tra kích thước → từ chối nếu > 2MB: AVATAR_FILE_TOO_LARGE (400)
+   └─ Lưu file vào backend/uploads/avatars/<userId>.<ext>
+3. UsersService.uploadAvatar(userId, filePath, relativeUrl)
+   ├─ Tìm user trong DB (UserNotFoundError nếu không tìm thấy)
+   ├─ Nếu user đã có avatarUrl cũ → xóa file vật lý cũ (bỏ qua nếu file không tồn tại)
+   ├─ UPDATE users SET avatarUrl = '/uploads/avatars/<userId>.<ext>'
+   └─ Trả về UserMeDto đầy đủ (kem điểm)
+```
+
+**Response thành công (200):** `UserMeDto` đầy đủ (xem `GET /api/users/me`), có thêm trường `avatarUrl`.
+
+**Lỗi có thể xảy ra:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 400 | `AVATAR_NO_FILE` | Không có field `avatar` trong form data |
+| 400 | `AVATAR_INVALID_TYPE` | File không phải JPG hoặc PNG |
+| 400 | `AVATAR_FILE_TOO_LARGE` | File vượt quá 2MB |
+| 400 | `AVATAR_UPLOAD_ERROR` | Lỗi Multer khác (ít gặp) |
+| 401 | `MISSING_AUTH_TOKEN` | Thiếu header Authorization |
+| 401 | `INVALID_SESSION_TOKEN` | Token hết hạn hoặc sai |
+| 404 | `USER_NOT_FOUND` | User không còn trong DB (rất hi hữu) |
+
+---
+
+#### DELETE /api/users/me/avatar
+
+**Mục đích:** Xóa ảnh đại diện — đặt `avatarUrl = null` trong DB và xóa file vật lý.
+
+**Request:** Không có body.
+
+**Luồng xử lý:**
+```
+1. verifyAppToken → req.currentUser
+2. UsersService.removeAvatar(userId)
+   ├─ Tìm user, lấy avatarUrl hiện tại
+   ├─ Nếu avatarUrl = null → AVATAR_NOT_FOUND (400)
+   ├─ Xóa file vật lý (bỏ qua nếu file đã không còn)
+   ├─ UPDATE users SET avatarUrl = NULL
+   └─ Trả về UserMeDto (avatarUrl = null)
+```
+
+**Response thành công (200):** `UserMeDto` với `avatarUrl: null`.
+
+**Lỗi có thể xảy ra:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 400 | `AVATAR_NOT_FOUND` | User chưa có ảnh đại diện để xóa |
+| 401 | `MISSING_AUTH_TOKEN` | Thiếu header Authorization |
+| 401 | `INVALID_SESSION_TOKEN` | Token hết hạn hoặc sai |
+
+---
+
+#### GET /api/leaderboard?subject=&page=
+
+**Mục đích:** Lấy danh sách xếp hạng, phân trang 10 người/trang, có thể lọc theo môn học.
+
+**Query params:**
+
+| Param | Kiểu | Mặc định | Mô tả |
+|-------|------|---------|-------|
+| `page` | `number` | `1` | Trang cần lấy (bắt đầu từ 1) |
+| `subject` | `string` | *(tất cả môn)* | Mã môn học để lọc (ví dụ `TOAN`, `VAN`) |
+
+**Request (curl mẫu):**
+```bash
+# Tất cả môn, trang 1
+curl http://localhost:4000/api/leaderboard \
+  -H "Authorization: Bearer <session-token>"
+
+# Chỉ môn Toán, trang 2
+curl "http://localhost:4000/api/leaderboard?subject=TOAN&page=2" \
+  -H "Authorization: Bearer <session-token>"
+```
+
+**Luồng xử lý:**
+```
+1. verifyAppToken → req.currentUser
+2. Parse query: page (min 1), subject (uppercase, bỏ qua nếu rỗng)
+3. LeaderboardService.getLeaderboard(page, subject?)
+   ├─ Đếm tổng user tham gia xếp hạng (COUNT DISTINCT userId)
+   ├─ Nếu total = 0 → trả { data: [], total: 0, page, pageSize: 10 }
+   └─ CTE query (PostgreSQL):
+       ├─ current_scores: AVG, STDDEV_POP, COUNT, ReputationScore, lastCompletedAt
+       ├─ current_ranks:  ROW_NUMBER() OVER (ORDER BY reputationScore DESC, lastCompletedAt DESC)
+       ├─ old_scores:     Tương tự nhưng chỉ data TRƯỚC 30 ngày
+       ├─ old_ranks:      ROW_NUMBER() cho data cũ (để tính xu hướng)
+       └─ JOIN users: lấy displayName, avatarUrl
+          LIMIT 20 OFFSET (page-1)*20
+4. Map rows → LeaderboardEntry[] (round reputationScore/avgScore 2 chữ số)
+```
+
+**Công thức Điểm Uy Tín:**
+```
+Điểm Uy Tín = (AVG(score) − 0.5 × STDDEV_POP(score)) × (1 − 1/(n+1))
+```
+- `AVG(score)`: điểm trung bình các lần thi (chỉ tính ExamSession COMPLETED có score)
+- `STDDEV_POP(score)`: độ lệch chuẩn (= 0 khi chỉ có 1 lần thi)
+- `n`: số lần thi thành công
+
+> **Ý nghĩa:** Học sinh thi đều đặn, điểm cao và ổn định sẽ có Điểm Uy Tín cao.
+> Người thi 1 lần điểm tuyệt đối vẫn bị hạn chế vì `n` nhỏ. Người điểm cao nhưng
+> không ổn định (STDDEV lớn) sẽ bị trừ điểm.
+
+**Xu hướng (trend):**
+
+| Giá trị | Ý nghĩa |
+|---------|---------|
+| `"up"` | Hạng tăng so với 30 ngày trước (số hạng nhỏ hơn = tốt hơn) |
+| `"down"` | Hạng giảm so với 30 ngày trước |
+| `"same"` | Hạng không đổi |
+| `"new"` | Chưa có dữ liệu 30 ngày trước (mới thi lần đầu trong 30 ngày qua) |
+
+**Response thành công (200):**
+```json
+{
+  "data": [
+    {
+      "rank": 1,
+      "userId": "uuid-user-1",
+      "displayName": "Nguyễn Văn A",
+      "avatarUrl": "/uploads/avatars/uuid-user-1.jpg",
+      "reputationScore": 8.45,
+      "avgScore": 9.2,
+      "examCount": 15,
+      "trend": "up"
+    },
+    {
+      "rank": 2,
+      "userId": "uuid-user-2",
+      "displayName": "Trần Thị B",
+      "avatarUrl": null,
+      "reputationScore": 7.83,
+      "avgScore": 8.5,
+      "examCount": 8,
+      "trend": "same"
+    }
+  ],
+  "total": 87,
+  "page": 1,
+  "pageSize": 20
+}
+```
+
+**Lỗi có thể xảy ra:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 401 | `MISSING_AUTH_TOKEN` | Thiếu header Authorization |
+| 401 | `INVALID_SESSION_TOKEN` | Token hết hạn hoặc sai |
+
+---
+
+#### GET /api/leaderboard/me?subject=
+
+**Mục đích:** Lấy hạng và chỉ số Điểm Uy Tín của user đang đăng nhập.
+Nếu chưa thi lần nào → trả về `rank: null`.
+
+**Query params:** `subject` (tùy chọn, giống endpoint trên).
+
+**Request (curl mẫu):**
+```bash
+curl http://localhost:4000/api/leaderboard/me \
+  -H "Authorization: Bearer <session-token>"
+```
+
+**Luồng xử lý:**
+```
+1. verifyAppToken → req.currentUser
+2. LeaderboardService.getMyRank(userId, subject?)
+   ├─ Truy vấn thống kê của user: AVG, COUNT, ReputationScore
+   ├─ Nếu examCount = 0 → trả { rank: null, reputationScore: null, avgScore: null, examCount: 0, trend: null }
+   ├─ Tính hạng hiện tại: đếm số user có ReputationScore cao hơn (hoặc bằng nhưng thi sớm hơn)
+   ├─ Tính hạng 30 ngày trước (dùng data trước NOW - 30 days)
+   └─ Tính trend: so sánh current_rank vs old_rank
+```
+
+**Response thành công (200) — đã thi:**
+```json
+{
+  "rank": 5,
+  "reputationScore": 6.72,
+  "avgScore": 7.8,
+  "examCount": 4,
+  "trend": "up"
+}
+```
+
+**Response (200) — chưa thi lần nào:**
+```json
+{
+  "rank": null,
+  "reputationScore": null,
+  "avgScore": null,
+  "examCount": 0,
+  "trend": null
+}
+```
+
+**Lỗi có thể xảy ra:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 401 | `MISSING_AUTH_TOKEN` | Thiếu header Authorization |
+| 401 | `INVALID_SESSION_TOKEN` | Token hết hạn hoặc sai |
+
+---
+
+### Luồng chạy (Flow)
+
+#### A. Upload ảnh đại diện từ Profile
+
+```
+[FE] ProfilePage
+  └─ User click vào avatar → <input type="file" accept="image/*">
+  └─ Chọn file JPG/PNG
+        │
+        ▼
+  Validate phía FE (loại file, kích thước ≤ 2MB)
+  Hiển thị preview (URL.createObjectURL)
+        │
+        ▼
+  User bấm "Lưu ảnh"
+        │
+        ▼
+  uploadAvatar(sessionToken, file) → POST /api/users/me/avatar
+  [multipart/form-data, field "avatar"]
+        │
+  [BE] Multer lưu → backend/uploads/avatars/<userId>.jpg
+  [BE] UsersService.uploadAvatar → xóa ảnh cũ, UPDATE DB
+        │
+        ▼
+  Response: UserMeDto (avatarUrl = "/uploads/avatars/<userId>.jpg")
+  [FE] Cập nhật state profile, revoke preview URL
+```
+
+#### B. Xem Bảng xếp hạng
+
+```
+[FE] User bấm "Bảng xếp hạng" trên ProfilePage
+  └─ setScreen('leaderboard')
+        │
+        ▼
+  LeaderboardPage mount
+  Gọi song song:
+    ├─ getLeaderboard(token, page=1, subject?)      → GET /api/leaderboard
+    └─ getMyLeaderboardRank(token, subject?)        → GET /api/leaderboard/me
+        │
+        ▼
+  Render:
+    ├─ Podium (top3[1] = Hạng 2 trái, top3[0] = Hạng 1 giữa, top3[2] = Hạng 3 phải)
+    ├─ Bảng hạng 4+ (scrollable)
+    ├─ "Xem thêm" → fetchLeaderboard(page+1, subject, append=true)
+    └─ Thanh ghim hạng bản thân (cuối trang)
+        │
+        ▼
+  User đổi filter môn → fetchLeaderboard(page=1, newSubject, append=false)
+```
+
+#### C. Vite proxy `/uploads` (chỉ dev)
+
+```
+[FE] <img src="/uploads/avatars/<id>.jpg">
+  └─ Vite proxy → http://localhost:4000/uploads/avatars/<id>.jpg
+  └─ Express static middleware → backend/uploads/avatars/<id>.jpg
+```
+
+---
+
+### Cấu trúc file
+
+```
+backend/
+├── prisma/
+│   ├── schema.prisma                              Thêm avatarUrl String? vào model User
+│   └── migrations/
+│       └── 20260703175302_add_user_avatar_url/    Migration tạo cột avatarUrl
+│
+├── uploads/
+│   └── avatars/
+│       └── .gitkeep                               Đảm bảo thư mục tồn tại trong Git
+│
+└── src/
+    ├── services/
+    │   ├── users/
+    │   │   ├── users.types.ts     Thêm avatarUrl vào UserMeDto
+    │   │   ├── users.errors.ts    Thêm AvatarError (AVATAR_NOT_FOUND, AVATAR_INVALID_TYPE,
+    │   │   │                      AVATAR_FILE_TOO_LARGE, AVATAR_NO_FILE, AVATAR_UPLOAD_ERROR)
+    │   │   └── users.service.ts   Thêm uploadAvatar(), removeAvatar()
+    │   │
+    │   └── leaderboard/
+    │       ├── leaderboard.types.ts    LeaderboardEntry, LeaderboardResponse,
+    │       │                          MyRankResponse, RawLeaderboardRow, Trend
+    │       └── leaderboard.service.ts  LeaderboardService:
+    │                                   ├─ getLeaderboard(page, subject?)
+    │                                   └─ getMyRank(userId, subject?)
+    │
+    ├── routes/
+    │   ├── users.route.ts         Thêm POST /me/avatar, DELETE /me/avatar (Multer)
+    │   └── leaderboard.route.ts   GET /, GET /me — cả 2 cần verifyAppToken
+    │
+    └── app.ts                     Thêm express.static('/uploads'), leaderboardRouter,
+                                   AVATAR_* error codes vào ERROR_CODE_TO_HTTP_STATUS
+
+frontend/
+├── vite.config.ts       Thêm proxy /uploads → http://localhost:4000
+└── src/
+    ├── lib/api.ts        Thêm avatarUrl vào UserProfile; uploadAvatar(), deleteAvatar(),
+    │                     getLeaderboard(), getMyLeaderboardRank(); type LeaderboardEntry,
+    │                     LeaderboardResponse, MyRankResponse, Trend
+    ├── App.tsx           Screen type thêm 'leaderboard'; ProfilePage: avatar upload/delete/preview;
+    │                     LeaderboardPage (mới): podium, bảng hạng, filter môn, xem thêm,
+    │                     thanh ghim hạng bản thân; AvatarCell component
+    └── App.css           CSS: .avatar-wrapper, .avatar-btn, .avatar-overlay, .avatar-preview-bar
+```
+
+---
+
+### Ghi chú kỹ thuật
+
+1. **Công thức Điểm Uy Tín — không thay đổi:** Công thức `(AVG − 0.5×STDDEV_POP) × (1 − 1/(n+1))`
+   đã được xác nhận và không được thay đổi. Khi `STDDEV_POP = 0` (chỉ 1 lần thi),
+   PostgreSQL trả `NULL` → `COALESCE(..., 0)` xử lý về 0.
+
+2. **CTE thay vì subquery lồng nhau:** LeaderboardService dùng CTE (WITH ... AS)
+   để tính cả hạng hiện tại và hạng 30 ngày trước trong 1 query duy nhất,
+   giảm số round-trip đến DB so với cách tính riêng từng bước.
+
+3. **Multer v2 đã có sẵn:** Multer đã được cài trước đó cho admin bulk import.
+   Module avatar tái dùng, không cài thêm dependency.
+
+4. **File avatar lưu theo userId:** Tên file dạng `<userId>.<ext>` nên tự động
+   overwrite khi upload lại cùng định dạng. Nếu đổi từ JPG sang PNG (hoặc ngược lại),
+   `UsersService.uploadAvatar` sẽ xóa file cũ trước khi lưu file mới.
+
+5. **Xu hướng 30 ngày — phụ thuộc dữ liệu lịch sử:** Nếu user chưa có dữ liệu
+   trước 30 ngày (mới tham gia hoặc mới thi trong vòng 30 ngày), trend = `"new"`.
+   Điều này không phải lỗi — là hành vi thiết kế.
+
+6. **Sắp xếp tiebreak:** Khi 2 user có cùng ReputationScore, người nào có
+   `lastCompletedAt` muộn hơn (thi gần đây hơn) sẽ đứng hạng cao hơn.
+   Đây là tiebreak nhất quán giữa cả current_rank và old_rank.
+
+7. **`getMyRank` — 3 query riêng biệt:** Để đơn giản hóa code, `getMyRank` thực
+   hiện 3 query tuần tự (stats → current_rank → old_rank) thay vì 1 CTE phức tạp.
+   Chấp nhận được vì đây là endpoint cá nhân, không load nhiều data.
+
+---
+
+### Cách tự kiểm thử (manual test)
+
+**Chuẩn bị:** Server backend đang chạy, có session token hợp lệ.
+
+```bash
+# 1. Upload avatar
+curl -X POST http://localhost:4000/api/users/me/avatar \
+  -H "Authorization: Bearer <session-token>" \
+  -F "avatar=@/path/to/photo.jpg"
+# Kỳ vọng: 200 + UserMeDto có avatarUrl = "/uploads/avatars/<id>.jpg"
+
+# 2. Xem ảnh trực tiếp
+curl http://localhost:4000/uploads/avatars/<userId>.jpg -o /tmp/check.jpg
+# Kỳ vọng: file ảnh tải thành công
+
+# 3. Xóa avatar
+curl -X DELETE http://localhost:4000/api/users/me/avatar \
+  -H "Authorization: Bearer <session-token>"
+# Kỳ vọng: 200 + UserMeDto có avatarUrl = null
+
+# 4. Xóa khi chưa có avatar
+curl -X DELETE http://localhost:4000/api/users/me/avatar \
+  -H "Authorization: Bearer <session-token>"
+# Kỳ vọng: 400 + { error: "AVATAR_NOT_FOUND" }
+
+# 5. Upload file quá lớn (> 2MB)
+curl -X POST http://localhost:4000/api/users/me/avatar \
+  -H "Authorization: Bearer <session-token>" \
+  -F "avatar=@/path/to/large-file.jpg"
+# Kỳ vọng: 400 + { error: "AVATAR_FILE_TOO_LARGE" }
+
+# 6. Upload file sai định dạng (.gif)
+curl -X POST http://localhost:4000/api/users/me/avatar \
+  -H "Authorization: Bearer <session-token>" \
+  -F "avatar=@/path/to/animated.gif"
+# Kỳ vọng: 400 + { error: "AVATAR_INVALID_TYPE" }
+
+# 7. Xem bảng xếp hạng (tất cả môn, trang 1)
+curl http://localhost:4000/api/leaderboard \
+  -H "Authorization: Bearer <session-token>"
+# Kỳ vọng: 200 + { data: [...], total: N, page: 1, pageSize: 10 }
+
+# 8. Xem bảng xếp hạng — lọc theo môn Toán
+curl "http://localhost:4000/api/leaderboard?subject=TOAN&page=1" \
+  -H "Authorization: Bearer <session-token>"
+# Kỳ vọng: chỉ có user đã thi ExamSession môn TOAN
+
+# 9. Xem hạng bản thân
+curl http://localhost:4000/api/leaderboard/me \
+  -H "Authorization: Bearer <session-token>"
+# Kỳ vọng (chưa thi): { rank: null, examCount: 0, trend: null, ... }
+# Kỳ vọng (đã thi): { rank: N, reputationScore: X.XX, examCount: N, trend: "up"/"down"/... }
+```
+
+**Test script tự động:**
+```bash
+cd backend
+npx tsx src/scripts/smoke-test-leaderboard.ts
+# Kỳ vọng: toàn bộ PASS
+```
+
+---
+
+### Lưu ý / rủi ro / TODO tiếp theo
+
+- **File ảnh không được backup:** `backend/uploads/avatars/` không nên lưu vào
+  Git (đã có `.gitkeep` để tạo thư mục). Khi deploy production, cần cấu hình
+  persistent storage (volume mount hoặc object storage như S3/GCS).
+- **Không có CDN:** Ảnh được serve trực tiếp qua Express static — đủ dùng cho
+  môi trường dev/staging, nhưng production nên đưa lên CDN để giảm tải server.
+- **getMyRank dùng 3 query riêng biệt:** Có thể tối ưu thành 1 CTE nếu cần
+  tăng performance khi số user lớn.
+- **Chưa có phân quyền admin cho leaderboard:** Hiện tại mọi user đăng nhập đều
+  xem được BXH. Nếu cần ẩn BXH (ví dụ trong thời gian thi), cần thêm flag riêng.
+- TODO tiếp theo: Lưu avatar lên S3/object storage thay vì disk để hỗ trợ scale.

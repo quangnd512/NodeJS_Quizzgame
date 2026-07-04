@@ -422,6 +422,266 @@ count=7: round(3.5)=4, round(2.1)=2, 7-4-2=1  → tổng = 7 ✓
 
 ---
 
+## Leaderboard (Bảng Xếp Hạng) — Thuật ngữ kỹ thuật
+
+### Điểm Uy Tín (Reputation Score)
+**Định nghĩa**: Chỉ số xếp hạng tổng hợp, không chỉ dựa vào điểm trung bình mà còn phạt sự không ổn định và số lần thi ít.
+
+**Công thức**:
+```
+Điểm Uy Tín = (Trung Bình - 0.5 × Độ Dao Động) × (1 - 1/(n+1))
+```
+- **Trung Bình**: AVG(score) của các ExamSession COMPLETED
+- **Độ Dao Động**: STDDEV_POP(score) — bằng 0 nếu chỉ thi 1 lần
+- **n**: số lần thi thành công
+
+**Tại sao không dùng điểm trung bình thuần?**: Dễ bị gian lận — user thi 1 lần may mắn đạt 10/10 sẽ đứng đầu mãi. Điểm Uy Tín phạt cả sự không ổn định lẫn số lần thi ít:
+```
+Bạn A: 10, 10, 10, 10, 10 (5 lần)  → Uy Tín = (10 - 0) × (1-1/6)  = 8.33
+Bạn B: 8.5 điểm TB, ổn định (10 lần) → Uy Tín = (8.25) × (1-1/11) = 7.50
+```
+
+---
+
+### CTE (Common Table Expression) — Mệnh đề WITH
+**Định nghĩa**: Cách đặt tên cho một đoạn SELECT để dùng lại trong cùng query — giống tạo "bảng tạm" trong RAM, không lưu xuống đĩa.
+
+**Trong dự án này**: `leaderboard.service.ts` dùng 4 CTE nối tiếp nhau:
+```sql
+WITH current_scores AS (...)   -- Bước 1: tính Điểm Uy Tín mỗi user
+     current_ranks  AS (...)   -- Bước 2: xếp hạng từ kết quả Bước 1
+     old_scores     AS (...)   -- Bước 3: tính Điểm Uy Tín 30 ngày trước
+     old_ranks      AS (...)   -- Bước 4: xếp hạng 30 ngày trước
+SELECT ... FROM current_ranks JOIN old_ranks ...
+```
+
+**Tại sao không dùng subquery lồng nhau?**: CTE đọc như truyện — từng bước rõ ràng. Subquery lồng nhau rất khó đọc và debug.
+
+---
+
+### Window Function — ROW_NUMBER() OVER
+**Định nghĩa**: Hàm tính toán trên "cửa sổ" gồm nhiều row, thêm kết quả như một cột mới mà không thu gọn số row như `GROUP BY`.
+
+**Trong dự án này**: Dùng để xếp hạng toàn bộ user theo Điểm Uy Tín:
+```sql
+ROW_NUMBER() OVER (
+  ORDER BY reputation_score DESC,
+  last_completed_at DESC    -- tie-breaking: ai thi gần nhất lên trước
+)::int AS current_rank
+```
+
+**Ví dụ**:
+```
+Dữ liệu thô:           Sau ROW_NUMBER():
+  user_B: 9.2  →  rank 1
+  user_A: 8.5  →  rank 2
+  user_C: 7.1  →  rank 3
+```
+Khác với `ORDER BY` thông thường: Window Function **thêm cột mới** trong khi giữ nguyên toàn bộ các cột khác.
+
+---
+
+### Prisma.$queryRaw và Prisma.sql
+**Định nghĩa**: `$queryRaw` cho phép viết SQL thuần trong Prisma khi ORM không hỗ trợ cú pháp phức tạp. `Prisma.sql` là tagged template literal bảo vệ khỏi SQL injection.
+
+**Trong dự án này**: Dùng vì Prisma ORM không hỗ trợ Window Function và CTE nhiều tầng. `subjectClause()` dùng `Prisma.sql` để lọc theo môn học an toàn:
+```typescript
+// NGUY HIỂM (SQL injection):
+`AND "subjectId" = '${subject}'`
+
+// AN TOÀN — Prisma tách SQL và data thành 2 phần riêng biệt:
+Prisma.sql`AND "subjectId" = ${subject}`
+```
+PostgreSQL nhận tham số qua bind parameter, không bao giờ hiểu data như SQL.
+
+---
+
+### Trend (Xu hướng xếp hạng)
+**Định nghĩa**: So sánh hạng hiện tại với hạng tính từ dữ liệu trước 30 ngày, cho ra 4 trạng thái: `up` / `down` / `same` / `new`.
+
+**Trong dự án này**:
+```
+old_rank > current_rank → 'up'   (hạng số nhỏ hơn = tốt hơn)
+old_rank < current_rank → 'down'
+old_rank = current_rank → 'same'
+old_rank = null         → 'new'  (chưa có dữ liệu 30 ngày trước)
+```
+Hiển thị trên FE: `↑` (xanh) / `↓` (đỏ) / `→` (xám) / `—` (xám).
+
+---
+
+### Podium Reordering (Sắp xếp lại bục Top 3)
+**Định nghĩa**: Đảo thứ tự mảng Top 3 từ [1,2,3] thành [2,1,3] để render bục podium đúng quy ước "hạng 1 ở giữa cao nhất".
+
+**Trong dự án này** (`App.tsx`):
+```typescript
+const podiumOrder = [top3[1], top3[0], top3[2]];
+//                   Hạng 2   Hạng 1   Hạng 3
+//                   Trái     Giữa     Phải
+```
+Chiều cao bục theo index visual `[0,1,2]` = `['52px','80px','36px']` — hạng 2 thấp, hạng 1 cao nhất, hạng 3 thấp nhất.
+
+---
+
+### Sticky My Rank Bar (Thanh ghim "Hạng của tôi")
+**Định nghĩa**: Thanh cố định ở cuối màn hình hiển thị hạng của user hiện tại khi entry của họ chưa xuất hiện trong danh sách đã load.
+
+**Trong dự án này**: Hiện khi `myRank !== null && !myEntryLoaded`. Khi user scroll và load đến trang chứa entry của mình, `myEntryLoaded` chuyển thành `true` → thanh ghim tự ẩn để tránh hiển thị 2 lần.
+
+---
+
+### Promise.all (Gọi song song)
+**Định nghĩa**: Chạy nhiều Promise đồng thời, chờ tất cả hoàn thành — tổng thời gian bằng Promise chậm nhất, không cộng dồn.
+
+**Trong dự án này** (`LeaderboardPage`):
+```typescript
+const [lb, me] = await Promise.all([
+  getLeaderboard(sessionToken, p, subj),
+  p === 1 ? getMyLeaderboardRank(sessionToken, subj) : Promise.resolve(null),
+]);
+// getLeaderboard: ~200ms  ─┐ chạy song song
+// getMyRank:      ~150ms  ─┘ tổng = 200ms (thay vì 350ms)
+```
+`getMyRank` chỉ gọi ở trang 1 — hạng của mình không đổi khi load thêm trang.
+
+---
+
+## Kiến trúc tổng thể & Pattern toàn dự án — Thuật ngữ kỹ thuật
+
+### Two-Layer Auth (Xác thực 2 lớp: Firebase + JWT nội bộ)
+**Định nghĩa**: Dùng Firebase ID Token chỉ một lần khi đăng nhập để xác minh danh tính, sau đó phát JWT nội bộ cho mọi request tiếp theo — không gọi lại Firebase mỗi request.
+
+**Trong dự án này**:
+- `POST /api/auth/login`: nhận Firebase token → xác thực qua Firebase SDK → phát JWT nội bộ (7 ngày)
+- Mọi API khác: nhận JWT nội bộ → xác thực bằng toán học (`jwt.verify`) → tra cứu DB bằng `userId` thẳng
+
+**Tại sao?**: Firebase xác thực qua mạng (~100–300ms/request, tốn tiền API). JWT nội bộ xác thực offline bằng chữ ký HMAC (< 1ms). Xem chi tiết: `docs/adr/004-two-layer-auth.md`.
+
+---
+
+### Selective Sync (Đồng bộ có chọn lọc)
+**Định nghĩa**: Khi user đăng nhập lại, chỉ cập nhật một số field từ Firebase vào DB — không ghi đè toàn bộ để bảo vệ dữ liệu user tự chỉnh sửa.
+
+**Trong dự án này** (`auth.service.ts`):
+```
+Firebase mỗi lần đăng nhập:
+  email       → CẬP NHẬT nếu khác (Firebase là nguồn sự thật cho email)
+  lastLoginAt → LUÔN cập nhật = thời điểm hiện tại
+  displayName → KHÔNG cập nhật (user có thể đổi tên trong app)
+  phone       → KHÔNG cập nhật (user tự quản lý)
+```
+Nếu ghi đè `displayName` từ Google mỗi lần đăng nhập → user mất tên tùy chỉnh trong QuizzGame.
+
+---
+
+### Graceful Degradation (Suy giảm từ tốt)
+**Định nghĩa**: Khi một thành phần phụ bị lỗi, hệ thống vẫn tiếp tục hoạt động với tính năng chính — chỉ mất tính năng phụ, không crash toàn bộ.
+
+**Trong dự án này**: Redis dùng cho rate limiting. Nếu Redis mất kết nối:
+```typescript
+} catch (err) {
+  if (err instanceof PracticeRateLimitError) throw err; // lỗi nghiệp vụ → throw
+  console.warn('Redis lỗi, bỏ qua rate limit');         // lỗi Redis → bỏ qua
+}
+```
+User vẫn dùng được app bình thường — chỉ không bị rate limit, chấp nhận được.
+
+Cũng áp dụng cho `verifyFirebaseToken`: nếu lookup User DB lỗi → log + tiếp tục, không từ chối request có Firebase token hợp lệ.
+
+---
+
+### Lazy Initialization (Khởi tạo lười biếng)
+**Định nghĩa**: Không tạo bản ghi ngay khi user đăng ký mà tạo lần đầu tiên khi thực sự cần — tiết kiệm storage cho user "zombie" chưa bao giờ dùng tính năng.
+
+**Trong dự án này**: Bảng `user_points` không được tạo khi user đăng ký. Lần đầu cộng/trừ điểm, `ensureUserPointsRecord()` dùng `upsert`:
+```typescript
+await tx.userPoints.upsert({
+  where: { userId },
+  update: {},                               // đã có → chỉ đọc, không sửa
+  create: { userId, currentPoints: 0, version: 0 }, // chưa có → tạo mới
+});
+```
+`upsert` là atomic ở mức DB — không có race condition như `findOrCreate` thủ công.
+
+---
+
+### Consistent Lock Ordering (Thứ tự khóa nhất quán — chống Deadlock)
+**Định nghĩa**: Khi cần khóa nhiều bản ghi trong cùng transaction, luôn khóa theo cùng một thứ tự cố định — không phụ thuộc vào chiều của giao dịch.
+
+**Trong dự án này** (`points.service.ts` — `transferPoints`):
+```typescript
+// Dù chuyển A→B hay B→A, luôn khóa userId nhỏ hơn về alphabet trước:
+const [firstId, secondId] = [fromUserId, toUserId].sort();
+```
+```
+Không sort: A→B khóa A rồi B  |  B→A khóa B rồi A  → deadlock!
+Có sort:    A→B khóa A rồi B  |  B→A khóa A rồi B  → không bao giờ deadlock ✓
+```
+Đây là giải pháp kinh điển cho bài toán "Triết gia ăn tối" (Dining Philosophers) trong CS. Xem chi tiết: `docs/adr/006-deadlock-prevention.md`.
+
+---
+
+### Thundering Herd + Jitter (Bầy thú sấm sét + Nhiễu ngẫu nhiên)
+**Định nghĩa**: Thundering herd là hiện tượng nhiều request thất bại cùng retry vào đúng cùng lúc — gây xung đột tiếp. Jitter là thêm độ trễ ngẫu nhiên để trải chúng ra theo thời gian.
+
+**Trong dự án này** (`points.service.ts:82`):
+```typescript
+function delayWithJitter(): Promise<void> {
+  const ms = 10 + Math.random() * 40; // 10–50ms ngẫu nhiên
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+```
+```
+Không jitter: 100 request thất bại → cùng retry sau 30ms → 100 request xung đột lại
+Có jitter:    100 request thất bại → retry sau 10ms, 23ms, 47ms... → trải đều → ít xung đột
+```
+
+---
+
+### Object.setPrototypeOf trong Custom Error
+**Định nghĩa**: Dòng bắt buộc khi extend `Error` trong TypeScript để đảm bảo `instanceof` hoạt động đúng.
+
+**Vấn đề**: TypeScript compile `class extends Error` sang ES5, trong đó `Error.call(this)` trả về object mới thay vì `this` → `instanceof MyError` trả về `false` dù đúng kiểu.
+
+**Trong dự án này** (`points.service.ts`, `auth.errors.ts`...):
+```typescript
+class OptimisticLockRetrySignal extends Error {
+  constructor() {
+    super('OPTIMISTIC_LOCK_RETRY_SIGNAL');
+    this.name = 'OptimisticLockRetrySignal';
+    Object.setPrototypeOf(this, OptimisticLockRetrySignal.prototype); // ← bắt buộc
+  }
+}
+// Nếu thiếu dòng trên: err instanceof OptimisticLockRetrySignal === false ❌
+```
+
+---
+
+### TypeScript `satisfies` keyword
+**Định nghĩa**: Kiểm tra object có thỏa mãn một kiểu không, nhưng giữ nguyên kiểu cụ thể (narrow type) của từng field — khác với type annotation (`:`) làm mất thông tin kiểu cụ thể.
+
+**Trong dự án này** (`points.service.ts:249`):
+```typescript
+return {
+  fromUserId, toUserId, amount,
+  fromBalanceAfter: fromNewBalance,
+  toBalanceAfter:   toNewBalance,
+} satisfies TransferResult;
+```
+
+**Khác nhau với `: TransferResult`**:
+```typescript
+// Dùng : TransferResult → TypeScript ép về TransferResult, mất narrow type
+const r1: TransferResult = { ... };
+r1.fromUserId; // type: string (mất thông tin cụ thể)
+
+// Dùng satisfies → kiểm tra + giữ nguyên narrow type
+const r2 = { ... } satisfies TransferResult;
+r2.fromUserId; // type cụ thể vẫn còn
+```
+
+---
+
 ## Bug đã phát hiện và fix trong quá trình review
 
 ### Bug: ID không nhất quán giữa lưu điểm và đọc điểm

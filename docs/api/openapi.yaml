@@ -1,17 +1,17 @@
 openapi: 3.0.3
 info:
-  title: QuizzGame API — Practice, Thi thử, Admin & Ngân hàng câu hỏi
-  version: "1.3.0"
+  title: QuizzGame API — Practice, Thi thử, Admin, Ngân hàng câu hỏi & Leaderboard
+  version: "1.4.0"
   description: >-
     Contract cho module Ôn tập (Practice), module Thi thử (Exam/Mock Exam),
     các endpoint Admin liên quan (quản lý câu hỏi, xử lý báo cáo câu hỏi,
-    quản lý đề thi thử) và Ngân hàng câu hỏi (Question Bank).
+    quản lý đề thi thử), Ngân hàng câu hỏi (Question Bank),
+    Bảng xếp hạng (Leaderboard) và Ảnh đại diện (Avatar).
     Khớp với `docs/FEATURE_LOG.md` Section 4 (Practice Module), Section 5
-    (Admin Dashboard – Quản lý báo cáo câu hỏi), Section 6 (Exam Module –
-    Thi thử) và Section 7 (Ngân hàng câu hỏi).
+    (Admin Dashboard), Section 6 (Exam Module), Section 7 (Ngân hàng câu hỏi),
+    Section 8 (Leaderboard & Avatar).
 
-    Các endpoint khác của hệ thống (Auth, Onboarding, Points, Leaderboard...)
-    chưa được mô tả trong file này.
+    Các endpoint Auth, Onboarding, Points chưa được mô tả trong file này.
 
 servers:
   - url: http://localhost:4000
@@ -26,6 +26,10 @@ tags:
     description: Endpoint quản trị (X-Admin-Secret)
   - name: QuestionBank
     description: Ngân hàng câu hỏi — CRUD kho câu hỏi dùng chung (X-Admin-Secret)
+  - name: Leaderboard
+    description: Bảng xếp hạng học sinh theo Điểm Uy Tín (session token)
+  - name: Users
+    description: Quản lý profile và ảnh đại diện (session token)
 
 security: []
 
@@ -1998,6 +2002,54 @@ components:
             Số câu thiếu so với `count` yêu cầu (= count - added).
             > 0 khi kho không đủ câu cho môn/độ khó tương ứng.
 
+    UserMeDto:
+      type: object
+      description: Thông tin profile đầy đủ của user đang đăng nhập (kèm điểm tích lũy)
+      required: [id, firebaseUid, displayName, email, phone, school, province, subjects, avatarUrl, createdAt, lastLoginAt, points]
+      properties:
+        id:
+          type: string
+          format: uuid
+        firebaseUid:
+          type: string
+        displayName:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        school:
+          type: string
+          nullable: true
+        province:
+          type: string
+          nullable: true
+        subjects:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: { type: string }
+              name: { type: string }
+        avatarUrl:
+          type: string
+          nullable: true
+          description: URL tương đối đến file ảnh đại diện, ví dụ /uploads/avatars/<userId>.jpg. Null nếu chưa có ảnh.
+        createdAt:
+          type: string
+          format: date-time
+        lastLoginAt:
+          type: string
+          format: date-time
+          nullable: true
+        points:
+          type: integer
+          description: Điểm tích lũy hiện tại
+
 # ─────────────────────── Question Bank paths ─────────────────────────
   /api/admin/question-bank:
     get:
@@ -2260,3 +2312,152 @@ components:
           description: Thiếu hoặc sai X-Admin-Secret
         '404':
           description: examPaperId không tồn tại
+
+  # ─── LEADERBOARD ─────────────────────────────────────────────────────────────
+
+  /api/leaderboard:
+    get:
+      summary: Lấy danh sách xếp hạng học sinh theo Điểm Uy Tín
+      tags: [Leaderboard]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+          description: Số trang (10 người/trang)
+        - name: subject
+          in: query
+          schema: { type: string }
+          description: Lọc theo mã môn học (ví dụ TOAN, VAN). Để trống = tất cả môn.
+      responses:
+        '200':
+          description: Danh sách xếp hạng
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, total, page, pageSize]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [rank, userId, displayName, avatarUrl, reputationScore, avgScore, examCount, trend]
+                      properties:
+                        rank:
+                          type: integer
+                        userId:
+                          type: string
+                          format: uuid
+                        displayName:
+                          type: string
+                          nullable: true
+                        avatarUrl:
+                          type: string
+                          nullable: true
+                          description: URL tương đối (/uploads/avatars/<id>.jpg) hoặc null
+                        reputationScore:
+                          type: number
+                          description: Điểm Uy Tín (làm tròn 2 chữ số thập phân)
+                        avgScore:
+                          type: number
+                        examCount:
+                          type: integer
+                        trend:
+                          type: string
+                          enum: [up, down, same, new]
+                  total:
+                    type: integer
+                  page:
+                    type: integer
+                  pageSize:
+                    type: integer
+                    example: 20
+        '401':
+          description: Thiếu hoặc sai session token
+
+  /api/leaderboard/me:
+    get:
+      summary: Lấy hạng và chỉ số Điểm Uy Tín của user đang đăng nhập
+      tags: [Leaderboard]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: subject
+          in: query
+          schema: { type: string }
+          description: Lọc theo mã môn (tùy chọn)
+      responses:
+        '200':
+          description: Hạng của user hiện tại (rank = null nếu chưa thi lần nào)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rank, reputationScore, avgScore, examCount, trend]
+                properties:
+                  rank:
+                    type: integer
+                    nullable: true
+                  reputationScore:
+                    type: number
+                    nullable: true
+                  avgScore:
+                    type: number
+                    nullable: true
+                  examCount:
+                    type: integer
+                  trend:
+                    type: string
+                    nullable: true
+                    enum: [up, down, same, new]
+        '401':
+          description: Thiếu hoặc sai session token
+
+  # ─── AVATAR ──────────────────────────────────────────────────────────────────
+
+  /api/users/me/avatar:
+    post:
+      summary: Upload ảnh đại diện (multipart/form-data, field "avatar")
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [avatar]
+              properties:
+                avatar:
+                  type: string
+                  format: binary
+                  description: File ảnh JPG hoặc PNG, tối đa 2MB
+      responses:
+        '200':
+          description: Profile đầy đủ sau khi upload (avatarUrl đã cập nhật)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserMeDto' }
+        '400':
+          description: |
+            Lỗi file — AVATAR_NO_FILE / AVATAR_INVALID_TYPE / AVATAR_FILE_TOO_LARGE
+        '401':
+          description: Thiếu hoặc sai session token
+    delete:
+      summary: Xóa ảnh đại diện (set avatarUrl = null, xóa file vật lý)
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Profile đầy đủ sau khi xóa (avatarUrl = null)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserMeDto' }
+        '400':
+          description: AVATAR_NOT_FOUND — User chưa có ảnh đại diện
+        '401':
+          description: Thiếu hoặc sai session token
