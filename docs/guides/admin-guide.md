@@ -1099,3 +1099,41 @@ UPDATE users SET "avatarUrl" = NULL WHERE id = '<userId>';
 
 > ⚠️ Không xóa chỉ file mà không cập nhật DB (hoặc ngược lại) — sẽ gây lỗi
 > "ảnh bị thiếu" trên UI hoặc tốn dung lượng rác.
+
+---
+
+## Phần 9 — Progress Dashboard (Tiến độ học tập)
+
+### Tổng quan cho Admin
+
+Module Progress **không có giao diện quản lý riêng cho admin** — đây là tính năng
+hoàn toàn phía người dùng. Tuy nhiên, admin cần biết:
+
+- **Nguồn dữ liệu:** Progress đọc từ `practice_sessions`, `exam_sessions`,
+  `user_points`, và `exam_papers`. Không có bảng riêng.
+- **Ảnh hưởng khi xóa ExamPaper:** Nếu admin xóa một đề thi đang có trong lịch sử
+  thi của user, mục lịch sử đó vẫn hiển thị nhưng tên đề sẽ là
+  `"(Đề không còn tồn tại)"` — không gây lỗi hệ thống.
+- **Dữ liệu không cache:** Mỗi lần user mở màn hình Tiến độ, backend chạy 9 query
+  đến DB. Nếu cần debug hiệu năng, xem log query tại đây.
+
+### Truy vấn debug thủ công
+
+```sql
+-- Kiểm tra streak của 1 user
+SELECT "completedAt"::date AS day, COUNT(*) AS sessions_that_day
+FROM practice_sessions
+WHERE "userId" = '<userId>'
+  AND "completedAt" IS NOT NULL
+GROUP BY day
+ORDER BY day DESC
+LIMIT 30;
+
+-- Xem toàn bộ lịch sử thi thử 1 user
+SELECT es.id, ep.title, ep.subject, es.score, es."pointsAwarded", es."completedAt"
+FROM exam_sessions es
+LEFT JOIN exam_papers ep ON ep.id = es."examPaperId"
+WHERE es."userId" = '<userId>'
+  AND es.status = 'COMPLETED'
+ORDER BY es."completedAt" DESC;
+```

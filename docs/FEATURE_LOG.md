@@ -3931,3 +3931,313 @@ npx tsx src/scripts/smoke-test-leaderboard.ts
 - **Chưa có phân quyền admin cho leaderboard:** Hiện tại mọi user đăng nhập đều
   xem được BXH. Nếu cần ẩn BXH (ví dụ trong thời gian thi), cần thêm flag riêng.
 - TODO tiếp theo: Lưu avatar lên S3/object storage thay vì disk để hỗ trợ scale.
+
+---
+
+## 9. Progress Dashboard – Tiến độ học tập
+
+**Trạng thái:** ✅ Hoàn thành
+**Ngày hoàn thành:** 2026-07-04
+**Branch / commit liên quan:** `feature/progress-dashboard`
+
+---
+
+### Tổng quan
+
+Module Progress Dashboard cung cấp cho học sinh cái nhìn toàn diện về quá trình học tập:
+tổng số phiên ôn tập, số lần thi thử, điểm tích lũy, chuỗi ngày học liên tiếp (streak),
+so sánh hoạt động tháng này vs tháng trước, thống kê độ chính xác theo môn,
+biểu đồ xu hướng điểm số (30 phiên gần nhất), và lịch sử thi thử có phân trang.
+
+**Triết lý thiết kế:**
+- **Không bao giờ throw lỗi vì thiếu dữ liệu** — user mới chưa có bất kỳ phiên nào sẽ thấy toàn bộ số `0` / mảng rỗng.
+- **Tất cả query chạy song song** (`Promise.all`) trong `getSummary` — tối thiểu round-trip DB.
+- **Reuse logic** — thống kê theo môn gọi thẳng `practiceService.getStats()` thay vì viết lại.
+
+---
+
+### Data Model
+
+Module Progress không tạo bảng DB mới. Nó đọc dữ liệu từ các bảng đã có:
+
+| Bảng | Dữ liệu đọc |
+|------|-------------|
+| `practice_sessions` | Số phiên hoàn thành, ngày hoàn thành (tính streak), điểm (biểu đồ xu hướng) |
+| `exam_sessions` | Số phiên `COMPLETED`, điểm thi trung bình theo tháng |
+| `user_points` | Số điểm tích lũy hiện tại |
+| `exam_papers` | Tên đề và môn học (join vào lịch sử thi) |
+
+---
+
+### API Reference
+
+#### GET /api/progress/summary
+
+**Auth:** `verifyAppToken` (cần session token)
+
+**Mô tả:** Trả về toàn bộ tóm tắt tiến độ học tập của user đang đăng nhập.
+
+**Request:** Không có body, không có query param.
+
+**Luồng xử lý:**
+```
+verifyAppToken → req.currentUser.id
+    │
+    └─ progressService.getSummary(userId)
+         │
+         ├─ Promise.all([9 query song song]):
+         │   ├─ practiceSession: tất cả completedAt (tính streak + tổng)
+         │   ├─ examSession.count (COMPLETED)
+         │   ├─ userPoints.findUnique (điểm hiện tại)
+         │   ├─ practiceSession.count (tháng này)
+         │   ├─ practiceSession.count (tháng trước)
+         │   ├─ examSession.findMany scores (tháng này)
+         │   ├─ examSession.findMany scores (tháng trước)
+         │   ├─ practiceSession.findMany (30 phiên gần nhất — biểu đồ)
+         │   └─ practiceService.getStats(userId) (thống kê theo môn)
+         │
+         ├─ computeStreaks(completedDates) → { currentStreak, bestStreak }
+         ├─ calcExamAvg(scores) → number | null
+         └─ Ghép thành ProgressSummary
+```
+
+**Response thành công (200):**
+```json
+{
+  "overview": {
+    "totalPracticeSessions": 15,
+    "totalExamSessions": 3,
+    "currentPoints": 500,
+    "currentStreak": 3
+  },
+  "bestStreak": 7,
+  "monthComparison": {
+    "thisMonth": {
+      "practiceSessions": 8,
+      "examAvgScore": 7.5
+    },
+    "lastMonth": {
+      "practiceSessions": 7,
+      "examAvgScore": null
+    }
+  },
+  "practiceStatsBySubject": [
+    {
+      "subject": "TOAN",
+      "totalSessions": 10,
+      "avgScore": 10.2,
+      "bestScore": 13,
+      "accuracyByDifficulty": { "1": 0.96, "2": 0.74, "3": 0.52 }
+    }
+  ],
+  "scoreTrend": [
+    { "date": "2026-07-01T10:00:00.000Z", "score": 10, "subject": "TOAN" },
+    { "date": "2026-07-02T11:00:00.000Z", "score": 12, "subject": "TOAN" },
+    { "date": "2026-07-04T10:00:00.000Z", "score": 8, "subject": "TOAN" }
+  ]
+}
+```
+
+> `examAvgScore = null` nếu tháng đó chưa có lần thi nào hoàn thành.
+> `scoreTrend` được sắp xếp từ cũ đến mới (phù hợp để vẽ biểu đồ trái → phải).
+
+**Lỗi có thể xảy ra:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 401 | `MISSING_AUTH_TOKEN` | Không có Authorization header |
+| 401 | `INVALID_SESSION_TOKEN` | Token hết hạn hoặc sai |
+| 401 | `SESSION_USER_NOT_FOUND` | Tài khoản đã bị xoá |
+
+---
+
+#### GET /api/progress/exam-history?limit=10&offset=0
+
+**Auth:** `verifyAppToken`
+
+**Mô tả:** Lịch sử các lần thi thử đã hoàn thành, có phân trang.
+
+**Query params:**
+
+| Param | Kiểu | Mặc định | Mô tả |
+|-------|------|---------|-------|
+| `limit` | number | 10 | Số bản ghi mỗi trang (clamp: 1–50) |
+| `offset` | number | 0 | Vị trí bắt đầu |
+
+**Luồng xử lý:**
+```
+verifyAppToken → req.currentUser.id
+    │
+    └─ progressService.getExamHistory(userId, limit, offset)
+         │
+         ├─ safeLimit  = clamp(limit, 1, 50)
+         ├─ safeOffset = max(0, offset)
+         ├─ Promise.all([
+         │     examSession.findMany (COMPLETED, limit/offset),
+         │     examSession.count    (COMPLETED)
+         │   ])
+         ├─ Lấy ExamPaper info theo examPaperId (batch query)
+         └─ Map ExamSession + ExamPaper → ExamHistoryItem[]
+              (nếu ExamPaper đã bị xóa: title = '(Đề không còn tồn tại)', subject = '')
+```
+
+**Response thành công (200):**
+```json
+{
+  "items": [
+    {
+      "id": "session-uuid",
+      "examPaperId": "paper-uuid",
+      "title": "Đề thi thử THPT QG 2024 - Mã đề 101",
+      "subject": "TOAN",
+      "score": 8.5,
+      "pointsAwarded": 80,
+      "completedAt": "2026-07-04T14:30:00.000Z"
+    }
+  ],
+  "total": 3,
+  "limit": 10,
+  "offset": 0
+}
+```
+
+**Lỗi có thể xảy ra:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 401 | `MISSING_AUTH_TOKEN` | Không có Authorization header |
+| 401 | `INVALID_SESSION_TOKEN` | Token hết hạn hoặc sai |
+| 401 | `SESSION_USER_NOT_FOUND` | Tài khoản đã bị xoá |
+
+---
+
+### Luồng chạy (Flow)
+
+```
+[FE] Người dùng nhấn "📊 Tiến độ của tôi" trên ProfilePage
+        │
+        ▼
+[FE] ProgressPage mount
+        │
+        ├─ useEffect 1: GET /api/progress/summary
+        │       → Hiện spinner → nhận data → render 4 ô tổng quan, so sánh tháng,
+        │         bảng thống kê theo môn, sparkline xu hướng điểm
+        │
+        └─ useEffect 2: GET /api/progress/exam-history?limit=10&offset=0
+                → Hiện spinner trong phần lịch sử → nhận data
+                → render bảng lịch sử thi thử + phân trang (nếu total > 10)
+
+[FE] User nhấn "Sau →" / "← Trước" trong phân trang lịch sử thi
+        → setExamPage(p ± 1) → useEffect 2 trigger lại với offset mới
+
+[FE] Biểu đồ xu hướng điểm (ScoreSparkline):
+        - < 2 điểm dữ liệu → hiện "Chưa đủ dữ liệu"
+        - ≥ 2 điểm → render SVG sparkline (polyline + fill gradient + dots)
+```
+
+---
+
+### Thuật toán Streak
+
+Hàm `computeStreaks(completedAtDates)` trong `progress.service.ts`:
+
+```
+1. Lấy danh sách ngày ĐỘC NHẤT (UTC date "yyyy-mm-dd") từ tất cả completedAt
+2. Sắp xếp GIẢM DẦN: ['2026-07-04', '2026-07-03', '2026-07-01', ...]
+3. Tính currentStreak:
+   - Chỉ đếm nếu ngày đầu tiên là HÔM NAY hoặc HÔM QUA
+     (cho phép user nghỉ 1 ngày mà không mất streak)
+   - Đếm liên tiếp ngược về quá khứ (diff = 1 ngày → tiếp tục)
+4. Tính bestStreak:
+   - Quét toàn bộ lịch sử ngày
+   - Chuỗi dài nhất liên tiếp
+```
+
+Ví dụ: ngày ôn `[04, 03, 02]` → `currentStreak = 3`, `bestStreak = 3`
+Ví dụ: ngày ôn `[04, 02, 01]` → `currentStreak = 1`, `bestStreak = 2`
+
+---
+
+### Cấu trúc file
+
+```
+backend/
+└── src/
+    ├── services/
+    │   └── progress/
+    │       ├── progress.types.ts    ProgressOverview, MonthStats, MonthComparison,
+    │       │                        ScoreTrendPoint, ProgressSummary,
+    │       │                        ExamHistoryItem, PaginatedExamHistory
+    │       └── progress.service.ts  progressService:
+    │                                ├─ getSummary(userId)   → ProgressSummary
+    │                                └─ getExamHistory(userId, limit, offset)
+    │                                                        → PaginatedExamHistory
+    │
+    ├── routes/
+    │   └── progress.route.ts        GET /api/progress/summary
+    │                                GET /api/progress/exam-history
+    │
+    ├── scripts/
+    │   └── smoke-test-progress.ts   4 bài test: getSummary có data, getSummary rỗng,
+    │                                getExamHistory phân trang, streak liên tiếp
+    │
+    └── app.ts                       Thêm progressRouter → /api/progress
+
+frontend/
+└── src/
+    ├── lib/api.ts    Thêm interfaces ProgressSummary, ExamHistoryItem, PaginatedExamHistory;
+    │                 hàm getProgressSummary(), getExamHistory()
+    └── App.tsx       Screen type thêm 'progress'; ProfilePage: nút "📊 Tiến độ của tôi";
+                      ProgressPage (mới): 4 ô tổng quan, so sánh tháng, bảng theo môn,
+                      sparkline xu hướng, lịch sử thi phân trang; ScoreSparkline component
+```
+
+---
+
+### Cách tự kiểm thử (manual test)
+
+**1. Smoke test tự động (không cần server chạy):**
+```bash
+cd backend
+npx tsx src/scripts/smoke-test-progress.ts
+# Kỳ vọng: 4 test PASS — getSummary có data, getSummary rỗng,
+#           getExamHistory phân trang, streak liên tiếp
+```
+
+**2. Kiểm tra qua curl (cần session token hợp lệ):**
+```bash
+# Lấy summary tiến độ
+curl http://localhost:4000/api/progress/summary \
+  -H "Authorization: Bearer <session-token>"
+# Kỳ vọng: 200 + { overview, bestStreak, monthComparison, practiceStatsBySubject, scoreTrend }
+
+# Lấy lịch sử thi thử
+curl "http://localhost:4000/api/progress/exam-history?limit=10&offset=0" \
+  -H "Authorization: Bearer <session-token>"
+# Kỳ vọng: 200 + { items, total, limit, offset }
+
+# Không có token → 401
+curl http://localhost:4000/api/progress/summary
+# Kỳ vọng: { error: "MISSING_AUTH_TOKEN" }
+```
+
+**3. Kiểm tra giao diện:**
+- Đăng nhập, từ màn hình Profile → nhấn "📊 Tiến độ của tôi"
+- Kiểm tra: 4 ô số tổng quan hiển thị đúng, streak có 🔥
+- Kiểm tra: user chưa ôn lần nào → mọi số đều là 0, biểu đồ hiện "Chưa đủ dữ liệu"
+- Kiểm tra: bảng lịch sử thi phân trang đúng khi có > 10 lần thi
+
+---
+
+### Lưu ý / rủi ro / TODO tiếp theo
+
+- **Streak tính theo UTC** — user ở múi giờ UTC+7 làm bài lúc 11:00 PM local
+  (tức 16:00 UTC ngày hôm trước) có thể bị coi là "hôm qua". Ảnh hưởng nhỏ,
+  chấp nhận được ở giai đoạn hiện tại.
+- **Không có cache** — `getSummary` chạy 9 query mỗi lần load. Với quy mô hiện tại
+  (học sinh THPT, vài trăm user) hoàn toàn ổn. Khi mở rộng, cân nhắc cache Redis
+  với TTL 5 phút.
+- **scoreTrend chỉ từ Practice** — xu hướng điểm hiện chỉ lấy từ `practice_sessions`,
+  không bao gồm điểm thi thử. Có thể bổ sung sau.
+- TODO: Thêm filter theo môn cho `scoreTrend` và `practiceStatsBySubject`.
+- TODO: Export báo cáo tiến độ ra PDF/CSV.

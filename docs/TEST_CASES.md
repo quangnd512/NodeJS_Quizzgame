@@ -454,3 +454,40 @@
 | 20 | Xóa avatar khi chưa có ảnh | `DELETE /api/users/me/avatar` (avatarUrl=null) | 404 | `AVATAR_NOT_FOUND` |
 | 21 | GET /api/leaderboard không có token | Không có Authorization header | 401 | `MISSING_AUTH_TOKEN` |
 | 22 | GET /api/leaderboard/me không có token | Không có Authorization header | 401 | `MISSING_AUTH_TOKEN` |
+
+---
+
+## Test Cases: Progress — Tiến độ học tập
+
+### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | getSummary user có dữ liệu | `GET /api/progress/summary` | `200`, đủ 5 trường: `overview`, `bestStreak`, `monthComparison`, `practiceStatsBySubject`, `scoreTrend` |
+| 2 | totalPracticeSessions đúng | User có 3 phiên hoàn thành | `overview.totalPracticeSessions = 3` |
+| 3 | totalExamSessions đúng | User có 2 lần thi COMPLETED | `overview.totalExamSessions = 2` |
+| 4 | currentPoints đúng | UserPoints.currentPoints = 500 | `overview.currentPoints = 500` |
+| 5 | currentStreak 3 ngày liên tiếp | 3 phiên ôn hôm nay + hôm qua + 2 ngày trước | `currentStreak >= 3` |
+| 6 | bestStreak >= currentStreak | Bất kỳ dữ liệu nào | `bestStreak >= currentStreak` |
+| 7 | scoreTrend có dữ liệu | User có phiên ôn hoàn thành | `scoreTrend.length >= 1`, mỗi phần tử có `score` (số) và `date` (ISO string) |
+| 8 | getExamHistory phân trang | `GET /api/progress/exam-history?limit=10&offset=0` | `200`, `{ items, total, limit, offset }` |
+| 9 | examHistory trả đúng số phiên | 2 phiên COMPLETED | `total = 2`, `items.length = 2` |
+| 10 | examHistory có tên đề thi | ExamPaper tồn tại | `item.title` không phải `'(Đề không còn tồn tại)'` |
+
+### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 11 | getSummary user chưa có dữ liệu | User mới, chưa ôn | `overview = {0,0,0,0}`, `bestStreak = 0`, `scoreTrend = []`, `practiceStatsBySubject = []` |
+| 12 | examAvgScore null khi chưa thi | User chưa có ExamSession | `monthComparison.thisMonth.examAvgScore = null` |
+| 13 | getExamHistory offset vượt quá tổng | `offset=999` | `items = []`, `total` vẫn trả đúng |
+| 14 | limit bị clamp xuống 50 | `limit=200` | `limit = 50` trong response |
+| 15 | limit bị clamp lên 1 | `limit=0` | `limit = 1` trong response |
+| 16 | examHistory đề thi đã bị xóa | ExamPaper không tồn tại | `title = '(Đề không còn tồn tại)'`, `subject = ''` |
+| 17 | streak không đứt ngày | 3 ngày liên tiếp (hôm nay, hôm qua, 2 ngày trước) | `currentStreak = 3` |
+| 18 | streak = 0 khi chỉ có phiên cũ | Phiên cuối cách hơn 1 ngày | `currentStreak = 0` |
+
+### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 19 | GET /api/progress/summary không có token | Không có Authorization header | 401 | `MISSING_AUTH_TOKEN` |
+| 20 | GET /api/progress/exam-history không có token | Không có Authorization header | 401 | `MISSING_AUTH_TOKEN` |
+| 21 | Token không hợp lệ | `Authorization: Bearer invalid` | 401 | `INVALID_SESSION_TOKEN` |

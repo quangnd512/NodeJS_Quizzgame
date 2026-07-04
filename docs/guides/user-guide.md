@@ -15,6 +15,7 @@
 6. [Chế độ Thi thử (Mock Exam)](#6-chế-độ-thi-thử-mock-exam)
 7. [Ảnh đại diện (Avatar)](#7-ảnh-đại-diện-avatar)
 8. [Bảng xếp hạng (Leaderboard)](#8-bảng-xếp-hạng-leaderboard)
+9. [Tiến độ học tập (Progress Dashboard)](#9-tiến-độ-học-tập-progress-dashboard)
 
 ---
 
@@ -1011,3 +1012,72 @@ cache trì hoãn. Kết quả thi thử ảnh hưởng đến hạng ngay lập 
 A: Khi chọn lọc theo môn (ví dụ "Toán"), bảng xếp hạng chỉ tính điểm từ các
 phiên thi thử môn Toán. Một học sinh có thể hạng khác nhau ở từng môn tùy vào
 kết quả thi môn đó.
+
+---
+
+## 9. Tiến độ học tập (Progress Dashboard)
+
+### Tiến độ là gì?
+
+Màn hình **Tiến độ** tổng hợp toàn bộ quá trình học tập của bạn vào một nơi:
+- Số phiên ôn tập và số lần thi thử đã thực hiện
+- Điểm tích lũy hiện tại
+- Chuỗi ngày học liên tiếp (streak) 🔥
+- So sánh hoạt động tháng này với tháng trước
+- Thống kê độ chính xác theo từng môn học
+- Biểu đồ xu hướng điểm số (30 phiên ôn gần nhất)
+- Lịch sử các lần thi thử đã hoàn thành
+
+### Cách mở màn hình Tiến độ
+
+1. Đăng nhập vào QuizzGame
+2. Trên màn hình Trang chủ, nhấn nút **"📊 Tiến độ của tôi"**
+3. Màn hình sẽ tải dữ liệu và hiển thị toàn bộ thống kê
+
+### Chuỗi ngày học (Streak) là gì?
+
+**Streak** đếm số ngày **liên tiếp** bạn hoàn thành ít nhất 1 phiên ôn tập.
+
+- **Streak hiện tại**: chuỗi đang liên tục tính đến hôm nay hoặc hôm qua
+- **Streak tốt nhất**: kỷ lục chuỗi dài nhất từ trước đến nay
+
+> **Lưu ý:** Nếu hôm nay bạn chưa ôn nhưng hôm qua có ôn, streak chưa bị đứt.
+> Streak chỉ về 0 khi cách ngày ôn gần nhất **hơn 2 ngày**.
+
+### Biểu đồ xu hướng điểm
+
+Biểu đồ hiển thị điểm số của **30 phiên ôn tập gần nhất**, từ trái (cũ) sang
+phải (mới nhất). Nếu bạn chưa có đủ 2 phiên, hệ thống sẽ hiện "Chưa đủ dữ liệu".
+
+### Lịch sử thi thử
+
+Bảng lịch sử hiển thị tất cả lần bạn đã thi thử với:
+- Tên đề thi và môn học
+- Điểm số (thang 10)
+- Điểm thưởng nhận được
+- Ngày thi
+
+Nếu có nhiều hơn 10 lần thi, bạn có thể dùng nút **"← Trước"** / **"Sau →"**
+để xem các trang tiếp theo.
+
+> Nếu đề thi đã bị xóa bởi admin, tên đề sẽ hiện là "(Đề không còn tồn tại)".
+
+### FAQ — Tiến độ học tập
+
+**Q: Tại sao streak của tôi bị về 0?**
+
+A: Streak về 0 khi lần ôn tập cuối cùng đã cách **hơn 1 ngày** (tính theo ngày UTC).
+Để duy trì streak, hãy hoàn thành ít nhất 1 phiên ôn tập mỗi ngày.
+
+---
+
+**Q: Dữ liệu trên màn hình Tiến độ có bị trễ không?**
+
+A: Không — dữ liệu được tải thời gian thực mỗi khi bạn mở màn hình Tiến độ.
+
+---
+
+**Q: Biểu đồ xu hướng điểm tính từ loại phiên nào?**
+
+A: Hiện tại biểu đồ chỉ tính từ **phiên ôn tập** (Ôn tập tự do), không bao gồm
+điểm thi thử. Tính năng này có thể được mở rộng trong tương lai.

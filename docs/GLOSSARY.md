@@ -682,6 +682,81 @@ r2.fromUserId; // type cụ thể vẫn còn
 
 ---
 
+## Progress Dashboard (Tiến độ học tập) — Thuật ngữ kỹ thuật
+
+### Streak (Chuỗi ngày học liên tục)
+**Định nghĩa**: Số ngày liên tiếp mà người dùng có ít nhất 1 phiên ôn tập hoàn thành.
+
+**Trong dự án này**: Tính trong `computeStreaks()` (`progress.service.ts`). Có 2 loại:
+- `currentStreak`: chuỗi đang chạy tính từ hôm nay hoặc hôm qua
+- `bestStreak`: chuỗi dài nhất trong toàn bộ lịch sử
+
+**Ví dụ**:
+```
+Ngày học: [04/07, 03/07, 02/07, 30/06]
+currentStreak = 3 (04→03→02/07 liên tiếp)
+bestStreak    = 3 (chuỗi dài nhất)
+
+Nếu hôm nay (04/07) chưa học, nhưng hôm qua (03/07) có học:
+currentStreak vẫn = 1 (hôm qua) — không reset về 0 ngay
+```
+
+---
+
+### Promise.all (Xử lý song song)
+**Định nghĩa**: Gửi nhiều tác vụ bất đồng bộ cùng một lúc và chờ tất cả hoàn thành. Tổng thời gian = tác vụ chậm nhất (không phải tổng cộng).
+
+**Trong dự án này**: `getSummary` (`progress.service.ts`) dùng `Promise.all` để chạy 9 query DB song song thay vì tuần tự.
+
+**Ví dụ**:
+```
+Tuần tự: 50ms + 40ms + 60ms + ... = ~400ms tổng
+Song song (Promise.all): chờ query chậm nhất ~60ms → tổng ≈ 60ms
+
+9 query trong getSummary:
+  [0] practiceSessions (để tính streak)
+  [1] totalExamCount
+  [2] userPoints
+  [3] thisMonthPracticeCount
+  [4] lastMonthPracticeCount
+  [5] thisMonthExamScores
+  [6] lastMonthExamScores
+  [7] scoreTrendRaw (30 phiên gần nhất)
+  [8] practiceStatsBySubject
+```
+
+---
+
+### Sparkline (Biểu đồ xu hướng mini)
+**Định nghĩa**: Biểu đồ đường nhỏ gọn, không có trục, dùng để thể hiện xu hướng tăng/giảm theo thời gian.
+
+**Trong dự án này**: Component `ScoreSparkline` (`App.tsx`) tự vẽ bằng SVG thuần — không dùng thư viện. Normalize điểm về khoảng [0, H-8] pixels để vừa khung.
+
+**Ví dụ**:
+```
+Điểm: [6, 7, 5, 8, 9]   min=5, max=9, range=4
+toY(9) = đỉnh SVG (gần 0px)
+toY(5) = đáy SVG (gần 60px)
+→ vẽ đường polyline nối 5 điểm + tô màu phần dưới đường
+```
+
+---
+
+### Pagination (Phân trang)
+**Định nghĩa**: Chia danh sách lớn thành nhiều trang nhỏ, mỗi lần chỉ tải một số bản ghi nhất định.
+
+**Trong dự án này**: `getExamHistory` dùng `limit` + `offset`. Frontend dùng thêm `examPage` (số trang hiện tại) nhân với `EXAM_PAGE_SIZE=6` để tính offset.
+
+**Ví dụ**:
+```
+Trang 0: offset=0,  lấy bản ghi 1-6
+Trang 1: offset=6,  lấy bản ghi 7-12
+Trang 2: offset=12, lấy bản ghi 13-18
+Clamp: limit tối đa 50 (tránh tải quá nhiều), offset tối thiểu 0
+```
+
+---
+
 ## Bug đã phát hiện và fix trong quá trình review
 
 ### Bug: ID không nhất quán giữa lưu điểm và đọc điểm
