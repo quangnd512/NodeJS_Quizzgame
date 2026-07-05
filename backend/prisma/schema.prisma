@@ -68,6 +68,14 @@ model User {
   /// Thoi diem tao tai khoan - khong doi sau khi tao.
   createdAt   DateTime @default(now())
 
+  /// Co tai khoan bi khoa boi admin hay khong.
+  /// true = bi khoa, moi request cua user nay se bi tu choi voi HTTP 403.
+  isBlocked   Boolean  @default(false)
+
+  /// Vai tro cua nguoi dung trong he thong: "STUDENT" hoac "ADMIN".
+  /// STUDENT: hoc sinh binh thuong. ADMIN: co quyen quan tri he thong.
+  role        String   @default("STUDENT")
+
   wrongAnswers WrongAnswer[]
 
   @@map("users")
