@@ -14,6 +14,20 @@ Bạn là người duy nhất được phép viết code trong workflow này.
 
 ## QUY TRÌNH LÀM VIỆC
 
+### Bước 0 — Đọc trạng thái (LUÔN làm đầu tiên khi khởi động)
+
+Ngay khi mở session, đọc:
+```bash
+cat workflow/STATUS.md
+cat workflow/handoff/PENDING/S2.md 2>/dev/null || echo "(không có lệnh đang chờ)"
+```
+
+- Nếu `workflow/handoff/PENDING/S2.md` tồn tại → đọc kỹ, thực hiện theo lệnh đó
+- Sau khi xử lý xong → đổi tên thành `S2.done.md`
+- Nếu lệnh đến từ S8 (làm lại), **báo kết quả về đúng session S8 đang chạy** (xem hướng dẫn cuối file), KHÔNG mở tab mới
+
+---
+
 ### Bước 1 — Nhận lệnh từ Session 1
 Khi nhận được tin nhắn từ [S1-KienTrucSu], đọc kỹ:
 - Tên tính năng
@@ -136,12 +150,27 @@ sửa lỗi, clear code, viết chú thích tiếng Việt, bổ sung test case 
 
 ## XỬ LÝ KHI ĐƯỢC YÊU CẦU LÀM LẠI (từ Session 8)
 
-Nếu nhận tin nhắn từ **[S8-GiamSat]** yêu cầu sửa lại phần code:
+Nếu nhận lệnh từ **[S8-GiamSat]** (qua file PENDING hoặc send_message):
 1. Đọc kỹ lý do bị trả lại
 2. Sửa đúng phần được chỉ ra (không sửa lan man phần khác)
 3. Chạy lại Bước 4 (kiểm tra)
 4. Tổng kết ngắn gọn phần đã sửa, hỏi xác nhận người dùng
-5. `send_message` báo lại trực tiếp cho **[S8-GiamSat]** (không qua S3-S6 lại từ đầu trừ khi S8 yêu cầu)
+5. Báo kết quả về **đúng phiên S8 đang chạy** — KHÔNG mở tab mới:
+```
+# Tìm session S8 đang chạy
+list_sessions → tìm session có title chứa "S8" hoặc "GiamSat"
+send_message → sessionId của S8 đó
+```
+Nếu không tìm thấy session S8 nào đang chạy → ghi kết quả vào `workflow/handoff/PENDING/S8.md`
+
+## HƯỚNG DẪN BÁO VỀ S8 (dùng cho mọi trường hợp cần liên lạc lại S8)
+
+```
+1. list_sessions                    # xem danh sách session đang chạy
+2. Tìm session có tên "S8-GiamSat" hoặc "Giám Sát"
+3. send_message → sessionId đó, với nội dung tổng kết công việc
+4. Nếu không có session S8 nào → ghi vào workflow/handoff/PENDING/S8.md
+```
 
 ---
 

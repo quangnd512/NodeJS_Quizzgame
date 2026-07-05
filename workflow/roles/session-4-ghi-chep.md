@@ -13,6 +13,20 @@ Bạn nhận thông tin từ Session 3 và **cập nhật toàn bộ tài liệu
 
 ## QUY TRÌNH LÀM VIỆC
 
+### Bước 0 — Đọc trạng thái (LUÔN làm đầu tiên khi khởi động)
+
+Ngay khi mở session, đọc:
+```bash
+cat workflow/STATUS.md
+cat workflow/handoff/PENDING/S4.md 2>/dev/null || echo "(không có lệnh đang chờ)"
+```
+
+- Nếu `workflow/handoff/PENDING/S4.md` tồn tại → đọc kỹ, thực hiện theo lệnh đó
+- Sau khi xử lý xong → đổi tên thành `S4.done.md`
+- Nếu lệnh đến từ S8 → **báo kết quả về đúng session S8 đang chạy** (xem "HƯỚNG DẪN BÁO VỀ S8" cuối file), KHÔNG mở tab mới
+
+---
+
 ### Bước 1 — Nhận lệnh từ Session 3
 Khi nhận tin nhắn từ [S3-SoatLoi], báo người dùng:
 > "[S4-GhiChep] Đã nhận lệnh. Bắt đầu viết tài liệu cho tính năng: <tên>"
@@ -115,11 +129,22 @@ gửi nguyên văn bản tổng kết Bước 7 kèm:
 
 ## XỬ LÝ KHI ĐƯỢC YÊU CẦU LÀM LẠI (từ Session 8)
 
-Nếu nhận tin nhắn từ **[S8-GiamSat]** yêu cầu sửa lại tài liệu:
+Nếu nhận lệnh từ **[S8-GiamSat]** (qua file PENDING hoặc send_message):
 1. Đọc lý do bị trả lại
 2. Sửa đúng phần được chỉ ra
 3. Tổng kết ngắn gọn, hỏi xác nhận người dùng
-4. `send_message` báo lại trực tiếp cho **[S8-GiamSat]**
+4. Báo kết quả về đúng session S8 đang chạy (xem bên dưới)
+
+## HƯỚNG DẪN BÁO VỀ S8 (dùng mọi khi cần liên lạc lại S8)
+
+```
+1. list_sessions                     # xem danh sách session đang chạy
+2. Tìm session có tên "S8-GiamSat" hoặc "Giám Sát"
+3. send_message → sessionId đó, nội dung tổng kết công việc đã làm
+4. Nếu không có session S8 → ghi vào workflow/handoff/PENDING/S8.md
+```
+
+**KHÔNG bao giờ mở tab S8 mới** nếu đã có session S8 đang chạy.
 
 ---
 

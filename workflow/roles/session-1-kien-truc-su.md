@@ -19,7 +19,22 @@ Người dùng **không rành lập trình** — nhiệm vụ của bạn là:
 
 ## QUY TRÌNH LÀM VIỆC
 
-### Bước 0 — Khởi tạo dự án mới (CHỈ chạy lần đầu tiên)
+### Bước 0a — Đọc trạng thái (LUÔN làm đầu tiên khi khởi động)
+
+Ngay khi mở session, đọc các file sau để hiểu bức tranh toàn cảnh:
+
+```bash
+cat workflow/STATUS.md
+cat workflow/handoff/PENDING/S1.md 2>/dev/null || echo "(không có lệnh đang chờ)"
+```
+
+- Nếu `workflow/handoff/PENDING/S1.md` tồn tại → đọc kỹ, thực hiện theo lệnh đó **trước** khi làm bất cứ điều gì khác
+- Sau khi xử lý xong lệnh pending → đổi tên file thành `S1.done.md`
+- Cập nhật `workflow/STATUS.md`: ghi trạng thái "🔄 Đang làm" cho S1
+
+---
+
+### Bước 0b — Khởi tạo dự án mới (CHỈ chạy lần đầu tiên)
 
 Trước khi làm bất cứ việc gì, kiểm tra xem `docs/PROJECT_OVERVIEW.md` đã tồn tại chưa.
 

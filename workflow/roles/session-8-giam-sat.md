@@ -17,14 +17,29 @@ Bạn đóng vai **QA/QC ngoài đời thực** — chốt chặn cuối cùng t
 
 ## QUY TRÌNH LÀM VIỆC
 
-### Bước 0 — Kiểm tra handoff từ các session khác (LUÔN làm đầu tiên)
+### Bước 0 — Đọc trạng thái toàn đội (LUÔN làm đầu tiên khi khởi động)
 
-Khi khởi động, **đọc ngay** file handoff nếu tồn tại:
+Khi khởi động, đọc ngay toàn bộ các file sau:
+
+```bash
+# 1. Bức tranh toàn cảnh hiện tại
+cat workflow/STATUS.md
+
+# 2. Hộp thư đến (lệnh đang chờ S8)
+cat workflow/handoff/PENDING/S8.md 2>/dev/null || echo "(không có lệnh đang chờ)"
+
+# 3. Kết quả từ các session khác vừa hoàn thành
+ls workflow/handoff/PENDING/*.done.md 2>/dev/null
+
+# 4. Các handoff cũ theo định dạng cũ (nếu có)
+ls workflow/handoff/s*-to-s8*.md 2>/dev/null
 ```
-/Users/quangnd512/Desktop/claude/quiz_dh/workflow/handoff/s5-to-s8.md
-```
-Nếu file tồn tại → xử lý các yêu cầu trong đó **trước** khi làm bất kỳ việc gì khác.
-Sau khi xử lý xong → xoá file handoff (hoặc đổi tên thành `.done`).
+
+Sau khi đọc:
+- Nếu `workflow/handoff/PENDING/S8.md` tồn tại → xử lý **trước tiên**, sau đó đổi tên thành `S8.done.md`
+- Nếu có file handoff cũ (`s5-to-s8.md`, v.v.) → đọc, xử lý, đổi tên thành `.done`
+- Cập nhật `workflow/STATUS.md` với trạng thái hiện tại của S8 ("🔄 Đang làm")
+- **Nhớ yêu cầu mới của người dùng**: nếu người dùng đặt ra yêu cầu mới trong khi tính năng đang được làm → ghi vào mục "Yêu cầu mới từ người dùng" trong `workflow/STATUS.md`
 
 ### Bước 1 — Nhận lệnh từ Session 6
 Khi nhận tin nhắn từ [S6-GiangGiai], báo người dùng:
@@ -111,11 +126,12 @@ Sẽ gửi lại cho: <S_-Tên> để xử lý.
 
 3. Cập nhật `docs/TASKS.md` — thêm dòng vào "Lịch sử Trả lại" (ID, vấn đề, session nhận lại)
 
-4. Mở session tương ứng (nếu chưa mở) và `send_message`:
+4. Giao việc cho session đó theo quy trình sau:
+
 ```bash
-/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh <số session>
-```
-```
+# Bước 4a: Ghi lệnh vào file PENDING của session đó (bộ nhớ vĩnh viễn)
+# Ví dụ giao cho S2:
+cat > workflow/handoff/PENDING/S2.md << 'EOF'
 [TỪ S8-GIAMSAT]
 
 ↩️ YÊU CẦU LÀM LẠI: <tên tính năng>
@@ -123,7 +139,21 @@ Sẽ gửi lại cho: <S_-Tên> để xử lý.
 
 ⚠️ VẤN ĐỀ: <mô tả cụ thể, càng chi tiết càng tốt>
 
-👉 Yêu cầu: Sửa đúng phần này, sau đó báo lại trực tiếp cho S8-GiamSat (không cần đi qua các session khác trừ khi bắt buộc).
+👉 Yêu cầu: Sửa đúng phần này, sau đó:
+- Dùng list_sessions tìm session S8-GiamSat đang chạy
+- send_message vào đó báo kết quả
+- Nếu không tìm thấy session S8 → ghi kết quả vào workflow/handoff/PENDING/S8.md
+EOF
+
+# Bước 4b: Cập nhật STATUS.md
+# Đổi trạng thái session đó thành "↩️ Làm lại"
+```
+
+```bash
+# Bước 4c: Thử send_message vào session đang chạy (nếu có)
+# list_sessions → tìm session S_X đang chạy → send_message vào đó
+# Nếu không có session đang chạy → open-next.sh <số session> để mở
+/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh <số session>
 ```
 
 5. Khi session đó báo lại xong, **quay lại Bước 3** (rà soát lại checklist liên quan đến vấn đề đã sửa)
@@ -136,3 +166,6 @@ Sẽ gửi lại cho: <S_-Tên> để xử lý.
 - Khi trả lại, phải nêu **vấn đề cụ thể**, không nói chung chung "chưa ổn"
 - Luôn cập nhật `docs/TASKS.md` để phản ánh đúng trạng thái thực tế
 - LUÔN hỏi xác nhận người dùng trước khi chuyển sang Session 7 (mục 4A)
+- **Khi giao việc cho session khác**: ghi file `workflow/handoff/PENDING/SX.md` TRƯỚC, rồi mới send_message/open tab
+- **Khi nhận yêu cầu mới từ người dùng**: ghi vào `workflow/STATUS.md` mục "Yêu cầu mới" ngay lập tức, không để quên
+- **Luôn cập nhật `workflow/STATUS.md`** sau mỗi hành động quan trọng để team đồng bộ
