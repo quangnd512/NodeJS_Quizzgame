@@ -18,7 +18,10 @@
     "smoke:leaderboard": "tsx src/scripts/smoke-test-leaderboard.ts",
     "smoke:progress": "tsx src/scripts/smoke-test-progress.ts",
     "generate:exam-template": "tsx src/scripts/generate-exam-import-template.ts",
-    "seed:question-bank": "tsx src/scripts/seed-question-bank-from-questions.ts"
+    "seed:question-bank": "tsx src/scripts/seed-question-bank-from-questions.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -43,8 +46,10 @@
     "@types/multer": "^2.1.0",
     "@types/node": "^22.10.2",
     "@types/node-cron": "^3.0.11",
+    "@vitest/coverage-v8": "^4.1.9",
     "prisma": "^6.19.3",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.9"
   }
 }

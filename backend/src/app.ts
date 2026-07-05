@@ -12,6 +12,7 @@ import { examAdminRouter } from './routes/exam-admin.route.js';
 import { questionBankRouter } from './routes/question-bank.route.js';
 import { leaderboardRouter } from './routes/leaderboard.route.js';
 import { progressRouter } from './routes/progress.route.js';
+import { wrongAnswerRouter } from './routes/wrongAnswer.route.js';
 import type { ZodIssue } from 'zod';
 
 /**
@@ -75,6 +76,8 @@ const ERROR_CODE_TO_HTTP_STATUS: Readonly<Record<string, number>> = {
   EXAM_EXPIRED: 410,
   EXAM_QUESTION_INVALID: 400,
   EXAM_IMPORT_FILE_INVALID: 400,
+  // Ôn câu sai
+  WRONG_ANSWER_NOT_FOUND: 404,
 };
 
 /** Kiem tra 1 gia tri loi co phai la "custom error" co truong `code` (string) hay khong. */
@@ -122,6 +125,7 @@ export function createApp(): Application {
   app.use('/api/exam', examRouter);
   app.use('/api/leaderboard', leaderboardRouter);
   app.use('/api/progress', progressRouter);
+  app.use('/api/wrong-answers', wrongAnswerRouter);
 
   // Route kiem tra suc khoe server
   app.get('/api/health', (_req: Request, res: Response) => {

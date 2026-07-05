@@ -4241,3 +4241,458 @@ curl http://localhost:4000/api/progress/summary
   không bao gồm điểm thi thử. Có thể bổ sung sau.
 - TODO: Thêm filter theo môn cho `scoreTrend` và `practiceStatsBySubject`.
 - TODO: Export báo cáo tiến độ ra PDF/CSV.
+
+---
+
+## 10. Wrong Answer Review – Ôn câu sai
+
+**Trạng thái:** ✅ Hoàn thành
+**Ngày hoàn thành:** 2026-07-05
+**Branch / commit liên quan:** `feature/wrong-answer-review`
+
+---
+
+### Tổng quan
+
+Module Ôn câu sai tự động thu thập mọi câu trả lời **sai** từ cả hai chế độ
+(Ôn tập và Thi thử), lưu vào bảng riêng với TTL 14 ngày, và cho phép người dùng
+ôn lại từng câu trực tiếp trên giao diện. Mục tiêu: giúp học sinh tập trung
+vào điểm yếu, không bỏ lọt câu đã sai.
+
+**Tính năng chính:**
+- **Ghi nhận tự động**: Practice service và Exam service đều gọi `upsertWrongAnswer`
+  ngay sau khi nhận biết câu sai (fire-and-forget, không block response).
+- **Upsert thông minh**: nếu cùng câu bị sai lần nữa → `wrongCount` tăng, `expiresAt`
+  reset thêm 14 ngày (không tạo bản ghi trùng lặp).
+- **Danh sách có thể lọc**: lọc theo môn học, phân trang (mặc định 20/trang, tối đa 50).
+- **Làm lại (retry)**: hỗ trợ cả 3 dạng câu hỏi (MCQ_4, TRUE_FALSE_4, FILL_BLANK) —
+  kiểm tra đáp án và trả kết quả ngay, **không ghi điểm, không xóa khỏi danh sách**.
+- **Tự động hết hạn**: bản ghi `expiresAt < NOW()` bị bỏ qua khi query, không cần
+  cronjob xóa.
+- **Câu bị ẩn/xóa**: câu `isActive = false` hoặc bị hard-delete (FK = NULL) tự động
+  không hiển thị — không cần xử lý đặc biệt phía FE.
+
+---
+
+### Data Model
+
+#### Bảng `wrong_answers`
+
+| Field | Kiểu | Mô tả |
+|-------|------|-------|
+| `id` | SERIAL (Int) | Primary key — tự tăng (dùng `id` số để gọi retry) |
+| `userId` | String | ID user (FK → `users.id`, ON DELETE CASCADE) |
+| `questionId` | String? | FK → `questions.id` (câu từ Ôn tập); NULL nếu từ Thi thử |
+| `examQuestionId` | String? | FK → `exam_questions.id` (câu từ Thi thử); NULL nếu từ Ôn tập |
+| `wrongCount` | Int | Số lần sai cộng dồn (bắt đầu từ 1) |
+| `lastWrongAt` | DateTime | Thời điểm sai gần nhất |
+| `expiresAt` | DateTime | Thời điểm hết hạn = `lastWrongAt + 14 ngày` |
+
+**Ràng buộc:**
+- `UNIQUE(userId, questionId)` — mỗi user một bản ghi mỗi câu Ôn tập
+- `UNIQUE(userId, examQuestionId)` — mỗi user một bản ghi mỗi câu Thi thử
+- `INDEX(userId, expiresAt)` — tăng tốc query chính: lấy câu sai chưa hết hạn
+
+**Quy tắc FK:**
+- `questionId` ON DELETE **SET NULL** → câu bị hard-delete: FK → null, bản ghi còn nhưng không hiện trong list
+- `examQuestionId` ON DELETE **SET NULL** → tương tự
+- `userId` ON DELETE **CASCADE** → xóa user thì xóa toàn bộ câu sai của user đó
+
+---
+
+### API Reference
+
+#### GET /api/wrong-answers
+
+**Auth:** `verifyAppToken` (cần session token)
+
+**Mô tả:** Lấy danh sách câu sai còn hạn (chưa quá 14 ngày kể từ lần sai gần nhất).
+Câu đã bị soft-delete (`isActive = false`) hoặc câu hỏi không còn tồn tại sẽ bị bỏ qua.
+
+**Query params:**
+
+| Param | Kiểu | Mặc định | Mô tả |
+|-------|------|---------|-------|
+| `subjectId` | string | — | Lọc theo mã môn (TOAN, VAN, ...) |
+| `page` | number | 1 | Trang hiện tại (≥ 1) |
+| `pageSize` | number | 20 | Số bản ghi mỗi trang (clamp: 1–50) |
+
+**Luồng xử lý:**
+```
+verifyAppToken → req.currentUser.id
+    │
+    └─ wrongAnswerService.getWrongAnswers(userId, subjectId?, page, pageSize)
+         │
+         ├─ prisma.wrongAnswer.findMany({ WHERE userId=? AND expiresAt>NOW(),
+         │   INCLUDE question, examQuestion, ORDER BY lastWrongAt DESC })
+         │
+         ├─ Lấy subject của exam questions qua batch query ExamPaper
+         │
+         ├─ Chuẩn hóa từng bản ghi thành WrongAnswerListItem:
+         │   ├─ question != null → source='practice', type='MCQ_4'
+         │   ├─ examQuestion != null → source='exam', type=questionType
+         │   └─ Bỏ qua nếu isActive=false hoặc cả hai FK đều null
+         │
+         ├─ Filter theo subjectId (nếu có)
+         └─ Paginate trong bộ nhớ: slice(skip, skip+pageSize)
+```
+
+**Response thành công (200):**
+```json
+{
+  "data": [
+    {
+      "id": 42,
+      "wrongCount": 3,
+      "lastWrongAt": "2026-07-04T10:00:00.000Z",
+      "expiresAt": "2026-07-18T10:00:00.000Z",
+      "source": "practice",
+      "question": {
+        "id": "q-uuid-1",
+        "content": "Tập xác định của hàm số y = √(x−1) là?",
+        "type": "MCQ_4",
+        "subjectId": "TOAN",
+        "options": ["[1;+∞)", "(1;+∞)", "[-1;+∞)", "(-∞;1]"],
+        "correctAnswer": 0,
+        "explanation": "Điều kiện: x−1 ≥ 0 ⟺ x ≥ 1 → TXĐ: [1;+∞)"
+      }
+    },
+    {
+      "id": 55,
+      "wrongCount": 1,
+      "lastWrongAt": "2026-07-03T14:30:00.000Z",
+      "expiresAt": "2026-07-17T14:30:00.000Z",
+      "source": "exam",
+      "question": {
+        "id": "eq-uuid-1",
+        "content": "Cho các phát biểu sau về kim loại kiềm...",
+        "type": "TRUE_FALSE_4",
+        "subjectId": "HOA",
+        "options": ["Phát biểu A", "Phát biểu B", "Phát biểu C", "Phát biểu D"],
+        "correctAnswer": [true, false, true, false],
+        "explanation": null
+      }
+    }
+  ],
+  "total": 8,
+  "page": 1,
+  "pageSize": 20
+}
+```
+
+**Lỗi có thể xảy ra:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 401 | `MISSING_AUTH_TOKEN` | Không có Authorization header |
+| 401 | `INVALID_SESSION_TOKEN` | Token hết hạn hoặc sai |
+| 401 | `SESSION_USER_NOT_FOUND` | Tài khoản đã bị xóa |
+
+---
+
+#### POST /api/wrong-answers/:id/retry
+
+**Auth:** `verifyAppToken`
+
+**Mô tả:** Làm lại một câu sai. `id` là ID của bản ghi `WrongAnswer` (số nguyên,
+trả về trong `GET /api/wrong-answers`). **Không ghi điểm, không xóa khỏi danh sách.**
+
+**Path param:** `:id` — số nguyên (ID bản ghi WrongAnswer)
+
+**Request body:**
+```json
+{ "answer": <đáp án tùy theo loại câu> }
+```
+
+| Loại câu | Kiểu `answer` | Ví dụ |
+|----------|--------------|-------|
+| MCQ_4 | `number` (0–3) | `{ "answer": 2 }` |
+| TRUE_FALSE_4 | `boolean[]` (4 phần tử) | `{ "answer": [true, false, true, false] }` |
+| FILL_BLANK | `string` | `{ "answer": "Hà Nội" }` |
+
+**Luồng xử lý:**
+```
+verifyAppToken → req.currentUser.id
+    │
+    ├─ Validate: id phải là số nguyên, body.answer phải tồn tại
+    │
+    └─ wrongAnswerService.retryQuestion(userId, id, answer)
+         │
+         ├─ prisma.wrongAnswer.findUnique({ id, INCLUDE question, examQuestion })
+         │
+         ├─ Kiểm tra: bản ghi tồn tại + userId khớp + expiresAt > NOW()
+         │   └─ Sai bất kỳ điều kiện → WrongAnswerNotFoundError (404)
+         │
+         ├─ question != null (Practice MCQ_4):
+         │   └─ isCorrect = (typeof answer === 'number' && answer === correctAnswer)
+         │
+         ├─ examQuestion != null (Exam):
+         │   └─ checkExamAnswer(questionType, correctAnswer, answer)
+         │       ├─ MCQ_4: so sánh số nguyên
+         │       ├─ TRUE_FALSE_4: so sánh từng phần tử mảng 4 boolean
+         │       └─ FILL_BLANK: normalizeAnswer → kiểm tra trong danh sách đáp án
+         │
+         └─ cả hai FK null → WrongAnswerNotFoundError (404)
+```
+
+**Response thành công (200):**
+```json
+{
+  "isCorrect": true,
+  "correctAnswer": 0,
+  "explanation": "Điều kiện: x−1 ≥ 0 ⟺ x ≥ 1 → TXĐ: [1;+∞)"
+}
+```
+
+Ví dụ khi sai:
+```json
+{
+  "isCorrect": false,
+  "correctAnswer": [true, false, true, false],
+  "explanation": null
+}
+```
+
+**Lỗi có thể xảy ra:**
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 401 | `MISSING_AUTH_TOKEN` | Không có Authorization header |
+| 401 | `INVALID_SESSION_TOKEN` | Token hết hạn hoặc sai |
+| 400 | `INVALID_REQUEST_BODY` | `id` không phải số nguyên hoặc thiếu `body.answer` |
+| 404 | `WRONG_ANSWER_NOT_FOUND` | id không tồn tại, thuộc user khác, hoặc đã hết hạn |
+
+---
+
+### Luồng chạy (Flow)
+
+#### Luồng ghi nhận câu sai — từ Practice
+
+```
+[PracticeService.submitAnswer()]
+    │
+    ├─ Chấm đáp án → isCorrect = false
+    │
+    └─ fire-and-forget (không block response):
+         wrongAnswerService.upsertWrongAnswer(userId, questionId, 'practice')
+              │
+              ├─ [Đã có bản ghi (userId, questionId)]:
+              │   UPDATE: wrongCount += 1, lastWrongAt = now(), expiresAt = now()+14d
+              │
+              └─ [Chưa có]:
+                  INSERT: wrongCount=1, lastWrongAt=now(), expiresAt=now()+14d
+```
+
+#### Luồng ghi nhận câu sai — từ Exam
+
+```
+[ExamService.submitExam()]
+    │
+    ├─ Transaction: chấm điểm, cập nhật ExamSession, cộng điểm
+    │
+    └─ Sau khi transaction commit thành công:
+         fire-and-forget (Promise.all cho tất cả câu sai):
+              wrongAnswerService.upsertWrongAnswer(userId, examQuestionId, 'exam')
+              (cùng logic upsert như trên)
+```
+
+#### Luồng người dùng ôn câu sai — FE
+
+```
+[FE] Từ ProfilePage → nhấn nút "Ôn câu sai"
+        │
+        ▼
+[FE] WrongAnswersPage mount
+        │
+        ├─ GET /api/wrong-answers?page=1&pageSize=20
+        │   → Hiện spinner → nhận data → render danh sách WrongAnswerCard
+        │
+        ├─ [User lọc theo môn]: set subjectFilter → GET lại với ?subjectId=TOAN
+        │
+        └─ [User nhấn "Làm lại" trên WrongAnswerCard]:
+               WrongAnswerRetry component mount
+                    │
+                    ├─ User chọn đáp án (MCQ_4: radio button | TRUE_FALSE_4: toggles | FILL_BLANK: input)
+                    │
+                    ├─ POST /api/wrong-answers/:id/retry { answer: ... }
+                    │
+                    └─ Hiện kết quả: ✅ Đúng / ❌ Sai + correctAnswer + explanation
+```
+
+---
+
+### Cấu trúc file
+
+```
+backend/
+├── prisma/
+│   ├── schema.prisma                                     Model WrongAnswer (mới)
+│   └── migrations/
+│       └── 20260704154329_add_wrong_answer_table/        Migration tạo bảng wrong_answers
+│
+└── src/
+    ├── services/
+    │   └── wrongAnswer/
+    │       ├── wrongAnswer.types.ts    WrongAnswerSource, WrongAnswerQuestionDetail,
+    │       │                          WrongAnswerListItem, WrongAnswerListResponse,
+    │       │                          RetryResult, ExamQuestionType
+    │       ├── wrongAnswer.errors.ts  WrongAnswerNotFoundError (code: WRONG_ANSWER_NOT_FOUND)
+    │       ├── wrongAnswer.service.ts WrongAnswerService:
+    │       │                          ├─ upsertWrongAnswer(userId, questionId, source)
+    │       │                          ├─ getWrongAnswers(userId, subjectId?, page, pageSize)
+    │       │                          └─ retryQuestion(userId, id, answer)
+    │       └── __tests__/
+    │           └── wrongAnswer.service.test.ts  Unit tests (Vitest, mock Prisma)
+    │
+    ├── routes/
+    │   └── wrongAnswer.route.ts       GET /api/wrong-answers
+    │                                  POST /api/wrong-answers/:id/retry
+    │
+    └── app.ts                         Thêm wrongAnswerRouter → /api/wrong-answers
+                                       Thêm WRONG_ANSWER_NOT_FOUND vào ERROR_CODE_TO_HTTP_STATUS
+
+frontend/
+└── src/
+    ├── lib/api.ts    Thêm WrongAnswerQuestionType, WrongAnswerQuestion, WrongAnswerItem,
+    │                 WrongAnswerListResponse, RetryResult;
+    │                 hàm getWrongAnswers(), retryWrongAnswer()
+    └── App.tsx       Screen type thêm 'wrongAnswers'; ProfilePage: nút "Ôn câu sai";
+                      WrongAnswersPage (mới): filter môn, phân trang, WrongAnswerCard,
+                      WrongAnswerRetry component (hỗ trợ MCQ_4/TRUE_FALSE_4/FILL_BLANK)
+```
+
+---
+
+### Ghi chú kỹ thuật
+
+1. **[Bug fix — CRITICAL] upsertWrongAnswer phải gọi NGOÀI transaction**:
+   Phiên bản đầu của `exam.service.ts` gọi `upsertWrongAnswer` bên trong callback
+   `$transaction` bằng `void`. Vấn đề: khi Prisma retry transaction do optimistic lock,
+   callback chạy lại nhiều lần → `wrongCount` bị cộng thêm mỗi lần retry thay vì
+   chỉ 1 lần sau commit thực sự. Fix: collect danh sách `wrongIds` bên trong
+   transaction, return ra ngoài, gọi `upsertWrongAnswer` sau khi `await $transaction`
+   thành công — đảm bảo chỉ chạy đúng 1 lần dù transaction có retry bao nhiêu lần.
+
+2. **[Bug fix — INDEX] Thêm @@index([userId, expiresAt])**:
+   Query chính của `getWrongAnswers` là `WHERE userId=? AND expiresAt>NOW()`.
+   Không có index trên cặp này → full table scan mỗi lần user mở màn hình ôn câu sai.
+   Fix: thêm `@@index([userId, expiresAt])` vào schema Prisma và `CREATE INDEX` tương
+   ứng vào migration SQL. Query hiện chạy với index scan thay vì seq scan.
+
+3. **[Bug fix — LINT] Tách handler `handleSubjectChange` ở FE**:
+   Phiên bản đầu gọi `setPage(1)` bên trong `useEffect` body (trong vòng lặp effect)
+   vi phạm ESLint rule `react-hooks/set-state-in-effect`. Fix: tách thành handler
+   `handleSubjectChange` — khi user đổi môn, event handler gọi `setPage(1)` và
+   `fetchData()` trực tiếp; `useEffect` chỉ chịu trách nhiệm load lần đầu.
+
+4. **Unit test với Vitest (framework mới)**:
+   Module này là module đầu tiên trong dự án có unit test chính thức bằng
+   **Vitest** (cài mới, không có từ trước). Vitest mock hoàn toàn Prisma client —
+   không cần DB thật để chạy test. Script: `npm run test` hoặc
+   `npx vitest run`. 18 test cases / 18 PASS bao gồm 3 nhóm: `upsertWrongAnswer`,
+   `retryQuestion`, `getWrongAnswers`.
+
+5. **Fire-and-forget cho upsert**: `upsertWrongAnswer` được gọi bằng `void ...catch(...)`
+   ngoài transaction chính — lỗi ghi câu sai (VD: DB tạm thời quá tải) sẽ chỉ được
+   log ra console, không làm fail response của submitAnswer/submitExam. Thiết kế này
+   ưu tiên UX (người dùng vẫn nhận kết quả thi) hơn tính toàn vẹn tuyệt đối của
+   danh sách câu sai.
+
+6. **Pagination trong bộ nhớ (in-memory)**: `getWrongAnswers` load toàn bộ bản ghi
+   chưa hết hạn rồi filter và paginate trong code. Chấp nhận được vì mỗi user có
+   tối đa vài trăm câu sai (TTL 14 ngày tự làm sạch). Subject của `ExamQuestion`
+   phải JOIN qua `ExamPaper` — khó paginate hiệu quả ở tầng DB với subject filter.
+
+7. **ID kiểu Int (SERIAL) thay vì UUID**: bảng `wrong_answers` dùng `id SERIAL`
+   vì đây là endpoint nội bộ (người dùng gọi retry bằng `id` nhận từ GET list),
+   không cần UUID ngẫu nhiên để tránh đoán.
+
+8. **`expiresAt` reset mỗi lần sai**: nếu học sinh vẫn sai câu trong vòng 14 ngày,
+   TTL tự động gia hạn thêm 14 ngày — câu vẫn còn trong danh sách ôn.
+
+9. **normalizeAnswer tái dụng**: `retryQuestion` gọi hàm `normalizeAnswer` từ
+   `exam.service.ts` để so khớp FILL_BLANK (trim + lowercase + collapse spaces) —
+   nhất quán với logic chấm điểm gốc của module Thi thử.
+
+10. **ERROR_CODE_TO_HTTP_STATUS**: `WRONG_ANSWER_NOT_FOUND` → 404 được đăng ký
+    tập trung tại `app.ts`, nhất quán với cách xử lý lỗi toàn app.
+
+---
+
+### Cách tự kiểm thử (manual test)
+
+**1. Unit test tự động — Vitest (không cần DB, mock Prisma):**
+```bash
+cd backend
+npm run test
+# hoặc chạy file cụ thể:
+npx vitest run src/services/wrongAnswer/__tests__/wrongAnswer.service.test.ts
+# Kỳ vọng: 18/18 PASS
+# Nhóm test:
+#   upsertWrongAnswer — practice/exam key đúng, expiresAt = +14d
+#   retryQuestion     — MCQ_4, TRUE_FALSE_4, FILL_BLANK (normalize),
+#                       lỗi: not-found, userId mismatch, expired, hard-delete (FK null)
+#   getWrongAnswers   — rỗng, soft-delete bị bỏ qua, filter môn, pagination trang 2
+```
+
+**2. Kiểm tra qua curl (cần session token hợp lệ):**
+```bash
+# Lấy danh sách câu sai
+curl http://localhost:4000/api/wrong-answers \
+  -H "Authorization: Bearer <session-token>"
+# Kỳ vọng: 200 + { data: [...], total: N, page: 1, pageSize: 20 }
+
+# Lọc theo môn Toán
+curl "http://localhost:4000/api/wrong-answers?subjectId=TOAN&page=1&pageSize=10" \
+  -H "Authorization: Bearer <session-token>"
+# Kỳ vọng: chỉ câu sai của môn TOAN
+
+# Làm lại câu sai MCQ_4 (id=42, chọn đáp án 0)
+curl -X POST http://localhost:4000/api/wrong-answers/42/retry \
+  -H "Authorization: Bearer <session-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"answer": 0}'
+# Kỳ vọng: 200 + { isCorrect: true/false, correctAnswer: N, explanation: "..." }
+
+# id không phải số → 400
+curl -X POST http://localhost:4000/api/wrong-answers/abc/retry \
+  -H "Authorization: Bearer <session-token>" \
+  -d '{"answer": 0}'
+# Kỳ vọng: 400 + { error: "INVALID_REQUEST_BODY" }
+
+# id không tồn tại → 404
+curl -X POST http://localhost:4000/api/wrong-answers/99999/retry \
+  -H "Authorization: Bearer <session-token>" \
+  -d '{"answer": 0}'
+# Kỳ vọng: 404 + { error: "WRONG_ANSWER_NOT_FOUND" }
+
+# Không có token → 401
+curl http://localhost:4000/api/wrong-answers
+# Kỳ vọng: { error: "MISSING_AUTH_TOKEN" }
+```
+
+**3. Kiểm tra tích hợp end-to-end:**
+1. Làm phiên ôn tập, cố tình chọn sai một câu → vào WrongAnswersPage kiểm tra
+   câu đó xuất hiện với `source: 'practice'`
+2. Thi thử, cố tình sai vài câu → submit → vào WrongAnswersPage kiểm tra
+   câu đó với `source: 'exam'`
+3. Nhấn "Làm lại" → chọn đáp án đúng → kỳ vọng hiện `✅ Đúng rồi!`
+4. Câu vẫn còn trong danh sách sau khi làm đúng (không tự xóa)
+5. Lọc theo môn → kỳ vọng chỉ hiện câu đúng môn đó
+
+---
+
+### Lưu ý / rủi ro / TODO tiếp theo
+
+- **Không có cronjob dọn dẹp**: bản ghi hết hạn không bị xóa vật lý — chỉ bị
+  bỏ qua khi query. Theo thời gian bảng sẽ tích lũy dữ liệu cũ. Cân nhắc thêm
+  cronjob hàng tuần `DELETE FROM wrong_answers WHERE expiresAt < NOW()`.
+- **Pagination trong bộ nhớ**: nếu user có >1000 câu sai chưa hết hạn (trường hợp
+  cực đoan), query có thể nặng. Cải thiện: thêm `WHERE subject = ?` trực tiếp vào
+  DB query sau khi JOIN `ExamPaper` hoặc lưu `subjectId` thẳng vào `wrong_answers`.
+- **Chưa có chức năng "xóa câu sai"**: học sinh không thể chủ động xóa bản ghi
+  trước hạn — cần thêm `DELETE /api/wrong-answers/:id` nếu có nhu cầu.
+- **Chưa tracking "đã ôn lại"**: sau khi retry đúng, câu vẫn còn trong danh sách.
+  Có thể thêm trường `retriedAt` hoặc `masteredAt` để thống kê mức độ tiến bộ.
+- TODO: Thêm smoke test tích hợp (cần DB thật) kiểm tra luồng end-to-end.
+- TODO: Lưu `subjectId` thẳng vào bảng `wrong_answers` để tối ưu query filter theo môn.

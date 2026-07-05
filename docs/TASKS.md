@@ -12,6 +12,7 @@
 | 005 | Question Bank – Ngân hàng câu hỏi | ✅ Done | feature/question-bank | 2026-07-03 |
 | 006 | Leaderboard – Bảng xếp hạng | ✅ Done | feature/leaderboard | 2026-07-04 |
 | 007 | Progress Dashboard – Thống kê tiến độ học sinh | ✅ Done | feature/progress-dashboard | 2026-07-04 |
+| 010 | Ôn Câu Sai – Wrong Answer Review | 🔄 Chờ S7 merge | feature/wrong-answer-review | — |
 | 008 | Admin User Management – Quản lý người dùng | ⏳ Chờ S1 lên kế hoạch | — | — |
 | 009 | Notifications – Thông báo hệ thống | ⏳ Chờ S1 lên kế hoạch | — | — |
 
@@ -33,3 +34,4 @@
 | 005 | (1) S2: Frontend build/lint FAIL — `handleRestoreQuestion` (App.tsx:1796) định nghĩa nhưng không gọi, bị bỏ lại khi refactor onclick sang AdminFromBankModal; chặn `tsc -b` (TS6133) và `eslint` (no-unused-vars). (2) S5: Không có record kiểm thử thủ công cho vòng Question Bank (chỉ có handoff cũ từ round Exam Module). | S2 (fix build trước), sau đó S5 (manual test) | ✅ Đạt — S2 fix unused function + commit 9862bcf; S5 fix pageSize clamp bug + commit a0243f4, 25/25 manual test PASS. Build+lint+smoke 45/45 PASS. S8 xác nhận 2026-07-03 |
 | 006 | (1) S5 lần đầu: không có báo cáo thủ công → trả lại S5. (2) S5 phát hiện bug `getMyRank` luôn trả #1 (đã fix), người dùng đổi PAGE_SIZE=10, thêm modal+auto-hide. (3) S8 đồng bộ smoke test + docs (pageSize 20→10). Smoke 8/8 PASS, build+lint PASS. | S5 (manual test) | ✅ Đạt — S8 xác nhận 2026-07-04 |
 | 007 | S5: Không có kết quả test thủ công — 21 test case đã định nghĩa nhưng chưa có PASS/FAIL. Frontend UI chưa được kiểm tra thực tế (nút ProfilePage, điều hướng, render ProgressPage, sparkline, phân trang exam history). | S5 (manual test) | ✅ Đạt — S5: 20/21 PASS, 1 SKIP chấp nhận (test xóa ExamPaper khỏi DB, không ảnh hưởng chức năng chính). UI/UX 8/8 PASS. Smoke 4/4 PASS. S8 xác nhận 2026-07-04 |
+| 010 | S8 phát hiện: (1) soft expiry code trong retryQuestion() → xác nhận là yêu cầu người dùng (S5 thêm), không phải bug; (2) unit test mock thiếu `wrongAnswer.update` → 3/18 FAIL. S2 fix mock → 18/18 PASS. TEST_CASES.md #14 cập nhật spec mới. | S2-ThoCode (fix mock) | ✅ Đạt — S2: 18/18 PASS. S5: 20/20 PASS. S6: GLOSSARY 6 thuật ngữ + ADR 008. S8 xác nhận 2026-07-05 |

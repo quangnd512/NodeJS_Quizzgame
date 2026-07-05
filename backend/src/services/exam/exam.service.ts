@@ -23,6 +23,7 @@ import {
   ExamSessionNotFoundError,
   ExamSessionNotOwnedError,
 } from './exam.errors.js';
+import { wrongAnswerService } from '../wrongAnswer/wrongAnswer.service.js';
 import {
   EXAM_ENTRY_FEE,
   EXAM_GRACE_SECONDS,
@@ -608,9 +609,13 @@ export class ExamService {
 
     const answerMap = new Map(answers.map((a) => [a.examQuestionId, a.selectedAnswer]));
 
+    // ID các câu sai — được set sau khi transaction commit thành công để upsert
+    // không bị gọi nhiều lần khi transaction retry do optimistic lock conflict.
+    let committedWrongIds: string[] = [];
+
     for (let attempt = 1; attempt <= MAX_EXAM_RETRY; attempt++) {
       try {
-        return await prisma.$transaction(async (tx) => {
+        const txResult = await prisma.$transaction(async (tx) => {
           const freshSession = await tx.examSession.findUnique({ where: { id: sessionId } });
           if (!freshSession || freshSession.status !== 'IN_PROGRESS') {
             throw new ExamSessionAlreadyCompletedError(sessionId);
@@ -675,8 +680,31 @@ export class ExamService {
             throw new ExamSessionAlreadyCompletedError(sessionId);
           }
 
-          return { sessionId, score, pointsAwarded };
+          // Thu thap id cau sai de upsert SAU KHI transaction commit — tranh goi
+          // nhieu lan neu transaction bi retry do optimistic lock conflict.
+          const wrongIds = questions
+            .filter((q) => {
+              const earned = answerRecords.find((a) => a.examQuestionId === q.id)?.pointsEarned ?? 0;
+              return earned < q.points;
+            })
+            .map((q) => q.id);
+
+          return { sessionId, score, pointsAwarded, wrongIds };
         });
+
+        // Ghi nhận câu sai NGOÀI transaction — chỉ chạy 1 lần sau khi commit thành công
+        committedWrongIds = txResult.wrongIds;
+        if (committedWrongIds.length > 0) {
+          void Promise.all(
+            committedWrongIds.map((qId) =>
+              wrongAnswerService.upsertWrongAnswer(userId, qId, 'exam').catch((err) => {
+                console.warn('[ExamService] upsertWrongAnswer that bai (bo qua):', (err as Error).message);
+              }),
+            ),
+          );
+        }
+
+        return { sessionId: txResult.sessionId, score: txResult.score, pointsAwarded: txResult.pointsAwarded };
       } catch (err) {
         if (err instanceof OptimisticLockRetryableError) {
           if (attempt === MAX_EXAM_RETRY) throw new OptimisticLockError(userId, MAX_EXAM_RETRY);

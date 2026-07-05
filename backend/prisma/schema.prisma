@@ -68,6 +68,8 @@ model User {
   /// Thoi diem tao tai khoan - khong doi sau khi tao.
   createdAt   DateTime @default(now())
 
+  wrongAnswers WrongAnswer[]
+
   @@map("users")
 }
 
@@ -158,6 +160,8 @@ model Question {
   /// Trang thai kich hoat - false neu bi an (soft delete hoac bi bao cao nhieu).
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
+
+  wrongAnswers  WrongAnswer[]
 
   @@index([subject, difficulty, isActive])
   @@map("questions")
@@ -384,6 +388,8 @@ model ExamQuestion {
 
   createdAt     DateTime @default(now())
 
+  wrongAnswers  WrongAnswer[]
+
   @@index([examPaperId, isActive])
   @@index([questionBankId])
   @@map("exam_questions")
@@ -449,4 +455,46 @@ model ExamAnswer {
   /// Moi cau hoi trong 1 phien chi co 1 ban ghi tra loi.
   @@unique([sessionId, examQuestionId])
   @@map("exam_answers")
+}
+
+// ============================================================================
+// MODULE ON CAU SAI (Wrong Answer Review)
+// ============================================================================
+
+/// Bang luu cau hoi da tra loi sai cua tung user — tu ca On tap lan Thi thu.
+/// Moi (userId, questionId) hoac (userId, examQuestionId) chi co 1 ban ghi;
+/// khi cung cau do sai lan nua thi upsert: tang wrongCount, cap nhat thoi gian.
+/// Ban ghi tu dong "het han" sau 14 ngay ke tu lan sai gan nhat (expiresAt).
+model WrongAnswer {
+  id             Int      @id @default(autoincrement())
+
+  /// ID nguoi dung bi sai cau nay.
+  userId         String
+
+  /// FK den Question (module On tap) — null neu day la cau sai tu Thi thu.
+  questionId     String?
+
+  /// FK den ExamQuestion (module Thi thu) — null neu day la cau sai tu On tap.
+  examQuestionId String?
+
+  /// So lan da sai cau nay (cong don, reset ve 1 khi xoa het han va sai lai).
+  wrongCount     Int      @default(1)
+
+  /// Thoi diem sai gan nhat — moi lan sai them thi cap nhat.
+  lastWrongAt    DateTime @default(now())
+
+  /// Thoi diem het han = lastWrongAt + 14 ngay. Query chi lay ban ghi con han.
+  expiresAt      DateTime
+
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  question       Question?     @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  examQuestion   ExamQuestion? @relation(fields: [examQuestionId], references: [id], onDelete: SetNull)
+
+  /// Dam bao moi user chi co 1 ban ghi moi cau On tap.
+  @@unique([userId, questionId])
+  /// Dam bao moi user chi co 1 ban ghi moi cau Thi thu.
+  @@unique([userId, examQuestionId])
+  /// Toc do query chinh: lay cau sai chua het han cua 1 user (WHERE userId=? AND expiresAt>NOW()).
+  @@index([userId, expiresAt])
+  @@map("wrong_answers")
 }
