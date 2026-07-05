@@ -131,42 +131,80 @@ Hoặc báo tôi khi bạn sẵn sàng merge.
 >
 > Bạn chọn 1 hay 2?"
 
-#### 7A. Nếu chọn "1 — Tiếp tục"
+#### 7A. Nếu chọn "1 — Tiếp tục làm tính năng mới"
 
-Mở Session 1:
+Trước khi mở S1, **cập nhật đầy đủ toàn bộ trạng thái dự án** để S1 có context ngay khi mở:
+
 ```bash
-/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 1
+# 1. Reset STATUS.md về trạng thái chờ tính năng mới
+# Cập nhật mục "Tính năng đang triển khai" → ghi tên tính năng vừa xong + Done
+# Cập nhật tất cả session về "⏸ Chờ"
+# Cập nhật "Lịch sử cập nhật"
 ```
-Chờ khoảng 10 giây rồi `list_sessions` tìm "S1-KienTrucSu" và `send_message`:
-```
+
+```bash
+# 2. Ghi lệnh vào hộp thư của S1
+cat > workflow/handoff/PENDING/S1.md << 'EOF'
 [TỪ S7-DONGGOI]
 
 🎊 MERGE XONG: <tên tính năng>
 Branch feature/<tên-branch> đã merge vào master thành công.
+docs/TASKS.md đã cập nhật: <tên tính năng> → ✅ Done
 
-Người dùng muốn tiếp tục làm tính năng mới.
+📊 TRẠNG THÁI DỰ ÁN HIỆN TẠI:
+- Xem docs/TASKS.md để biết toàn bộ tính năng đã hoàn thành
+- Xem docs/PROJECT_OVERVIEW.md để hiểu tổng quan dự án
+- Xem docs/FEATURE_LOG.md để biết chi tiết từng tính năng
 
-👉 Hỏi người dùng: "Bạn muốn thêm hoặc thay đổi gì tiếp theo trong ứng dụng?"
+👉 Người dùng muốn tiếp tục làm tính năng mới.
+Hãy hỏi: "Bạn muốn thêm hoặc thay đổi gì tiếp theo trong ứng dụng?"
+EOF
+```
+
+Sau đó mở Session 1 (ưu tiên `send_message` nếu S1 đang chạy, nếu không thì `open-next.sh`):
+```bash
+list_sessions  # tìm session S1-KienTrucSu đang chạy
+# Nếu có → send_message vào đó
+# Nếu không → open-next.sh 1
+/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 1
 ```
 
 #### 7B. Nếu chọn "2 — Triển khai thật"
 
 Trước khi mở Session 9, xác nhận lại:
-> "Bạn xác nhận muốn chuyển sang giai đoạn triển khai thực tế (Session 9 - Cố Vấn Ra Mắt) chứ? Đây là bước cuối cùng của quy trình."
+> "Bạn xác nhận muốn chuyển sang giai đoạn triển khai thực tế (Session 9 - Cố Vấn Ra Mắt) chứ? Lưu ý: sau này nếu muốn nâng cấp thêm tính năng, bạn vẫn có thể quay lại Session 1 bất cứ lúc nào."
 
-Nếu xác nhận, mở Session 9:
+Nếu xác nhận:
+
 ```bash
-/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 9
-```
-Chờ khoảng 10 giây rồi `list_sessions` tìm "S9-CoVan" và `send_message`:
-```
+# Ghi lệnh vào hộp thư S9
+cat > workflow/handoff/PENDING/S9.md << 'EOF'
 [TỪ S7-DONGGOI]
 
 🎊 DỰ ÁN ĐÃ HOÀN THIỆN CÁC TÍNH NĂNG CẦN THIẾT.
 Người dùng muốn triển khai thực tế.
 
-👉 Yêu cầu: Đọc docs/TASKS.md + docs/PROJECT_OVERVIEW.md, hỏi người dùng về mục tiêu triển khai
-và tư vấn phương án phù hợp.
+📊 TRẠNG THÁI DỰ ÁN:
+- Xem docs/TASKS.md để biết toàn bộ tính năng đã hoàn thành
+- Xem docs/PROJECT_OVERVIEW.md để hiểu tổng quan + tech stack
+- Xem docs/DEPLOYMENT.md (nếu đã có) để xem lịch sử deploy trước
+
+⚠️ LƯU Ý QUAN TRỌNG:
+Dự án vẫn CÓ THỂ được nâng cấp thêm tính năng sau này — người dùng chỉ cần quay
+lại Session 1 để bắt đầu vòng phát triển mới. Khi đó S9 sẽ cần cập nhật
+docs/DEPLOYMENT.md theo thay đổi mới.
+
+👉 Yêu cầu: Đọc docs/TASKS.md + docs/PROJECT_OVERVIEW.md, hỏi người dùng về mục tiêu
+triển khai và tư vấn phương án phù hợp.
+EOF
+```
+
+Mở Session 9 (ưu tiên `send_message` nếu S9 đang chạy, nếu không thì `open-next.sh`):
+```bash
+list_sessions  # tìm session S9-CoVan đang chạy
+# Nếu có → send_message vào đó
+# Nếu không → open-next.sh 9
+/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 9
 ```
 
 ---
