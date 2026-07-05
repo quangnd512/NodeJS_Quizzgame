@@ -67,9 +67,12 @@ Thêm section mới cho tính năng vừa làm với đầy đủ:
 <Các quyết định thiết kế quan trọng>
 ```
 
-### Bước 4 — Cập nhật API contract
-Nếu có endpoint mới/thay đổi, cập nhật `docs/api/openapi.yaml` (tạo file nếu chưa có)
-theo chuẩn OpenAPI 3.0 — đảm bảo tài liệu API luôn khớp với code thực tế.
+### Bước 4 — Hoàn thiện API contract
+S4 KHÔNG tạo API spec từ đầu. Thay vào đó:
+1. Đọc `docs/api/drafts/<tên-tính-năng>.yaml` (do S1 tạo, S3 đã verify)
+2. Verify nó khớp với implementation thực tế sau khi S3 đã review
+3. Hoàn thiện thành full OpenAPI 3.0 spec với examples thực tế, description đầy đủ
+4. Merge vào `docs/api/openapi.yaml` chính
 
 ### Bước 5 — Tạo/cập nhật hướng dẫn sử dụng
 
@@ -86,6 +89,21 @@ theo chuẩn OpenAPI 3.0 — đảm bảo tài liệu API luôn khớp với cod
 ### Bước 6 — Cập nhật README (nếu cần)
 Nếu tính năng quan trọng, cập nhật `README.md` phần tính năng.
 
+### Bước 6.5 — Changelog và Troubleshooting guide
+
+**Changelog** — tạo/cập nhật `docs/CHANGELOG.md`:
+```markdown
+## [Unreleased] — <tên tính năng>
+### Added
+- <tính năng mới 1>
+- <tính năng mới 2>
+### Changed
+- <nếu có thay đổi breaking>
+```
+
+**Troubleshooting guide** — append vào `docs/guides/troubleshooting.md` (tạo nếu chưa có):
+3-5 lỗi phổ biến nhất người dùng/admin có thể gặp với tính năng này, kèm cách xử lý.
+
 ### Bước 7 — Tổng kết tài liệu đã cập nhật
 
 ```
@@ -97,6 +115,8 @@ Nếu tính năng quan trọng, cập nhật `README.md` phần tính năng.
 - openapi.yaml: <có/không>
 - admin-guide.md: <có/không>
 - user-guide.md: <có/không>
+- CHANGELOG.md: <có/không>
+- troubleshooting.md: <có/không>
 - README.md: <có/không>
 ```
 
@@ -108,7 +128,7 @@ Hỏi người dùng:
 - Nếu **không**: hỏi cần sửa/bổ sung gì, sửa rồi quay lại Bước 7
 - Nếu **có**: tiếp tục Bước 9
 
-### Bước 9 — Mở Session 5 và bàn giao
+### Bước 9 — Bàn giao cho Session 5
 
 **Bước 9a — Ghi PENDING/S5.md TRƯỚC**:
 ```bash
@@ -121,14 +141,10 @@ cat > workflow/handoff/PENDING/S5.md << 'EOF'
 EOF
 ```
 
-**Bước 9b — Mở Session 5** (nếu chưa chạy):
-```bash
-/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 5
+**Bước 9b — Thông báo người dùng** (KHÔNG mở tab mới, KHÔNG gọi shell):
 ```
-
-**Bước 9c — Thử send_message** (bonus):
-```
-list_sessions → tìm "S5-ThuNghiem" → send_message nội dung từ PENDING/S5.md
+📬 Đã ghi lệnh cho **S5-ThuNghiem** vào `workflow/handoff/PENDING/S5.md`.
+Bạn có thể chuyển sang S5 khi sẵn sàng — nó sẽ tự đọc và tiếp tục từ đó.
 ```
 
 ---
@@ -139,15 +155,15 @@ Nếu nhận lệnh từ **[S8-GiamSat]** (qua file PENDING hoặc send_message)
 1. Đọc lý do bị trả lại
 2. Sửa đúng phần được chỉ ra
 3. Tổng kết ngắn gọn, hỏi xác nhận người dùng
-4. Báo kết quả về đúng session S8 đang chạy (xem bên dưới)
+4. Ghi kết quả vào `workflow/handoff/PENDING/S8.md`, rồi thông báo người dùng
 
 ## HƯỚNG DẪN BÁO VỀ S8 (dùng mọi khi cần liên lạc lại S8)
 
 ```
 1. Ghi vào workflow/handoff/PENDING/S8.md TRƯỚC (đảm bảo không mất thông tin)
-2. list_sessions → tìm session "S8-GiamSat" hoặc "Giám Sát"
-3. Nếu có → send_message vào đó (bonus)
-4. Nếu không có → S8 sẽ đọc PENDING/S8.md khi khởi động
+2. Thông báo người dùng: "Đã ghi vào PENDING/S8.md, nhờ bạn chuyển sang S8."
+3. Nếu S8 đang mở sẵn, dùng send_message là bonus — nhưng KHÔNG bắt buộc
+4. KHÔNG tự mở tab S8 mới — người dùng quyết định khi nào chuyển session
 ```
 
 **KHÔNG bao giờ mở tab S8 mới** nếu đã có session S8 đang chạy.

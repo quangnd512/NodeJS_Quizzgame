@@ -102,11 +102,31 @@ git merge feature/<tên-branch> --no-ff -m "Merge feature/<tên-branch>: <tên t
 git push origin master
 ```
 
+**Sau khi merge thành công — Git tag và Release notes:**
+
+```bash
+# Đọc version hiện tại từ RELEASES.md hoặc tự tăng (minor cho tính năng mới, patch cho bugfix)
+git tag -a v<major>.<minor> -m "Release: <tên tính năng>"
+git push origin v<major>.<minor>
+```
+
+Cập nhật `docs/RELEASES.md`:
+```markdown
+## v<major>.<minor> — <ngày>
+### <Tên Tính Năng>
+<Lấy từ docs/CHANGELOG.md phần [Unreleased] mà S4 đã chuẩn bị>
+
+**Migration cần chạy trên production:**
+- `npx prisma migrate deploy` (nếu có migration mới)
+- Biến môi trường mới cần thêm: <nếu có>
+```
+
 Thông báo:
 ```
 [S7-DongGoi] 🎊 MERGE THÀNH CÔNG!
 
 ✅ Tính năng "<tên>" đã được merge vào master.
+🏷️ Tag: v<major>.<minor>
 🌿 Branch feature/<tên-branch> có thể xóa bằng:
    git branch -d feature/<tên-branch>
 ```
@@ -133,23 +153,15 @@ Hoặc báo tôi khi bạn sẵn sàng merge.
 
 #### 7A. Nếu chọn "1 — Tiếp tục làm tính năng mới"
 
-Trước khi mở S1, **cập nhật đầy đủ toàn bộ trạng thái dự án** để S1 có context ngay khi mở:
-
+Ghi PENDING/S1.md:
 ```bash
-# 1. Reset STATUS.md về trạng thái chờ tính năng mới
-# Cập nhật mục "Tính năng đang triển khai" → ghi tên tính năng vừa xong + Done
-# Cập nhật tất cả session về "⏸ Chờ"
-# Cập nhật "Lịch sử cập nhật"
-```
-
-```bash
-# 2. Ghi lệnh vào hộp thư của S1
 cat > workflow/handoff/PENDING/S1.md << 'EOF'
 [TỪ S7-DONGGOI]
 
 🎊 MERGE XONG: <tên tính năng>
 Branch feature/<tên-branch> đã merge vào master thành công.
 docs/TASKS.md đã cập nhật: <tên tính năng> → ✅ Done
+docs/RELEASES.md đã cập nhật: v<version>
 
 📊 TRẠNG THÁI DỰ ÁN HIỆN TẠI:
 - Xem docs/TASKS.md để biết toàn bộ tính năng đã hoàn thành
@@ -161,24 +173,19 @@ Hãy hỏi: "Bạn muốn thêm hoặc thay đổi gì tiếp theo trong ứng d
 EOF
 ```
 
-Sau đó mở Session 1 (ưu tiên `send_message` nếu S1 đang chạy, nếu không thì `open-next.sh`):
-```bash
-list_sessions  # tìm session S1-KienTrucSu đang chạy
-# Nếu có → send_message vào đó
-# Nếu không → open-next.sh 1
-/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 1
+Thông báo người dùng (KHÔNG mở tab mới, KHÔNG gọi shell):
+```
+📬 Đã ghi lệnh cho **S1-KienTrucSu** vào `workflow/handoff/PENDING/S1.md`.
+Bạn có thể chuyển sang S1 khi sẵn sàng — nó sẽ tự đọc và tiếp tục từ đó.
 ```
 
 #### 7B. Nếu chọn "2 — Triển khai thật"
 
-Trước khi mở Session 9, xác nhận lại:
+Trước khi bàn giao S9, xác nhận lại:
 > "Bạn xác nhận muốn chuyển sang giai đoạn triển khai thực tế (Session 9 - Cố Vấn Ra Mắt) chứ? Lưu ý: sau này nếu muốn nâng cấp thêm tính năng, bạn vẫn có thể quay lại Session 1 bất cứ lúc nào."
 
-Nếu xác nhận:
-
+Nếu xác nhận, ghi PENDING/S9.md:
 ```bash
-# Ghi lệnh vào hộp thư S9
-# loai: lan-dau = lần deploy đầu tiên, cap-nhat = cập nhật sau nâng cấp
 # Xác định loại: nếu docs/DEPLOYMENT.md chưa tồn tại → lan-dau; nếu đã có → cap-nhat
 cat > workflow/handoff/PENDING/S9.md << 'EOF'
 [TỪ S7-DONGGOI]
@@ -193,25 +200,15 @@ Người dùng muốn triển khai thực tế.
 - Xem docs/PROJECT_OVERVIEW.md để hiểu tổng quan + tech stack
 - Xem docs/DEPLOYMENT.md (nếu đã có) để xem lịch sử deploy trước
 
-⚠️ LƯU Ý QUAN TRỌNG:
-Dự án vẫn CÓ THỂ được nâng cấp thêm tính năng sau này — người dùng chỉ cần quay
-lại Session 1 để bắt đầu vòng phát triển mới. Khi đó S9 sẽ cần cập nhật
-docs/DEPLOYMENT.md theo thay đổi mới.
-
 👉 Yêu cầu: Đọc docs/TASKS.md + docs/PROJECT_OVERVIEW.md, hỏi người dùng về mục tiêu
 triển khai và tư vấn phương án phù hợp.
 EOF
 ```
 
-> **Cách xác định `loai:`**: Chạy `test -f docs/DEPLOYMENT.md && echo cap-nhat || echo lan-dau`
-> rồi điền vào dòng `loai:` ở trên trước khi ghi file.
-
-Mở Session 9 (ưu tiên `send_message` nếu S9 đang chạy, nếu không thì `open-next.sh`):
-```bash
-list_sessions  # tìm session S9-CoVan đang chạy
-# Nếu có → send_message vào đó
-# Nếu không → open-next.sh 9
-/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 9
+Thông báo người dùng (KHÔNG mở tab mới, KHÔNG gọi shell):
+```
+📬 Đã ghi lệnh cho **S9-CoVan** vào `workflow/handoff/PENDING/S9.md`.
+Bạn có thể chuyển sang S9 khi sẵn sàng — nó sẽ tự đọc và tiếp tục từ đó.
 ```
 
 ---
@@ -219,10 +216,10 @@ list_sessions  # tìm session S9-CoVan đang chạy
 ## HƯỚNG DẪN BÁO VỀ S8 (dùng mọi khi cần liên lạc lại S8)
 
 ```
-1. list_sessions                     # xem danh sách session đang chạy
-2. Tìm session có tên "S8-GiamSat" hoặc "Giám Sát"
-3. send_message → sessionId đó, nội dung kết quả
-4. Nếu không có session S8 → ghi vào workflow/handoff/PENDING/S8.md
+1. Ghi vào workflow/handoff/PENDING/S8.md TRƯỚC (đảm bảo không mất thông tin)
+2. Thông báo người dùng: "Đã ghi vào PENDING/S8.md, nhờ bạn chuyển sang S8."
+3. Nếu S8 đang mở sẵn, dùng send_message là bonus — nhưng KHÔNG bắt buộc
+4. KHÔNG tự mở tab S8 mới — người dùng quyết định khi nào chuyển session
 ```
 
 **KHÔNG bao giờ mở tab S8 mới** nếu đã có session S8 đang chạy.

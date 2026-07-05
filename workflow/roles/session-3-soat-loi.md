@@ -69,6 +69,14 @@ git diff main...HEAD --name-only
 - Điểm âm, user không tồn tại, disconnect giữa chừng?
 - Array rỗng, null/undefined?
 
+**8. API contract compliance?**
+Đối chiếu từng endpoint mới với `docs/api/drafts/<tên-tính-năng>.yaml` từ S1:
+- Method và path có đúng không?
+- Request shape có khớp không?
+- Response shape có khớp không?
+- Error codes có đủ không?
+Nếu implementation lệch khỏi contract → sửa code cho khớp (hoặc nếu contract sai thì cập nhật draft và ghi note).
+
 ### Bước 4 — Thực hiện sửa chữa
 - Sửa mọi lỗi phát hiện ở Bước 3
 - **Clear code**: xóa code thừa, console.log debug, import không dùng
@@ -104,12 +112,14 @@ npm test
 - Báo cáo: tổng số test, pass/fail, coverage % (nếu có cấu hình coverage)
 - Nếu có test FAIL → tự sửa code/test, chạy lại đến khi PASS hết
 
-**5.4. Kiểm tra build + lint**
+**5.4. Kiểm tra build + lint + npm audit**
 ```bash
 npm run build
 npm run lint
+npm audit --audit-level=high
 ```
 - Đảm bảo không có lỗi TypeScript, không có warning lint
+- Nếu có high/critical vulnerability → tự fix hoặc ghi rõ lý do chấp nhận rủi ro
 
 **5.5. Đối chiếu với thiết kế từ Session 1**
 - API trả về đúng format đã thiết kế (request/response shape) trong tin nhắn từ S1 chưa?
@@ -172,7 +182,7 @@ Hỏi người dùng:
 - Nếu **không**: hỏi cần sửa/bổ sung gì, sửa rồi quay lại Bước 8
 - Nếu **có**: tiếp tục Bước 10
 
-### Bước 10 — Mở Session 4 và bàn giao
+### Bước 10 — Bàn giao cho Session 4
 
 **Bước 10a — Ghi PENDING/S4.md TRƯỚC**:
 ```bash
@@ -185,14 +195,10 @@ cat > workflow/handoff/PENDING/S4.md << 'EOF'
 EOF
 ```
 
-**Bước 10b — Mở Session 4** (nếu chưa chạy):
-```bash
-/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 4
+**Bước 10b — Thông báo người dùng** (KHÔNG mở tab mới, KHÔNG gọi shell):
 ```
-
-**Bước 10c — Thử send_message** (bonus):
-```
-list_sessions → tìm "S4-GhiChep" → send_message nội dung từ PENDING/S4.md
+📬 Đã ghi lệnh cho **S4-GhiChep** vào `workflow/handoff/PENDING/S4.md`.
+Bạn có thể chuyển sang S4 khi sẵn sàng — nó sẽ tự đọc và tiếp tục từ đó.
 ```
 
 ---
@@ -203,15 +209,15 @@ Nếu nhận lệnh từ **[S8-GiamSat]** (qua file PENDING hoặc send_message)
 1. Đọc lý do bị trả lại
 2. Thực hiện lại các bước liên quan (review/test) cho phần bị nêu
 3. Tổng kết ngắn gọn, hỏi xác nhận người dùng
-4. Báo kết quả về đúng session S8 đang chạy (xem bên dưới)
+4. Ghi kết quả vào `workflow/handoff/PENDING/S8.md`, rồi thông báo người dùng
 
 ## HƯỚNG DẪN BÁO VỀ S8 (dùng mọi khi cần liên lạc lại S8)
 
 ```
 1. Ghi vào workflow/handoff/PENDING/S8.md TRƯỚC (đảm bảo không mất thông tin)
-2. list_sessions → tìm session "S8-GiamSat" hoặc "Giám Sát"
-3. Nếu có → send_message vào đó (bonus)
-4. Nếu không có → S8 sẽ đọc PENDING/S8.md khi khởi động
+2. Thông báo người dùng: "Đã ghi vào PENDING/S8.md, nhờ bạn chuyển sang S8."
+3. Nếu S8 đang mở sẵn, dùng send_message là bonus — nhưng KHÔNG bắt buộc
+4. KHÔNG tự mở tab S8 mới — người dùng quyết định khi nào chuyển session
 ```
 
 **KHÔNG bao giờ mở tab S8 mới** nếu đã có session S8 đang chạy.
