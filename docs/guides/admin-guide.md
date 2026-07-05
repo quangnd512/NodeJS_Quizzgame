@@ -17,6 +17,7 @@
 8. [Ngân hàng câu hỏi (Question Bank)](#8-ngân-hàng-câu-hỏi-question-bank)
    - [8.7 Tự động điền câu hỏi (Auto-Fill)](#87-tự-động-điền-câu-hỏi-auto-fill)
 9. [Bảng xếp hạng & Ảnh đại diện](#9-bảng-xếp-hạng--ảnh-đại-diện)
+10. [Ôn câu sai — Lưu ý cho Admin](#10-ôn-câu-sai--lưu-ý-cho-admin)
 
 ---
 
@@ -1136,4 +1137,70 @@ LEFT JOIN exam_papers ep ON ep.id = es."examPaperId"
 WHERE es."userId" = '<userId>'
   AND es.status = 'COMPLETED'
 ORDER BY es."completedAt" DESC;
+```
+
+---
+
+## 10. Ôn câu sai — Lưu ý cho Admin
+
+Tính năng Ôn câu sai **không có endpoint admin riêng** — toàn bộ là tính năng
+tự phục vụ phía người dùng. Tuy nhiên, admin cần biết các điều sau:
+
+### Bảng `wrong_answers`
+
+Dữ liệu được lưu trong bảng `wrong_answers` với cấu trúc:
+
+| Cột | Mô tả |
+|-----|-------|
+| `id` | Tự tăng (SERIAL), không phải UUID |
+| `userId` | Liên kết tới `users.id` (CASCADE DELETE) |
+| `questionId` | Liên kết tới `questions.id` (SET NULL khi xóa) |
+| `examQuestionId` | Liên kết tới `exam_questions.id` (SET NULL khi xóa) |
+| `wrongCount` | Số lần sai cộng dồn |
+| `expiresAt` | Hết hạn sau 14 ngày kể từ lần sai cuối |
+
+### Ảnh hưởng khi admin xóa/ẩn câu hỏi
+
+- **Soft-delete câu hỏi** (`isActive = false`): bản ghi `wrong_answers` vẫn còn
+  trong DB nhưng sẽ **không hiển thị** trong danh sách của người dùng.
+- **Hard-delete câu hỏi** (xóa khỏi DB): FK `questionId` / `examQuestionId`
+  tự động được set NULL (ON DELETE SET NULL). Bản ghi `wrong_answers` vẫn còn
+  nhưng không hiển thị và retry sẽ trả 404.
+- **Xóa user**: toàn bộ bản ghi `wrong_answers` của user đó bị xóa ngay lập tức
+  (ON DELETE CASCADE).
+
+### Dữ liệu tích lũy theo thời gian
+
+Bản ghi hết hạn (`expiresAt < NOW()`) **không bị tự xóa** — chỉ bị bỏ qua khi
+query. Để dọn dẹp định kỳ, chạy lệnh SQL sau (nên lên lịch hàng tuần):
+
+```sql
+-- Xóa bản ghi câu sai đã hết hạn
+DELETE FROM wrong_answers WHERE "expiresAt" < NOW();
+
+-- Kiểm tra số lượng bản ghi hết hạn trước khi xóa
+SELECT COUNT(*) FROM wrong_answers WHERE "expiresAt" < NOW();
+```
+
+### Truy vấn debug thủ công
+
+```sql
+-- Xem câu sai còn hạn của 1 user
+SELECT wa.id, wa."wrongCount", wa."expiresAt", wa."questionId", wa."examQuestionId"
+FROM wrong_answers wa
+WHERE wa."userId" = '<userId>'
+  AND wa."expiresAt" > NOW()
+ORDER BY wa."lastWrongAt" DESC;
+
+-- Thống kê câu bị sai nhiều nhất trong hệ thống (top 10)
+SELECT
+  COALESCE(q.question, eq."questionText") AS content,
+  COUNT(wa.id) AS total_wrong_records,
+  SUM(wa."wrongCount") AS total_wrong_count
+FROM wrong_answers wa
+LEFT JOIN questions q ON q.id = wa."questionId"
+LEFT JOIN exam_questions eq ON eq.id = wa."examQuestionId"
+GROUP BY COALESCE(q.question, eq."questionText")
+ORDER BY total_wrong_count DESC
+LIMIT 10;
 ```

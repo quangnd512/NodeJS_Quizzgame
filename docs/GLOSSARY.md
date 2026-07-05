@@ -775,3 +775,64 @@ Clamp: limit tối đa 50 (tránh tải quá nhiều), offset tối thiểu 0
 **Nguyên nhân**: `handleComplete` trong `App.tsx` refresh stats và history nhưng không gọi lại `getMyProfile` để cập nhật `profile.points`.
 
 **Fix**: Thêm `void getMyProfile(sessionToken).then(onProfileUpdate)` vào `handleComplete`.
+
+---
+
+## Ôn Câu Sai (Wrong Answer Review) — Thuật ngữ kỹ thuật
+
+### Upsert
+**Định nghĩa**: Thao tác kết hợp "UPDATE nếu đã tồn tại, INSERT nếu chưa có" — thực hiện trong một câu lệnh SQL duy nhất, an toàn với race condition.
+
+**Trong dự án này**: Dùng trong `upsertWrongAnswer()` để ghi nhận câu sai. Nếu user làm sai cùng một câu lần 2, thay vì INSERT thêm dòng mới thì `wrongCount` được cộng thêm 1 và `expiresAt` được gia hạn thêm 14 ngày.
+
+**Ví dụ**: User làm sai câu q1 lần 1 → INSERT (wrongCount=1). Làm sai lần 2 → UPDATE (wrongCount=2, expiresAt mới).
+
+---
+
+### TTL (Time-To-Live)
+**Định nghĩa**: "Thời gian sống" — một bản ghi tự động bị coi là hết hạn sau một khoảng thời gian nhất định, thay vì bị xóa thực sự khỏi DB.
+
+**Trong dự án này**: Mỗi câu sai có trường `expiresAt = lastWrongAt + 14 ngày`. Khi query, chỉ lấy các record có `expiresAt > now`. Câu sai tự "biến mất" sau 14 ngày mà không cần job dọn dẹp định kỳ.
+
+**Ví dụ**: Làm sai ngày 1/7 → expiresAt = 15/7. Ngày 16/7 mở app, câu đó không còn xuất hiện nữa.
+
+---
+
+### Soft Expiry (Xóa mềm bằng thời gian)
+**Định nghĩa**: Kỹ thuật "xóa" một bản ghi bằng cách đặt `expiresAt = now` thay vì DELETE thật — bản ghi vẫn còn trong DB nhưng sẽ không bao giờ được query ra nữa.
+
+**Trong dự án này**: Trong `retryQuestion()`, khi user trả lời đúng, code chạy `UPDATE wrongAnswer SET expiresAt = now WHERE id = ?`. Câu đó ngay lập tức "biến mất" khỏi danh sách ôn, nhưng lịch sử vẫn còn nguyên trong DB.
+
+**Tại sao không DELETE?**: Giữ lại bản ghi giúp tránh race condition và dễ audit sau này nếu cần thống kê.
+
+---
+
+### Dual FK (Hai Foreign Key song song)
+**Định nghĩa**: Một bảng có hai cột FK tới hai bảng khác nhau, nhưng mỗi record chỉ dùng đúng một trong hai — cái còn lại là NULL.
+
+**Trong dự án này**: Bảng `WrongAnswer` có cả `questionId` (FK → bảng `Question` của Practice) và `examQuestionId` (FK → bảng `ExamQuestion` của Exam). Một câu sai từ luyện tập có `questionId`, còn `examQuestionId = NULL`; và ngược lại.
+
+**Ví dụ**:
+```
+id | userId | questionId | examQuestionId | wrongCount
+1  | u1     | q-abc      | NULL           | 2        ← từ Practice
+2  | u1     | NULL       | eq-xyz         | 1        ← từ Exam
+```
+
+---
+
+### In-Memory Pagination (Phân trang trong bộ nhớ)
+**Định nghĩa**: Tải toàn bộ dữ liệu từ DB vào RAM rồi cắt thành trang bằng code, thay vì dùng `LIMIT/OFFSET` trực tiếp trong SQL.
+
+**Trong dự án này**: `getWrongAnswers()` dùng cách này vì subject của `ExamQuestion` phải JOIN qua bảng `ExamPaper` — không thể filter/paginate trực tiếp ở DB-level một cách gọn gàng. Chấp nhận được vì mỗi user chỉ có tối đa vài trăm câu sai (TTL 14 ngày).
+
+**Khi nào không dùng được**: Nếu dataset có thể lên tới hàng nghìn/triệu record thì phải paginate ở DB.
+
+---
+
+### normalizeAnswer
+**Định nghĩa**: Hàm chuẩn hóa chuỗi trước khi so sánh — bỏ khoảng trắng thừa, chuyển về chữ thường — để chấp nhận các cách gõ khác nhau của cùng một đáp án.
+
+**Trong dự án này**: Dùng để chấm câu `FILL_BLANK`. `normalizeAnswer('  Hà Nội  ')` → `'hà nội'`. Nếu đáp án trong DB là `['Hà Nội', 'ha noi']` thì user gõ `'HA NOI'` (không dấu, chữ hoa) sẽ không khớp, nhưng `'ha noi'` sẽ khớp sau normalize.
+
+**Nguồn gốc**: Hàm này được tái sử dụng từ `exam.service.ts`, không viết lại, để đảm bảo logic chấm bài nhất quán giữa Exam và Wrong Answer Review.

@@ -16,6 +16,7 @@
 7. [Ảnh đại diện (Avatar)](#7-ảnh-đại-diện-avatar)
 8. [Bảng xếp hạng (Leaderboard)](#8-bảng-xếp-hạng-leaderboard)
 9. [Tiến độ học tập (Progress Dashboard)](#9-tiến-độ-học-tập-progress-dashboard)
+10. [Ôn câu sai (Wrong Answer Review)](#10-ôn-câu-sai-wrong-answer-review)
 
 ---
 
@@ -1081,3 +1082,66 @@ A: Không — dữ liệu được tải thời gian thực mỗi khi bạn mở
 
 A: Hiện tại biểu đồ chỉ tính từ **phiên ôn tập** (Ôn tập tự do), không bao gồm
 điểm thi thử. Tính năng này có thể được mở rộng trong tương lai.
+
+---
+
+## 10. Ôn câu sai (Wrong Answer Review)
+
+### Ôn câu sai là gì?
+
+Mỗi khi bạn trả lời **sai** một câu trong phiên Ôn tập hoặc bài Thi thử, hệ thống
+tự động lưu lại câu đó. Màn hình **Ôn câu sai** tổng hợp toàn bộ những câu bạn đã
+sai trong **14 ngày gần nhất**, giúp bạn ôn lại đúng điểm yếu.
+
+### Cách mở màn hình Ôn câu sai
+
+1. Đăng nhập vào QuizzGame
+2. Trên màn hình Trang chủ / Hồ sơ, nhấn nút **"Ôn câu sai"**
+3. Danh sách câu sai sẽ hiện ra ngay lập tức
+
+### Lọc theo môn học
+
+Dùng bộ lọc môn học ở đầu trang để chỉ xem câu sai của một môn cụ thể
+(Toán, Văn, Anh, Lý, Hóa...). Chọn **"Tất cả"** để xem toàn bộ.
+
+### Làm lại câu sai
+
+Mỗi thẻ câu hỏi đều có nút **"Làm lại"**. Nhấn vào để mở phần trả lời:
+
+| Loại câu | Cách trả lời |
+|----------|-------------|
+| Trắc nghiệm 4 lựa chọn (MCQ_4) | Chọn 1 trong 4 đáp án A/B/C/D |
+| Đúng/Sai 4 ý (TRUE_FALSE_4) | Chọn Đúng/Sai cho từng phát biểu |
+| Điền từ (FILL_BLANK) | Nhập văn bản vào ô trống |
+
+Sau khi nhấn **"Xác nhận"**, hệ thống hiện kết quả:
+- **✅ Đúng rồi!** — bạn đã trả lời chính xác
+- **❌ Sai rồi!** — hiện đáp án đúng và giải thích
+
+### Câu sai sẽ ở đây bao lâu?
+
+- Mỗi câu sai được lưu **14 ngày** kể từ lần sai gần nhất.
+- Nếu bạn sai câu đó **thêm lần nữa**, thời hạn tự động **reset thêm 14 ngày**.
+- Sau khi hết hạn, câu tự động biến mất khỏi danh sách (không cần thao tác xóa).
+
+### FAQ — Ôn câu sai
+
+**Q: Làm đúng một câu thì câu đó có bị xóa khỏi danh sách không?**
+
+A: Không. Câu vẫn còn trong danh sách cho đến khi hết 14 ngày. Bạn có thể
+tiếp tục ôn lại nhiều lần để ghi nhớ chắc hơn.
+
+---
+
+**Q: Tại sao tôi không thấy câu sai từ bài thi hôm nay?**
+
+A: Danh sách câu sai được cập nhật ngay sau khi bạn nộp bài / hoàn thành phiên.
+Hãy thử làm mới trang (pull-to-refresh hoặc quay lại màn hình rồi vào lại).
+
+---
+
+**Q: Câu hỏi trong danh sách câu sai có bị thay đổi không?**
+
+A: Nếu admin ẩn hoặc xóa câu hỏi gốc, câu đó sẽ tự động không hiển thị trong
+danh sách của bạn — bạn không cần xử lý gì.
+

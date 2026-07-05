@@ -491,3 +491,44 @@
 | 19 | GET /api/progress/summary không có token | Không có Authorization header | 401 | `MISSING_AUTH_TOKEN` |
 | 20 | GET /api/progress/exam-history không có token | Không có Authorization header | 401 | `MISSING_AUTH_TOKEN` |
 | 21 | Token không hợp lệ | `Authorization: Bearer invalid` | 401 | `INVALID_SESSION_TOKEN` |
+
+---
+
+## Test Cases: Ôn Câu Sai (Wrong Answer Review)
+
+### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | Lấy danh sách câu sai còn hạn | userId có 5 câu sai, chưa hết 14 ngày | 200 + `{ data: [5 items], total: 5, page: 1, pageSize: 20 }` |
+| 2 | Filter theo môn học | `?subjectId=TOAN`, user có 3 TOAN + 2 VAN | `data: [3 items]`, tất cả `subjectId = 'TOAN'` |
+| 3 | Phân trang đúng | `?page=2&pageSize=1`, có 2 câu sai | `data: [1 item]` (item thứ 2), `page: 2`, `total: 2` |
+| 4 | Làm lại MCQ_4 đúng | `POST /:id/retry` với `answer: 2`, đáp án đúng là 2 | `{ isCorrect: true, correctAnswer: 2 }` |
+| 5 | Làm lại TRUE_FALSE_4 đúng | answer: `[true, false, true, false]` khớp đáp án | `{ isCorrect: true }` |
+| 6 | Làm lại FILL_BLANK đúng | answer: `"ha noi"` (sau normalize khớp "ha noi") | `{ isCorrect: true }` |
+| 7 | Câu sai từ Practice ghi đúng DB | submitAnswer trong practice với đáp án sai | Bản ghi `wrong_answers` mới với `source='practice'` |
+| 8 | Câu sai từ Exam ghi đúng DB | submitExam với 3 câu sai | 3 bản ghi `wrong_answers` với `source='exam'` |
+| 9 | upsert cộng dồn wrongCount | Sai câu đã tồn tại lần nữa | `wrongCount` tăng thêm 1, `expiresAt` reset +14 ngày |
+| 10 | Điều hướng đến WrongAnswersPage từ ProfilePage | Click nút "Ôn câu sai" | Màn hình chuyển sang WrongAnswersPage |
+
+### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 11 | Câu sai đã hết hạn (> 14 ngày) | `expiresAt < NOW()` | Không hiện trong GET list |
+| 12 | Câu hỏi bị soft-delete (`isActive=false`) | Câu tồn tại trong wrong_answers nhưng bị ẩn | Không hiện trong GET list |
+| 13 | Cả question và examQuestion đều null (hard-delete) | FK bị SetNull cả hai | Không hiện trong list, retry → 404 |
+| 14 | Làm lại đúng → biến mất khỏi danh sách sau reload | retry → isCorrect: true | `isCorrect: true`; `expiresAt` bị set về NOW(); GET ngay sau đó không còn trả về bản ghi này |
+| 15 | Làm lại MCQ_4 sai | answer: 0, đáp án đúng là 2 | `{ isCorrect: false, correctAnswer: 2 }` |
+| 16 | TRUE_FALSE_4 — thiếu 1 ý (null trong mảng) | `[true, false, true, null]` | `isCorrect: false` |
+| 17 | FILL_BLANK — chuỗi rỗng | `answer: ""` | `isCorrect: false` |
+| 18 | Danh sách trống (không có câu sai) | User mới chưa làm bài | 200 + `{ data: [], total: 0 }` |
+| 19 | Exam retry nhiều lần (optimistic lock) | Transaction retry 3 lần | `wrongCount` chỉ tăng 1 (không tăng 3) |
+
+### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 20 | GET /api/wrong-answers không có token | Không có Authorization header | 401 | `MISSING_AUTH_TOKEN` |
+| 21 | POST retry với id không phải số | `POST /api/wrong-answers/abc/retry` | 400 | `INVALID_REQUEST_BODY` |
+| 22 | POST retry thiếu body answer | `POST` với `{}` | 400 | `INVALID_REQUEST_BODY` |
+| 23 | POST retry id không tồn tại | `id = 99999` | 404 | `WRONG_ANSWER_NOT_FOUND` |
+| 24 | POST retry id thuộc user khác | id hợp lệ nhưng `userId` khác | 404 | `WRONG_ANSWER_NOT_FOUND` |
+| 25 | POST retry bản ghi đã hết hạn | `expiresAt < NOW()` | 404 | `WRONG_ANSWER_NOT_FOUND` |

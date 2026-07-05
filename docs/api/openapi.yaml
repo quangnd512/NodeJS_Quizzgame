@@ -32,6 +32,8 @@ tags:
     description: Quản lý profile và ảnh đại diện (session token)
   - name: Progress
     description: Tiến độ học tập — tổng quan, streak, lịch sử thi (session token)
+  - name: WrongAnswer
+    description: Ôn câu sai — danh sách câu sai chưa hết hạn và làm lại (session token)
 
 security: []
 
@@ -2567,3 +2569,125 @@ components:
                   offset: { type: integer, example: 0 }
         '401':
           description: Thiếu hoặc sai session token
+
+  /api/wrong-answers:
+    get:
+      summary: Danh sách câu sai chưa hết hạn (trong 14 ngày gần nhất)
+      tags: [WrongAnswer]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: subjectId
+          schema: { type: string, example: "TOAN" }
+          description: Lọc theo mã môn học (tùy chọn)
+        - in: query
+          name: page
+          schema: { type: integer, default: 1, minimum: 1 }
+          description: Trang hiện tại
+        - in: query
+          name: pageSize
+          schema: { type: integer, default: 20, minimum: 1, maximum: 50 }
+          description: Số bản ghi mỗi trang (clamp 1–50)
+      responses:
+        '200':
+          description: Danh sách câu sai còn hạn của user đang đăng nhập
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:          { type: integer, example: 42 }
+                        wrongCount:  { type: integer, example: 3 }
+                        lastWrongAt: { type: string, format: date-time }
+                        expiresAt:   { type: string, format: date-time }
+                        source:      { type: string, enum: [practice, exam] }
+                        question:
+                          type: object
+                          properties:
+                            id:           { type: string }
+                            content:      { type: string }
+                            type:         { type: string, enum: [MCQ_4, TRUE_FALSE_4, FILL_BLANK] }
+                            subjectId:    { type: string, example: "TOAN" }
+                            options:      { }
+                            correctAnswer: { }
+                            explanation:  { type: string, nullable: true }
+                  total:    { type: integer, example: 8 }
+                  page:     { type: integer, example: 1 }
+                  pageSize: { type: integer, example: 20 }
+        '401':
+          description: Thiếu hoặc sai session token
+
+  /api/wrong-answers/{id}/retry:
+    post:
+      summary: Làm lại một câu sai — kiểm tra đáp án, không ghi điểm
+      tags: [WrongAnswer]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+          description: ID bản ghi WrongAnswer (số nguyên, từ GET /api/wrong-answers)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answer]
+              properties:
+                answer:
+                  description: >
+                    Đáp án tùy theo loại câu:
+                    MCQ_4 → number (0–3),
+                    TRUE_FALSE_4 → boolean[] (4 phần tử),
+                    FILL_BLANK → string
+            examples:
+              mcq4:
+                summary: MCQ_4
+                value: { "answer": 2 }
+              trueFalse4:
+                summary: TRUE_FALSE_4
+                value: { "answer": [true, false, true, false] }
+              fillBlank:
+                summary: FILL_BLANK
+                value: { "answer": "Hà Nội" }
+      responses:
+        '200':
+          description: Kết quả kiểm tra đáp án
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  isCorrect:     { type: boolean }
+                  correctAnswer: { description: "Đáp án đúng (cùng kiểu với answer của request)" }
+                  explanation:   { type: string, nullable: true }
+              examples:
+                correct:
+                  summary: Đáp án đúng
+                  value: { "isCorrect": true, "correctAnswer": 0, "explanation": "Điều kiện x ≥ 1" }
+                wrong:
+                  summary: Đáp án sai
+                  value: { "isCorrect": false, "correctAnswer": 2, "explanation": null }
+        '400':
+          description: id không phải số nguyên hoặc thiếu body.answer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Thiếu hoặc sai session token
+        '404':
+          description: id không tồn tại, thuộc user khác, hoặc đã hết hạn (WRONG_ANSWER_NOT_FOUND)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'

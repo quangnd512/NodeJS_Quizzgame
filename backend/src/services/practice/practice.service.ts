@@ -52,6 +52,7 @@ import {
   REPORT_STATUSES,
   SESSION_TIMEOUT_SECONDS,
 } from './practice.types.js';
+import { wrongAnswerService } from '../wrongAnswer/wrongAnswer.service.js';
 
 // ---------------------------------------------------------------------------
 // Helpers noi bo
@@ -355,6 +356,13 @@ export class PracticeService {
         };
       }
       throw err;
+    }
+
+    // Ghi nhận câu sai vào wrong_answers (fire-and-forget, không block response)
+    if (!isCorrect) {
+      void wrongAnswerService.upsertWrongAnswer(userId, questionId, 'practice').catch((err) => {
+        console.warn('[PracticeService] upsertWrongAnswer that bai (bo qua):', (err as Error).message);
+      });
     }
 
     return {

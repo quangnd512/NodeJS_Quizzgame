@@ -1,172 +1,187 @@
 # Handoff từ S1-KienTrucSu → S2-ThoCode
 
-**Thời gian:** 2026-07-03  
-**Branch:** feature/leaderboard
+**Thời gian:** 2026-07-04  
+**Branch:** feature/wrong-answer-review
 
 ---
 
 [TỪ S1-KIENTRUCSU]
 
-🎯 TÍNH NĂNG CẦN LÀM: Leaderboard — Bảng xếp hạng học sinh
-🌿 BRANCH: feature/leaderboard
+🎯 TÍNH NĂNG CẦN LÀM: Ôn câu sai — Wrong Answer Review
+🌿 BRANCH: feature/wrong-answer-review
 
 ---
 
 ## 📝 TÓM TẮT YÊU CẦU NGƯỜI DÙNG
 
-Thêm bảng xếp hạng học sinh dựa trên **chất lượng thi thử** (không phải điểm tích lũy).
-Xếp hạng theo công thức Điểm Uy Tín — phản ánh đúng năng lực thật, không bị "farm điểm".
-Giao diện phải **thu hút, kích thích học viên cạnh tranh**.
-
-Ngoài ra, học sinh có thể **upload ảnh đại diện tùy chọn** trong trang Profile.
-Nếu chưa có ảnh → hiển thị chữ cái đầu tên + màu nền tự động.
+Thêm 1 trang riêng tên **"Ôn câu sai"**, nơi học sinh xem lại toàn bộ những câu đã trả lời sai — từ cả bài luyện tập (Practice) lẫn thi thử (Exam). Nếu cùng 1 câu sai nhiều lần thì chỉ hiện 1 lần nhưng có hiển thị **số lần đã sai**. Học sinh có thể lọc theo môn, xem đáp án đúng, và làm lại câu đó — nhưng việc làm lại **không tính điểm, không ảnh hưởng xếp hạng**. Câu sai tự xóa sau **14 ngày kể từ lần sai gần nhất**.
 
 ---
 
 ## 🔧 CHI TIẾT KỸ THUẬT
 
-### Công thức Điểm Uy Tín (ĐÃ CHỐT VỚI NGƯỜI DÙNG)
+### DB schema mới — bảng `WrongAnswer`
 
-```
-Điểm Uy Tín = (Trung Bình - 0.5 × Độ Dao Động) × (1 - 1/(số lần thi + 1))
-```
+Thêm model vào `backend/prisma/schema.prisma`:
 
-- **Trung Bình** = avg(score) của tất cả ExamSession có status="COMPLETED" và score NOT NULL
-- **Độ Dao Động** = độ lệch chuẩn (stddev) của score — tính bằng `STDDEV_POP` trong PostgreSQL
-- **Hệ Số Tin Cậy** = `1 - 1/(n+1)` với n = số lần thi thành công
-  - 1 lần → 0.50, 3 lần → 0.75, 5 lần → 0.83, 10 lần → 0.91
-- Không có yêu cầu số lần thi tối thiểu — ai cũng vào bảng được (chỉ là điểm thấp hơn nếu thi ít)
-- Điểm bằng nhau → ưu tiên người có `completedAt` gần nhất
-
-### Xu hướng tháng (↑↓→)
-
-- So sánh **hạng hiện tại** vs **hạng tính từ dữ liệu 30 ngày trước**
-  - "30 ngày trước" = chỉ tính ExamSession có `completedAt < NOW() - 30 days`
-  - Nếu user không có data từ 30 ngày trước → hiển thị "—" (chưa đủ dữ liệu)
-- ↑ = hạng tăng (số thứ tự nhỏ hơn), ↓ = hạng giảm, → = không đổi
-
-### DB thay đổi
-
-Thêm vào model `User` trong `backend/prisma/schema.prisma`:
 ```prisma
-avatarUrl String?  // URL ảnh đại diện (null = dùng avatar chữ cái)
+model WrongAnswer {
+  id           Int      @id @default(autoincrement())
+  userId       String
+  questionId   Int
+  wrongCount   Int      @default(1)
+  lastWrongAt  DateTime @default(now())
+  expiresAt    DateTime
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  question     Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questionId])
+}
 ```
 
-### Lưu ảnh avatar
+- `expiresAt = lastWrongAt + 14 ngày`
+- Ràng buộc `@@unique([userId, questionId])` đảm bảo không trùng lặp
+- Khi cùng câu sai lần nữa → **upsert**: tăng `wrongCount`, cập nhật `lastWrongAt` và `expiresAt`
 
-- Dùng **Multer** để xử lý upload (cài thêm package)
-- Lưu file tại: `backend/uploads/avatars/<userId>.<ext>`
-- Phục vụ qua Express static: `/uploads/avatars/` → `backend/uploads/avatars/`
-- Giới hạn: chỉ JPG/PNG, tối đa 2MB
-- Xóa file vật lý khi user xóa avatar hoặc upload ảnh mới (tránh rác)
+### Ghi nhận câu sai
 
-### Files cần tạo/chỉnh sửa
+Tại 2 nơi trong backend hiện có:
+- **Practice flow**: khi học sinh trả lời sai 1 câu trong bài luyện tập → upsert WrongAnswer
+- **Exam flow**: khi chấm điểm bài thi → với mỗi câu sai → upsert WrongAnswer
 
-**Backend:**
-- `backend/prisma/schema.prisma` — thêm `avatarUrl`
-- `backend/prisma/migrations/` — migration mới
-- `backend/src/routes/users.route.ts` — thêm POST/DELETE avatar
-- `backend/src/services/users.service.ts` — thêm uploadAvatar, removeAvatar
-- `backend/src/services/leaderboard.service.ts` — **file mới**, hàm tính Điểm Uy Tín
-- `backend/src/routes/leaderboard.route.ts` — **file mới**, 2 endpoint
-- `backend/src/app.ts` — đăng ký leaderboard route + static /uploads
+Logic upsert:
+```
+IF (userId, questionId) đã tồn tại:
+  wrongCount += 1
+  lastWrongAt = now()
+  expiresAt = now() + 14 days
+ELSE:
+  INSERT mới với wrongCount = 1, lastWrongAt = now(), expiresAt = now() + 14 days
+```
 
-**Frontend:**
-- `frontend/src/App.tsx` — thêm screen 'leaderboard'
-- `frontend/src/pages/ProfilePage.tsx` — thêm section upload avatar + nút vào Leaderboard
-- `frontend/src/pages/LeaderboardPage.tsx` — **file mới**, UI đầy đủ
-
-### API Endpoints
+### API Endpoints mới
 
 | Method | Path | Mô tả |
 |--------|------|--------|
-| POST | `/api/users/me/avatar` | Upload ảnh (multipart/form-data, field: "avatar") |
-| DELETE | `/api/users/me/avatar` | Xóa ảnh đại diện |
-| GET | `/api/leaderboard?subject=<optional>&page=<n>` | Danh sách xếp hạng (20 người/trang) |
-| GET | `/api/leaderboard/me` | Hạng + chỉ số của user đang đăng nhập |
+| GET | `/api/wrong-answers?subjectId=<optional>&page=<n>&pageSize=20` | Danh sách câu sai (chưa hết hạn) của user đang đăng nhập |
+| POST | `/api/wrong-answers/:questionId/retry` | Nộp đáp án làm lại — không ghi điểm |
 
-**Response GET /api/leaderboard:**
+**Response GET /api/wrong-answers:**
 ```json
 {
   "data": [
     {
-      "rank": 1,
-      "userId": "...",
-      "displayName": "Nguyễn Văn An",
-      "avatarUrl": "http://localhost:4000/uploads/avatars/abc.jpg",
-      "reputationScore": 74.1,
-      "avgScore": 90.0,
-      "examCount": 5,
-      "trend": "up" | "down" | "same" | "new"
+      "questionId": 42,
+      "wrongCount": 3,
+      "lastWrongAt": "2026-07-01T10:00:00Z",
+      "expiresAt": "2026-07-15T10:00:00Z",
+      "question": {
+        "id": 42,
+        "content": "Nội dung câu hỏi...",
+        "type": "MCQ_4" | "TRUE_FALSE_4" | "FILL_BLANK",
+        "subjectId": 1,
+        "subjectName": "Toán",
+        "options": [...],
+        "correctAnswer": "..."
+      }
     }
   ],
-  "total": 150,
+  "total": 25,
   "page": 1,
   "pageSize": 20
 }
 ```
 
-**Response GET /api/leaderboard/me:**
+**Request POST /api/wrong-answers/:questionId/retry:**
+```json
+{ "answer": "A" }
+```
+
+**Response POST /api/wrong-answers/:questionId/retry:**
 ```json
 {
-  "rank": 12,
-  "reputationScore": 55.3,
-  "avgScore": 72.0,
-  "examCount": 3,
-  "trend": "up"
+  "isCorrect": true | false,
+  "correctAnswer": "B",
+  "explanation": "..." (nếu có)
 }
 ```
+
+### Files cần tạo/chỉnh sửa
+
+**Backend:**
+- `backend/prisma/schema.prisma` — thêm model `WrongAnswer`
+- `backend/prisma/migrations/` — migration mới
+- `backend/src/services/wrongAnswer.service.ts` — **file mới**: upsertWrongAnswer(), getWrongAnswers(), retryQuestion()
+- `backend/src/routes/wrongAnswer.route.ts` — **file mới**: 2 endpoint
+- `backend/src/app.ts` — đăng ký route `/api/wrong-answers`
+- `backend/src/services/practice.service.ts` (hoặc controller tương đương) — thêm gọi upsertWrongAnswer khi trả lời sai
+- Exam grading logic — thêm gọi upsertWrongAnswer cho từng câu sai sau khi chấm
+
+**Frontend:**
+- `frontend/src/App.tsx` — thêm screen `'wrongAnswers'` vào type Screen
+- `frontend/src/pages/WrongAnswersPage.tsx` — **file mới**, UI đầy đủ
+- `frontend/src/pages/ProfilePage.tsx` — thêm nút điều hướng đến WrongAnswersPage
+
+### Edge cases
+
+1. Câu hỏi bị soft-delete khỏi hệ thống → bỏ qua khi query (join với Question, kiểm tra deleted flag)
+2. Làm lại đúng → KHÔNG xóa khỏi danh sách, vẫn giữ đến hết 14 ngày
+3. Retry hỗ trợ cả 3 loại câu: `MCQ_4`, `TRUE_FALSE_4`, `FILL_BLANK`
+4. Query phải có điều kiện `WHERE expiresAt > NOW()` để chỉ hiện câu chưa hết hạn
 
 ---
 
 ## 📋 DANH SÁCH TASK
 
-**TASK 1:** Thêm `avatarUrl String?` vào model User trong schema.prisma + chạy `prisma migrate dev --name add-user-avatar-url`
-- Output: migration mới, Prisma Client tái sinh, cột `avatarUrl` sẵn sàng
+**TASK 1:** Tạo model `WrongAnswer` trong schema.prisma + chạy migration
+- Output: bảng mới với unique constraint (userId, questionId), Prisma Client tái sinh
 - Phụ thuộc: không
 
-**TASK 2:** Backend — cài Multer, tạo API upload/xóa avatar
-- `POST /api/users/me/avatar`: validate file (JPG/PNG ≤ 2MB), lưu vào `uploads/avatars/`, cập nhật `avatarUrl` trong DB, xóa file cũ nếu có
-- `DELETE /api/users/me/avatar`: xóa file vật lý + set `avatarUrl = null` trong DB
-- Cấu hình Express serve static `/uploads/avatars/`
-- Cập nhật `getProfile()` trả về `avatarUrl`
-- Output: 2 endpoint hoạt động, ảnh truy cập được qua URL
+**TASK 2:** Backend — Service `upsertWrongAnswer()` + hook vào Practice flow
+- Viết hàm upsert trong `wrongAnswer.service.ts`
+- Tìm chỗ xử lý đáp án sai trong Practice và gọi hàm này
+- Output: mỗi câu sai trong bài luyện tập được tự động lưu/cộng dồn vào DB
 - Phụ thuộc: TASK 1
 
-**TASK 3:** Backend — Service + API Leaderboard
-- Tạo `leaderboard.service.ts` với hàm tính Điểm Uy Tín (dùng Prisma raw query `$queryRaw` cho `STDDEV_POP`)
-- Tính xu hướng tháng (30 ngày)
-- Tạo `leaderboard.route.ts` với 2 endpoint
-- Đăng ký route trong `app.ts`
-- Output: 2 endpoint đúng công thức, có phân trang
+**TASK 3:** Backend — Hook `upsertWrongAnswer()` vào Exam grading flow
+- Tìm chỗ chấm điểm bài thi và gọi hàm upsert cho từng câu sai
+- Output: mỗi câu sai trong bài thi được tự động lưu/cộng dồn vào DB
+- Phụ thuộc: TASK 1 (TASK 2 và TASK 3 có thể làm song song)
+
+**TASK 4:** Backend — API GET `/api/wrong-answers`
+- Query WrongAnswer JOIN Question JOIN Subject, filter theo subjectId (optional), chỉ lấy `expiresAt > NOW()`, phân trang 20 câu/trang, trả đủ thông tin câu hỏi kèm `wrongCount`
+- Output: endpoint hoạt động đúng
 - Phụ thuộc: TASK 1
 
-**TASK 4:** Frontend — Trang LeaderboardPage
-- Top 3: **podium style** (hạng 2 bên trái thấp hơn, hạng 1 ở giữa cao nhất, hạng 3 bên phải thấp nhất), avatar lớn, tên, Điểm Uy Tín, hiệu ứng đẹp
-- Bảng từ hạng 4 trở xuống: avatar nhỏ, tên, Điểm Uy Tín, điểm TB, số lần thi, mũi tên xu hướng (↑↓→ hoặc —)
-- Filter môn học (dropdown chọn môn, mặc định = tất cả)
-- **Thanh ghim dưới cùng**: luôn hiển thị hạng của user đang đăng nhập (kể cả không vào top)
-- Phân trang: nút "Xem thêm" hoặc infinite scroll
-- Thêm nút "Bảng xếp hạng" vào ProfilePage, thêm 'leaderboard' vào type Screen trong App.tsx
-- Output: trang Leaderboard đẹp, thu hút, đầy đủ tính năng
-- Phụ thuộc: TASK 3
+**TASK 5:** Backend — API POST `/api/wrong-answers/:questionId/retry`
+- Nhận đáp án từ client, so sánh với đáp án đúng của câu hỏi, trả `isCorrect` + `correctAnswer`
+- Không gọi bất kỳ logic tính điểm hay cập nhật leaderboard nào
+- Hỗ trợ cả 3 loại câu MCQ_4 / TRUE_FALSE_4 / FILL_BLANK
+- Output: endpoint hoạt động cho cả 3 loại câu
+- Phụ thuộc: TASK 4
 
-**TASK 5:** Frontend — Upload ảnh đại diện trong ProfilePage
-- Khu vực avatar: hiển thị ảnh (nếu có) hoặc chữ cái đầu + màu nền (generate từ tên)
-- Bấm vào avatar → mở dialog chọn file (chỉ JPG/PNG, max 2MB, có thông báo lỗi rõ ràng)
-- Preview ảnh trước khi lưu + nút "Lưu" / "Hủy"
-- Nút "Xóa ảnh" xuất hiện khi đã có avatar
-- Output: học sinh upload/xóa được ảnh, cập nhật ngay trên UI sau khi lưu
-- Phụ thuộc: TASK 2, TASK 4
+**TASK 6:** Frontend — Trang WrongAnswersPage
+- Dropdown filter môn học (giống pattern đang dùng ở các trang khác)
+- Danh sách câu sai: hiện nội dung câu, badge "Sai X lần", ngày hết hạn
+- Với mỗi câu: nút "Xem đáp án" (toggle hiện đáp án đúng tại chỗ) + nút "Làm lại" (mở mini quiz inline hoặc modal)
+- Khi làm lại: hiện đúng/sai nhưng không cộng/trừ điểm, không thay đổi gì trong DB
+- Phân trang 20 câu/trang
+- Output: trang đầy đủ, UI rõ ràng, dễ dùng
+- Phụ thuộc: TASK 4, TASK 5
+
+**TASK 7:** Frontend — Thêm nút vào trang hồ sơ cá nhân (ProfilePage)
+- Thêm nút/card "Ôn câu sai" dẫn đến WrongAnswersPage (tương tự nút "Bảng xếp hạng" đang có)
+- Thêm `'wrongAnswers'` vào type Screen trong App.tsx
+- Output: học sinh điều hướng được đến trang từ ProfilePage
+- Phụ thuộc: TASK 6
 
 ---
 
 ## ⚠️ LƯU Ý ĐẶC BIỆT
 
-1. **Công thức Điểm Uy Tín đã được người dùng xác nhận** — KHÔNG thay đổi hệ số (0.5 và 1/(n+1))
-2. **Xu hướng dùng 30 ngày** (không phải 7 ngày) — người dùng đã xác nhận
-3. **`STDDEV_POP`** (không phải `STDDEV_SAMP`) — dùng cho toàn bộ dữ liệu thi của user
-4. Học sinh chưa thi lần nào → không xuất hiện trong bảng (nhưng vẫn có dữ liệu ở `/api/leaderboard/me` với rank=null)
-5. Khi user upload ảnh mới → xóa file ảnh cũ trước khi lưu ảnh mới (tránh tồn file rác)
-6. Tên file avatar nên dùng userId (không random) để dễ overwrite: `<userId>.jpg`
-7. Giao diện Leaderboard phải **thật thu hút và kích thích** — đây là yêu cầu quan trọng của người dùng. Dùng gradient, animation nhẹ, màu sắc sống động cho phần Top 3
+1. **KHÔNG ghi điểm khi retry** — đây là yêu cầu cứng từ người dùng, tuyệt đối không tích hợp với scoring system
+2. **14 ngày tính từ lần sai gần nhất** (không phải lần đầu tiên sai) — mỗi lần sai thêm sẽ reset lại 14 ngày
+3. **Upsert, không insert** — nếu (userId, questionId) đã tồn tại thì tăng `wrongCount` và cập nhật thời gian, không tạo bản ghi mới
+4. Câu hỏi bị xóa mềm → bỏ qua trong query, không crash
+5. Làm lại đúng → không xóa khỏi danh sách WrongAnswer (để ôn thêm cho đến hết 14 ngày)
