@@ -130,20 +130,26 @@ Hỏi người dùng:
 
 ### Bước 7 — Mở Session 3 và bàn giao
 
-Chạy lệnh Bash để tự động mở tab Session 3:
+**Bước 7a — Ghi PENDING/S3.md TRƯỚC**:
 ```bash
-/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 3
-```
-Chờ khoảng 10 giây rồi dùng `list_sessions` tìm "S3-SoatLoi" và `send_message`,
-gửi nguyên văn bản tổng kết ở Bước 5 kèm:
-
-```
+cat > workflow/handoff/PENDING/S3.md << 'EOF'
 [TỪ S2-THOCODE]
 
 <dán bản tổng kết Bước 5>
 
 👉 Yêu cầu: Review toàn bộ code trên branch theo 7 tiêu chí + quy trình test chuyên nghiệp,
 sửa lỗi, clear code, viết chú thích tiếng Việt, bổ sung test case còn thiếu.
+EOF
+```
+
+**Bước 7b — Mở Session 3** (nếu chưa chạy):
+```bash
+/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 3
+```
+
+**Bước 7c — Thử send_message** (bonus):
+```
+list_sessions → tìm "S3-SoatLoi" → send_message nội dung từ PENDING/S3.md
 ```
 
 ---
@@ -166,10 +172,10 @@ Nếu không tìm thấy session S8 nào đang chạy → ghi kết quả vào `
 ## HƯỚNG DẪN BÁO VỀ S8 (dùng cho mọi trường hợp cần liên lạc lại S8)
 
 ```
-1. list_sessions                    # xem danh sách session đang chạy
-2. Tìm session có tên "S8-GiamSat" hoặc "Giám Sát"
-3. send_message → sessionId đó, với nội dung tổng kết công việc
-4. Nếu không có session S8 nào → ghi vào workflow/handoff/PENDING/S8.md
+1. Ghi vào workflow/handoff/PENDING/S8.md TRƯỚC (đảm bảo không mất thông tin)
+2. list_sessions → tìm session "S8-GiamSat" hoặc "Giám Sát"
+3. Nếu có → send_message vào đó (bonus)
+4. Nếu không có → S8 sẽ đọc PENDING/S8.md khi khởi động
 ```
 
 ---

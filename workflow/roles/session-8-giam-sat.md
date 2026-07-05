@@ -106,6 +106,16 @@ Chờ khoảng 10 giây rồi `list_sessions` tìm "S7-DongGoi" và `send_messag
 
 #### 4B. Nếu KHÔNG ĐẠT
 
+> **⚠️ KIỂM TRA GIỚI HẠN TRƯỚC**: Đọc cột "Số lần làm lại" của session sẽ nhận lại trong `workflow/STATUS.md`.
+> - Nếu đã **= 3** → **DỪNG**, không giao lại nữa. Báo người dùng trực tiếp:
+>   ```
+>   [S8-GiamSat] 🚨 ĐÃ THỬ 3 LẦN KHÔNG ĐẠT: <tên tính năng>
+>   Session <SX> đã được yêu cầu làm lại 3 lần nhưng vẫn còn vấn đề: <mô tả>.
+>   Tôi cần bạn quyết định: (1) mô tả lại yêu cầu rõ hơn, (2) bỏ qua vấn đề này, (3) dừng tính năng này.
+>   ```
+>   Chờ người dùng chỉ đạo trước khi tiếp tục.
+> - Nếu < 3 → tiếp tục quy trình bên dưới.
+
 1. Xác định rõ **vấn đề cụ thể** và **session nào phụ trách sửa**:
 
 | Vấn đề phát hiện | Gửi lại cho |
@@ -129,7 +139,7 @@ Sẽ gửi lại cho: <S_-Tên> để xử lý.
 4. Giao việc cho session đó theo quy trình sau:
 
 ```bash
-# Bước 4a: Ghi lệnh vào file PENDING của session đó (bộ nhớ vĩnh viễn)
+# Bước 4a: Ghi lệnh vào file PENDING của session đó (LUÔN làm đầu tiên)
 # Ví dụ giao cho S2:
 cat > workflow/handoff/PENDING/S2.md << 'EOF'
 [TỪ S8-GIAMSAT]
@@ -140,17 +150,19 @@ cat > workflow/handoff/PENDING/S2.md << 'EOF'
 ⚠️ VẤN ĐỀ: <mô tả cụ thể, càng chi tiết càng tốt>
 
 👉 Yêu cầu: Sửa đúng phần này, sau đó:
-- Dùng list_sessions tìm session S8-GiamSat đang chạy
-- send_message vào đó báo kết quả
-- Nếu không tìm thấy session S8 → ghi kết quả vào workflow/handoff/PENDING/S8.md
+- Ghi kết quả vào workflow/handoff/PENDING/S8.md TRƯỚC
+- Rồi dùng list_sessions tìm session S8-GiamSat đang chạy → send_message vào đó
 EOF
-
-# Bước 4b: Cập nhật STATUS.md
-# Đổi trạng thái session đó thành "↩️ Làm lại"
 ```
 
 ```bash
-# Bước 4c: Thử send_message vào session đang chạy (nếu có)
+# Bước 4b: Cập nhật STATUS.md
+# - Đổi trạng thái session đó thành "↩️ Làm lại"
+# - Tăng cột "Số lần làm lại" lên 1
+```
+
+```bash
+# Bước 4c: Thử send_message vào session đang chạy (bonus)
 # list_sessions → tìm session S_X đang chạy → send_message vào đó
 # Nếu không có session đang chạy → open-next.sh <số session> để mở
 /Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh <số session>
@@ -168,4 +180,5 @@ EOF
 - LUÔN hỏi xác nhận người dùng trước khi chuyển sang Session 7 (mục 4A)
 - **Khi giao việc cho session khác**: ghi file `workflow/handoff/PENDING/SX.md` TRƯỚC, rồi mới send_message/open tab
 - **Khi nhận yêu cầu mới từ người dùng**: ghi vào `workflow/STATUS.md` mục "Yêu cầu mới" ngay lập tức, không để quên
-- **Luôn cập nhật `workflow/STATUS.md`** sau mỗi hành động quan trọng để team đồng bộ
+- **Luôn cập nhật `workflow/STATUS.md`** sau mỗi hành động quan trọng — bao gồm tăng cột "Số lần làm lại"
+- **Giới hạn retry**: Nếu "Số lần làm lại" của một session đạt 3, dừng vòng lặp và báo người dùng quyết định — không tự tiếp tục

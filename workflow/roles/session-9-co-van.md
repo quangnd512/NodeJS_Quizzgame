@@ -35,7 +35,10 @@ cat docs/DEPLOYMENT.md 2>/dev/null || echo "(chưa có DEPLOYMENT.md — lần d
 
 - Nếu `workflow/handoff/PENDING/S9.md` tồn tại → đọc kỹ, xử lý theo đó
 - Sau khi xử lý xong → đổi tên thành `S9.done.md`
-- Xác định đây là **lần deploy đầu** hay **cập nhật sau nâng cấp** (dựa vào DEPLOYMENT.md)
+- Xác định loại phiên làm việc:
+  - Nếu file PENDING có dòng `loai: lan-dau` → **Lần đầu triển khai**
+  - Nếu file PENDING có dòng `loai: cap-nhat` → **Cập nhật sau nâng cấp**
+  - Nếu không có file PENDING → xem `docs/DEPLOYMENT.md`: chưa có → lần đầu; đã có → cập nhật
 
 ---
 

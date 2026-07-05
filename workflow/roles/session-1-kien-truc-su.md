@@ -169,14 +169,9 @@ Trước khi mở Session 2, hỏi người dùng:
 
 ### Bước 9 — Mở Session 2 và bàn giao
 
-Chạy lệnh Bash để tự động mở tab Session 2:
+**Bước 9a — Ghi PENDING/S2.md TRƯỚC** (đảm bảo S2 có lệnh dù session bị ngắt):
 ```bash
-/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 2
-```
-Chờ khoảng 10 giây để Session 2 khởi động, rồi dùng `list_sessions` tìm "S2-ThoCode"
-và `send_message` gửi lệnh:
-
-```
+cat > workflow/handoff/PENDING/S2.md << 'EOF'
 [TỪ S1-KIENTRUCSU]
 
 🎯 TÍNH NĂNG CẦN LÀM: <tên tính năng>
@@ -198,6 +193,17 @@ và `send_message` gửi lệnh:
 
 ⚠️ LƯU Ý ĐẶC BIỆT:
 <các edge case, rủi ro đã nêu>
+EOF
+```
+
+**Bước 9b — Mở Session 2** (nếu chưa chạy):
+```bash
+/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 2
+```
+
+**Bước 9c — Thử send_message** (bonus, không bắt buộc — PENDING file đã là đảm bảo):
+```
+list_sessions → tìm "S2-ThoCode" → send_message nội dung từ PENDING/S2.md
 ```
 
 ### Bước 10 — Chờ vòng lặp quay về

@@ -110,19 +110,25 @@ Hỏi người dùng:
 
 ### Bước 9 — Mở Session 5 và bàn giao
 
-Chạy lệnh Bash để tự động mở tab Session 5:
+**Bước 9a — Ghi PENDING/S5.md TRƯỚC**:
 ```bash
-/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 5
-```
-Chờ khoảng 10 giây rồi dùng `list_sessions` tìm "S5-ThuNghiem" và `send_message`,
-gửi nguyên văn bản tổng kết Bước 7 kèm:
-
-```
+cat > workflow/handoff/PENDING/S5.md << 'EOF'
 [TỪ S4-GHICHEP]
 
 <dán bản tổng kết Bước 7>
 
 👉 Yêu cầu: Đưa ra danh sách kiểm thử thực tế và hướng dẫn test.
+EOF
+```
+
+**Bước 9b — Mở Session 5** (nếu chưa chạy):
+```bash
+/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 5
+```
+
+**Bước 9c — Thử send_message** (bonus):
+```
+list_sessions → tìm "S5-ThuNghiem" → send_message nội dung từ PENDING/S5.md
 ```
 
 ---
@@ -138,10 +144,10 @@ Nếu nhận lệnh từ **[S8-GiamSat]** (qua file PENDING hoặc send_message)
 ## HƯỚNG DẪN BÁO VỀ S8 (dùng mọi khi cần liên lạc lại S8)
 
 ```
-1. list_sessions                     # xem danh sách session đang chạy
-2. Tìm session có tên "S8-GiamSat" hoặc "Giám Sát"
-3. send_message → sessionId đó, nội dung tổng kết công việc đã làm
-4. Nếu không có session S8 → ghi vào workflow/handoff/PENDING/S8.md
+1. Ghi vào workflow/handoff/PENDING/S8.md TRƯỚC (đảm bảo không mất thông tin)
+2. list_sessions → tìm session "S8-GiamSat" hoặc "Giám Sát"
+3. Nếu có → send_message vào đó (bonus)
+4. Nếu không có → S8 sẽ đọc PENDING/S8.md khi khởi động
 ```
 
 **KHÔNG bao giờ mở tab S8 mới** nếu đã có session S8 đang chạy.

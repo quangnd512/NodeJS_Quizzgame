@@ -178,8 +178,12 @@ Nếu xác nhận:
 
 ```bash
 # Ghi lệnh vào hộp thư S9
+# loai: lan-dau = lần deploy đầu tiên, cap-nhat = cập nhật sau nâng cấp
+# Xác định loại: nếu docs/DEPLOYMENT.md chưa tồn tại → lan-dau; nếu đã có → cap-nhat
 cat > workflow/handoff/PENDING/S9.md << 'EOF'
 [TỪ S7-DONGGOI]
+
+loai: lan-dau
 
 🎊 DỰ ÁN ĐÃ HOÀN THIỆN CÁC TÍNH NĂNG CẦN THIẾT.
 Người dùng muốn triển khai thực tế.
@@ -198,6 +202,9 @@ docs/DEPLOYMENT.md theo thay đổi mới.
 triển khai và tư vấn phương án phù hợp.
 EOF
 ```
+
+> **Cách xác định `loai:`**: Chạy `test -f docs/DEPLOYMENT.md && echo cap-nhat || echo lan-dau`
+> rồi điền vào dòng `loai:` ở trên trước khi ghi file.
 
 Mở Session 9 (ưu tiên `send_message` nếu S9 đang chạy, nếu không thì `open-next.sh`):
 ```bash
