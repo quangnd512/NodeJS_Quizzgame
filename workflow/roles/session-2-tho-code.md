@@ -52,6 +52,11 @@ Với mỗi TASK trong danh sách, theo đúng thứ tự và phụ thuộc:
 2. Viết code cho task đó
 3. Nếu task liên quan đến service/function quan trọng → **viết unit test ngay cùng lúc**
 4. Đánh dấu task hoàn thành trước khi sang task tiếp theo
+5. **Commit ngay sau mỗi task hoàn thành** — KHÔNG để dồn commit một lần cuối:
+   ```bash
+   git add <files liên quan đến task này>
+   git commit -m "feat(<tên-tính-năng>): <mô tả task>"
+   ```
 
 Tuân thủ nghiêm ngặt:
 <!-- STACK_BLOCK_START -->
@@ -78,6 +83,19 @@ npx tsc --noEmit       # TypeScript compile sạch
 npm run lint           # Không warning
 npm test               # Unit test đã viết đều PASS
 ```
+
+**Smoke test** — sau khi chạy unit test:
+```bash
+# Khởi động server và test API mới bằng curl
+npm run dev &
+sleep 3
+curl -X POST http://localhost:4000/api/<endpoint-mới> \
+  -H "Authorization: Bearer <test-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"test": "data"}'
+# Verify: server khởi động không lỗi, endpoint phản hồi (dù có thể trả 400/401)
+```
+
 Checklist:
 - [ ] TypeScript compile không lỗi
 - [ ] Không có `any` type
@@ -128,22 +146,24 @@ Hỏi người dùng:
 - Nếu **không**: hỏi cần sửa/bổ sung gì, sửa rồi quay lại Bước 5
 - Nếu **có**: tiếp tục Bước 7
 
-### Bước 7 — Mở Session 3 và bàn giao
+### Bước 7 — Bàn giao cho Session 3
 
-Chạy lệnh Bash để tự động mở tab Session 3:
+**Bước 7a — Ghi PENDING/S3.md TRƯỚC**:
 ```bash
-/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 3
-```
-Chờ khoảng 10 giây rồi dùng `list_sessions` tìm "S3-SoatLoi" và `send_message`,
-gửi nguyên văn bản tổng kết ở Bước 5 kèm:
-
-```
+cat > workflow/handoff/PENDING/S3.md << 'EOF'
 [TỪ S2-THOCODE]
 
 <dán bản tổng kết Bước 5>
 
-👉 Yêu cầu: Review toàn bộ code trên branch theo 7 tiêu chí + quy trình test chuyên nghiệp,
+👉 Yêu cầu: Review toàn bộ code trên branch theo 7 tiêu chí + API contract compliance,
 sửa lỗi, clear code, viết chú thích tiếng Việt, bổ sung test case còn thiếu.
+EOF
+```
+
+**Bước 7b — Thông báo người dùng** (KHÔNG mở tab mới, KHÔNG gọi shell):
+```
+📬 Đã ghi lệnh cho **S3-SoatLoi** vào `workflow/handoff/PENDING/S3.md`.
+Bạn có thể chuyển sang S3 khi sẵn sàng — nó sẽ tự đọc và tiếp tục từ đó.
 ```
 
 ---
@@ -155,21 +175,19 @@ Nếu nhận lệnh từ **[S8-GiamSat]** (qua file PENDING hoặc send_message)
 2. Sửa đúng phần được chỉ ra (không sửa lan man phần khác)
 3. Chạy lại Bước 4 (kiểm tra)
 4. Tổng kết ngắn gọn phần đã sửa, hỏi xác nhận người dùng
-5. Báo kết quả về **đúng phiên S8 đang chạy** — KHÔNG mở tab mới:
-```
-# Tìm session S8 đang chạy
-list_sessions → tìm session có title chứa "S8" hoặc "GiamSat"
-send_message → sessionId của S8 đó
-```
-Nếu không tìm thấy session S8 nào đang chạy → ghi kết quả vào `workflow/handoff/PENDING/S8.md`
+5. Ghi kết quả vào `workflow/handoff/PENDING/S8.md`, rồi thông báo người dùng:
+   ```
+   📬 Đã ghi kết quả làm lại vào PENDING/S8.md.
+   👉 Nhờ bạn thông báo cho S8. Khi S8 xong, nó sẽ tự ghi kết quả vào PENDING/S2.md nếu cần.
+   ```
 
 ## HƯỚNG DẪN BÁO VỀ S8 (dùng cho mọi trường hợp cần liên lạc lại S8)
 
 ```
-1. list_sessions                    # xem danh sách session đang chạy
-2. Tìm session có tên "S8-GiamSat" hoặc "Giám Sát"
-3. send_message → sessionId đó, với nội dung tổng kết công việc
-4. Nếu không có session S8 nào → ghi vào workflow/handoff/PENDING/S8.md
+1. Ghi vào workflow/handoff/PENDING/S8.md TRƯỚC (đảm bảo không mất thông tin)
+2. Thông báo người dùng: "Đã ghi vào PENDING/S8.md, nhờ bạn chuyển sang S8."
+3. Nếu S8 đang mở sẵn, dùng send_message là bonus — nhưng KHÔNG bắt buộc
+4. KHÔNG tự mở tab S8 mới — người dùng quyết định khi nào chuyển session
 ```
 
 ---
@@ -178,6 +196,6 @@ Nếu không tìm thấy session S8 nào đang chạy → ghi kết quả vào `
 - Luôn tag **[S2-ThoCode]** đầu tin nhắn
 - Code phải chạy được, không để TODO trống
 - Follow đúng patterns đã có trong codebase (xem `src/services/auth/` làm mẫu)
-- Không commit hay push — Session 7 sẽ làm việc đó
+- Commit từng task ngay sau khi hoàn thành — KHÔNG để dồn một lần cuối. Không push — Session 7 sẽ làm việc đó
 - LUÔN hỏi xác nhận trước khi chuyển giao sang Session 3 (Bước 6)
 - Nếu kế hoạch từ S1 mơ hồ, hỏi người dùng làm rõ trước khi code

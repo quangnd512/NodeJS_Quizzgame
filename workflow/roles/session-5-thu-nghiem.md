@@ -44,6 +44,14 @@ Trình bày cho người dùng dưới dạng checklist rõ ràng:
 ```
 [S5-ThuNghiem] DANH SÁCH KIỂM THỬ: <Tên Tính Năng>
 
+🔄 REGRESSION CHECK — Tính năng cũ vẫn hoạt động (5 phút)
+□ Đăng nhập/đăng xuất vẫn bình thường
+□ <Tính năng quan trọng nhất của app> vẫn hoạt động
+□ <Tính năng thứ 2 quan trọng> vẫn hoạt động
+(xem docs/TEST_CASES.md#regression để biết danh sách đầy đủ)
+
+═══════════════════════════════════════
+
 ⚙️ CHUẨN BỊ:
 □ Backend đang chạy: npm run dev (port 4000)
 □ Frontend đang chạy: npm run dev (port 5175)
@@ -75,6 +83,14 @@ TEST X: <Mô tả>
 
 TEST Y: <Mô tả>
   ...
+
+═══════════════════════════════════════
+
+🔒 SECURITY CHECK (UI level)
+□ Thử truy cập trang cần đăng nhập khi chưa login → bị redirect/403
+□ Thử gửi form với dữ liệu rỗng → hiện lỗi validation đúng
+□ Thử nhập script vào input field (<script>alert(1)</script>) → không execute
+□ Nếu có resource của user A, thử truy cập bằng account user B → bị từ chối
 
 ═══════════════════════════════════════
 
@@ -116,21 +132,23 @@ Hỏi người dùng:
 - Nếu **không**: hỏi cần làm thêm gì, quay lại bước phù hợp
 - Nếu **có**: tiếp tục Bước 8
 
-### Bước 8 — Mở Session 6 và bàn giao
+### Bước 8 — Bàn giao cho Session 6
 
-Chạy lệnh Bash để tự động mở tab Session 6:
+**Bước 8a — Ghi PENDING/S6.md TRƯỚC**:
 ```bash
-/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 6
-```
-Chờ khoảng 10 giây rồi dùng `list_sessions` tìm "S6-GiangGiai" và `send_message`,
-gửi nguyên văn bản tổng kết Bước 6 kèm:
-
-```
+cat > workflow/handoff/PENDING/S6.md << 'EOF'
 [TỪ S5-THUNGHIEM]
 
 <dán bản tổng kết Bước 6>
 
 👉 Yêu cầu: Giải thích tính năng cho người dùng, hỏi xem họ có thắc mắc gì không.
+EOF
+```
+
+**Bước 8b — Thông báo người dùng** (KHÔNG mở tab mới, KHÔNG gọi shell):
+```
+📬 Đã ghi lệnh cho **S6-GiangGiai** vào `workflow/handoff/PENDING/S6.md`.
+Bạn có thể chuyển sang S6 khi sẵn sàng — nó sẽ tự đọc và tiếp tục từ đó.
 ```
 
 ---
@@ -141,15 +159,15 @@ Nếu nhận lệnh từ **[S8-GiamSat]** (qua file PENDING hoặc send_message)
 1. Đọc lý do bị trả lại
 2. Test lại phần được chỉ ra, sửa nếu fail
 3. Tổng kết ngắn gọn, hỏi xác nhận người dùng
-4. Báo kết quả về đúng session S8 đang chạy (xem bên dưới)
+4. Ghi kết quả vào `workflow/handoff/PENDING/S8.md`, rồi thông báo người dùng
 
 ## HƯỚNG DẪN BÁO VỀ S8 (dùng mọi khi cần liên lạc lại S8)
 
 ```
-1. list_sessions                     # xem danh sách session đang chạy
-2. Tìm session có tên "S8-GiamSat" hoặc "Giám Sát"
-3. send_message → sessionId đó, nội dung tổng kết công việc đã làm
-4. Nếu không có session S8 → ghi vào workflow/handoff/PENDING/S8.md
+1. Ghi vào workflow/handoff/PENDING/S8.md TRƯỚC (đảm bảo không mất thông tin)
+2. Thông báo người dùng: "Đã ghi vào PENDING/S8.md, nhờ bạn chuyển sang S8."
+3. Nếu S8 đang mở sẵn, dùng send_message là bonus — nhưng KHÔNG bắt buộc
+4. KHÔNG tự mở tab S8 mới — người dùng quyết định khi nào chuyển session
 ```
 
 **KHÔNG bao giờ mở tab S8 mới** nếu đã có session S8 đang chạy.

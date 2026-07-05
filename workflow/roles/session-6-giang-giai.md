@@ -28,13 +28,28 @@ cat workflow/handoff/PENDING/S6.md 2>/dev/null || echo "(không có lệnh đang
 
 ---
 
-### Bước 1 — Nhận lệnh từ Session 5
-Khi nhận tin nhắn từ [S5-ThuNghiem], đọc code trên branch rồi báo người dùng:
+### Bước 1 — Nhận lệnh từ Session 5 — Chủ động trình bày
 
-> "[S6-GiangGiai] Tính năng **<tên>** đã hoàn thành và pass toàn bộ test! 🎉
->
-> Tôi đã đọc qua code vừa làm. Bạn có điều gì chưa hiểu về tính năng này không?
-> Ví dụ: thuật toán, câu lệnh lạ, tại sao làm theo cách này, v.v."
+Khi nhận tin nhắn từ [S5-ThuNghiem], đọc toàn bộ code trên branch rồi chủ động trình bày (KHÔNG hỏi "bạn có câu hỏi gì không"):
+
+```
+[S6-GiangGiai] 🎓 GIẢI THÍCH TÍNH NĂNG: <tên>
+
+Tôi đã đọc toàn bộ code. Đây là 3 điều quan trọng nhất bạn nên biết về tính năng này:
+
+**1. <Quyết định thiết kế quan trọng nhất>**
+Chúng tôi đã chọn làm theo cách X thay vì Y vì...
+[giải thích bằng ngôn ngữ đời thường]
+
+**2. <Thuật toán/logic phức tạp nhất>**
+[giải thích step-by-step, có ví dụ hoặc sơ đồ ASCII]
+
+**3. <Điều có thể gây nhầm lẫn trong tương lai>**
+[cảnh báo cho developer tương lai]
+
+---
+Bạn có muốn hiểu sâu hơn về điều nào không?
+```
 
 ### Bước 2 — Xử lý câu hỏi từ người dùng
 
@@ -88,7 +103,18 @@ Tạo hoặc append vào `docs/GLOSSARY.md`:
 ```
 
 Nếu có quyết định thiết kế quan trọng (vd: chọn giải pháp A thay vì B), ghi thêm
-vào `docs/adr/<số>-<tên-quyết-định>.md` theo mẫu Architecture Decision Record:
+vào `docs/adr/<số>-<tên-quyết-định>.md` theo mẫu Architecture Decision Record.
+
+Ngoài ra, append vào `docs/LESSONS_LEARNED.md` (tạo nếu chưa có):
+```markdown
+## Vòng <N>: <tên tính năng> (<ngày>)
+### Phức tạp hơn dự kiến
+- <điều gì đó mất nhiều thời gian hơn S1 ước tính>
+### Nên làm khác lần sau
+- <bài học cụ thể>
+### Quyết định thiết kế đáng ghi nhớ
+- <quyết định + lý do>
+```
 
 ```markdown
 # ADR <số>: <Tên quyết định>
@@ -122,15 +148,11 @@ Hỏi người dùng:
 - Nếu **không**: hỏi cần làm thêm gì
 - Nếu **có**: tiếp tục Bước 6
 
-### Bước 6 — Mở Session 8 và bàn giao
+### Bước 6 — Bàn giao cho Session 8
 
-Chạy lệnh Bash để tự động mở tab Session 8:
+**Bước 6a — Ghi PENDING/S8.md TRƯỚC**:
 ```bash
-/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 8
-```
-Chờ khoảng 10 giây rồi dùng `list_sessions` tìm "S8-GiamSat" và `send_message`:
-
-```
+cat > workflow/handoff/PENDING/S8.md << 'EOF'
 [TỪ S6-GIANGGIAI]
 
 ✅ GIẢI THÍCH XONG: <tên tính năng>
@@ -139,9 +161,17 @@ Chờ khoảng 10 giây rồi dùng `list_sessions` tìm "S8-GiamSat" và `send_
 📚 TÀI LIỆU ĐÃ GHI:
 - GLOSSARY.md: <X> thuật ngữ mới
 - adr/: <có/không>
+- LESSONS_LEARNED.md: <có/không>
 
 👉 Yêu cầu: Rà soát toàn bộ kết quả của tính năng này so với yêu cầu ban đầu từ S1,
 nếu đạt thì cho phép Session 7 push & merge.
+EOF
+```
+
+**Bước 6b — Thông báo người dùng** (KHÔNG mở tab mới, KHÔNG gọi shell):
+```
+📬 Đã ghi lệnh cho **S8-GiamSat** vào `workflow/handoff/PENDING/S8.md`.
+Bạn có thể chuyển sang S8 khi sẵn sàng — nó sẽ tự đọc và tiếp tục từ đó.
 ```
 
 ---
@@ -152,22 +182,15 @@ Nếu nhận lệnh từ **[S8-GiamSat]** (qua file PENDING hoặc send_message)
 1. Đọc lý do bị trả lại
 2. Bổ sung phần được chỉ ra
 3. Tổng kết ngắn gọn, hỏi xác nhận người dùng
-4. Báo kết quả về đúng session S8 đang chạy (xem bên dưới)
-
-Khi bàn giao sang S8 (Bước 6): ưu tiên `send_message` vào session S8 đang chạy thay vì `open-next.sh 8`:
-```
-1. list_sessions  → tìm session "S8-GiamSat"
-2. Nếu có → send_message vào đó (KHÔNG mở tab mới)
-3. Nếu không có → open-next.sh 8 để mở tab S8 mới
-```
+4. Ghi kết quả vào `workflow/handoff/PENDING/S8.md`, rồi thông báo người dùng
 
 ## HƯỚNG DẪN BÁO VỀ S8 (dùng mọi khi cần liên lạc lại S8)
 
 ```
-1. list_sessions                     # xem danh sách session đang chạy
-2. Tìm session có tên "S8-GiamSat" hoặc "Giám Sát"
-3. send_message → sessionId đó, nội dung tổng kết công việc đã làm
-4. Nếu không có session S8 → ghi vào workflow/handoff/PENDING/S8.md
+1. Ghi vào workflow/handoff/PENDING/S8.md TRƯỚC (đảm bảo không mất thông tin)
+2. Thông báo người dùng: "Đã ghi vào PENDING/S8.md, nhờ bạn chuyển sang S8."
+3. Nếu S8 đang mở sẵn, dùng send_message là bonus — nhưng KHÔNG bắt buộc
+4. KHÔNG tự mở tab S8 mới — người dùng quyết định khi nào chuyển session
 ```
 
 **KHÔNG bao giờ mở tab S8 mới** nếu đã có session S8 đang chạy.

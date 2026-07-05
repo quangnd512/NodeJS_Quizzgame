@@ -102,11 +102,31 @@ git merge feature/<tên-branch> --no-ff -m "Merge feature/<tên-branch>: <tên t
 git push origin master
 ```
 
+**Sau khi merge thành công — Git tag và Release notes:**
+
+```bash
+# Đọc version hiện tại từ RELEASES.md hoặc tự tăng (minor cho tính năng mới, patch cho bugfix)
+git tag -a v<major>.<minor> -m "Release: <tên tính năng>"
+git push origin v<major>.<minor>
+```
+
+Cập nhật `docs/RELEASES.md`:
+```markdown
+## v<major>.<minor> — <ngày>
+### <Tên Tính Năng>
+<Lấy từ docs/CHANGELOG.md phần [Unreleased] mà S4 đã chuẩn bị>
+
+**Migration cần chạy trên production:**
+- `npx prisma migrate deploy` (nếu có migration mới)
+- Biến môi trường mới cần thêm: <nếu có>
+```
+
 Thông báo:
 ```
 [S7-DongGoi] 🎊 MERGE THÀNH CÔNG!
 
 ✅ Tính năng "<tên>" đã được merge vào master.
+🏷️ Tag: v<major>.<minor>
 🌿 Branch feature/<tên-branch> có thể xóa bằng:
    git branch -d feature/<tên-branch>
 ```
@@ -131,42 +151,64 @@ Hoặc báo tôi khi bạn sẵn sàng merge.
 >
 > Bạn chọn 1 hay 2?"
 
-#### 7A. Nếu chọn "1 — Tiếp tục"
+#### 7A. Nếu chọn "1 — Tiếp tục làm tính năng mới"
 
-Mở Session 1:
+Ghi PENDING/S1.md:
 ```bash
-/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 1
-```
-Chờ khoảng 10 giây rồi `list_sessions` tìm "S1-KienTrucSu" và `send_message`:
-```
+cat > workflow/handoff/PENDING/S1.md << 'EOF'
 [TỪ S7-DONGGOI]
 
 🎊 MERGE XONG: <tên tính năng>
 Branch feature/<tên-branch> đã merge vào master thành công.
+docs/TASKS.md đã cập nhật: <tên tính năng> → ✅ Done
+docs/RELEASES.md đã cập nhật: v<version>
 
-Người dùng muốn tiếp tục làm tính năng mới.
+📊 TRẠNG THÁI DỰ ÁN HIỆN TẠI:
+- Xem docs/TASKS.md để biết toàn bộ tính năng đã hoàn thành
+- Xem docs/PROJECT_OVERVIEW.md để hiểu tổng quan dự án
+- Xem docs/FEATURE_LOG.md để biết chi tiết từng tính năng
 
-👉 Hỏi người dùng: "Bạn muốn thêm hoặc thay đổi gì tiếp theo trong ứng dụng?"
+👉 Người dùng muốn tiếp tục làm tính năng mới.
+Hãy hỏi: "Bạn muốn thêm hoặc thay đổi gì tiếp theo trong ứng dụng?"
+EOF
+```
+
+Thông báo người dùng (KHÔNG mở tab mới, KHÔNG gọi shell):
+```
+📬 Đã ghi lệnh cho **S1-KienTrucSu** vào `workflow/handoff/PENDING/S1.md`.
+Bạn có thể chuyển sang S1 khi sẵn sàng — nó sẽ tự đọc và tiếp tục từ đó.
 ```
 
 #### 7B. Nếu chọn "2 — Triển khai thật"
 
-Trước khi mở Session 9, xác nhận lại:
-> "Bạn xác nhận muốn chuyển sang giai đoạn triển khai thực tế (Session 9 - Cố Vấn Ra Mắt) chứ? Đây là bước cuối cùng của quy trình."
+Trước khi bàn giao S9, xác nhận lại:
+> "Bạn xác nhận muốn chuyển sang giai đoạn triển khai thực tế (Session 9 - Cố Vấn Ra Mắt) chứ? Lưu ý: sau này nếu muốn nâng cấp thêm tính năng, bạn vẫn có thể quay lại Session 1 bất cứ lúc nào."
 
-Nếu xác nhận, mở Session 9:
+Nếu xác nhận, ghi PENDING/S9.md:
 ```bash
-/Users/quangnd512/Desktop/claude/quiz_dh/workflow/open-next.sh 9
-```
-Chờ khoảng 10 giây rồi `list_sessions` tìm "S9-CoVan" và `send_message`:
-```
+# Xác định loại: nếu docs/DEPLOYMENT.md chưa tồn tại → lan-dau; nếu đã có → cap-nhat
+cat > workflow/handoff/PENDING/S9.md << 'EOF'
 [TỪ S7-DONGGOI]
+
+loai: lan-dau
 
 🎊 DỰ ÁN ĐÃ HOÀN THIỆN CÁC TÍNH NĂNG CẦN THIẾT.
 Người dùng muốn triển khai thực tế.
 
-👉 Yêu cầu: Đọc docs/TASKS.md + docs/PROJECT_OVERVIEW.md, hỏi người dùng về mục tiêu triển khai
-và tư vấn phương án phù hợp.
+📊 TRẠNG THÁI DỰ ÁN:
+- Xem docs/TASKS.md để biết toàn bộ tính năng đã hoàn thành
+- Xem docs/PROJECT_OVERVIEW.md để hiểu tổng quan + tech stack
+- Xem docs/DEPLOYMENT.md (nếu đã có) để xem lịch sử deploy trước
+
+👉 Yêu cầu: Đọc docs/TASKS.md + docs/PROJECT_OVERVIEW.md, hỏi người dùng về mục tiêu
+triển khai và tư vấn phương án phù hợp.
+EOF
+```
+
+Thông báo người dùng (KHÔNG mở tab mới, KHÔNG gọi shell):
+```
+📬 Đã ghi lệnh cho **S9-CoVan** vào `workflow/handoff/PENDING/S9.md`.
+Bạn có thể chuyển sang S9 khi sẵn sàng — nó sẽ tự đọc và tiếp tục từ đó.
 ```
 
 ---
@@ -174,10 +216,10 @@ và tư vấn phương án phù hợp.
 ## HƯỚNG DẪN BÁO VỀ S8 (dùng mọi khi cần liên lạc lại S8)
 
 ```
-1. list_sessions                     # xem danh sách session đang chạy
-2. Tìm session có tên "S8-GiamSat" hoặc "Giám Sát"
-3. send_message → sessionId đó, nội dung kết quả
-4. Nếu không có session S8 → ghi vào workflow/handoff/PENDING/S8.md
+1. Ghi vào workflow/handoff/PENDING/S8.md TRƯỚC (đảm bảo không mất thông tin)
+2. Thông báo người dùng: "Đã ghi vào PENDING/S8.md, nhờ bạn chuyển sang S8."
+3. Nếu S8 đang mở sẵn, dùng send_message là bonus — nhưng KHÔNG bắt buộc
+4. KHÔNG tự mở tab S8 mới — người dùng quyết định khi nào chuyển session
 ```
 
 **KHÔNG bao giờ mở tab S8 mới** nếu đã có session S8 đang chạy.
