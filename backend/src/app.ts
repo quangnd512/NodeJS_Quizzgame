@@ -13,6 +13,7 @@ import { questionBankRouter } from './routes/question-bank.route.js';
 import { leaderboardRouter } from './routes/leaderboard.route.js';
 import { progressRouter } from './routes/progress.route.js';
 import { wrongAnswerRouter } from './routes/wrongAnswer.route.js';
+import { adminUsersRouter } from './routes/admin-users.route.js';
 import type { ZodIssue } from 'zod';
 
 /**
@@ -52,6 +53,10 @@ const ERROR_CODE_TO_HTTP_STATUS: Readonly<Record<string, number>> = {
   QUESTION_NOT_IN_SESSION: 400,
   // Admin
   ADMIN_UNAUTHORIZED: 401,
+  // Admin User Management
+  ADMIN_USER_NOT_FOUND: 404,
+  ADMIN_USER_NO_EMAIL: 400,
+  ADMIN_INVALID_ROLE: 400,
   // Reports
   REPORT_ALREADY_SUBMITTED: 409,
   // Avatar
@@ -127,6 +132,7 @@ export function createApp(): Application {
   app.use('/api/leaderboard', leaderboardRouter);
   app.use('/api/progress', progressRouter);
   app.use('/api/wrong-answers', wrongAnswerRouter);
+  app.use('/api/admin', adminUsersRouter);
 
   // Route kiem tra suc khoe server
   app.get('/api/health', (_req: Request, res: Response) => {
