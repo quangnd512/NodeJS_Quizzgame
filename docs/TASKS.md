@@ -12,8 +12,8 @@
 | 005 | Question Bank – Ngân hàng câu hỏi | ✅ Done | feature/question-bank | 2026-07-03 |
 | 006 | Leaderboard – Bảng xếp hạng | ✅ Done | feature/leaderboard | 2026-07-04 |
 | 007 | Progress Dashboard – Thống kê tiến độ học sinh | ✅ Done | feature/progress-dashboard | 2026-07-04 |
-| 010 | Ôn Câu Sai – Wrong Answer Review | 🔄 Chờ S7 merge | feature/wrong-answer-review | — |
-| 008 | Admin User Management – Quản lý người dùng | ⏳ Chờ S1 lên kế hoạch | — | — |
+| 010 | Ôn Câu Sai – Wrong Answer Review | ✅ Done | feature/wrong-answer-review | 2026-07-05 |
+| 008 | Admin User Management – Quản lý người dùng | 🔄 Đang làm | feature/admin-user-management | — |
 | 009 | Notifications – Thông báo hệ thống | ⏳ Chờ S1 lên kế hoạch | — | — |
 
 ---
