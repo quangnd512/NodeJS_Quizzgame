@@ -78,6 +78,9 @@ model User {
 
   wrongAnswers WrongAnswer[]
 
+  /// Index ho tro filter nhanh theo trang thai khoa va vai tro trong admin panel.
+  @@index([isBlocked])
+  @@index([role])
   @@map("users")
 }
 

@@ -131,7 +131,8 @@ async function listUsers(query: AdminListUsersQuery): Promise<AdminUserListResul
     prisma.user.count({ where }),
   ]);
 
-  const totalPages = Math.ceil(total / limit);
+  // Toi thieu 1 trang du cho ket qua rong — tranh frontend bi confused voi totalPages=0.
+  const totalPages = Math.max(1, Math.ceil(total / limit));
 
   return {
     users: users.map((u) => ({

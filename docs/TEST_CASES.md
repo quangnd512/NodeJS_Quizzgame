@@ -532,3 +532,52 @@
 | 23 | POST retry id không tồn tại | `id = 99999` | 404 | `WRONG_ANSWER_NOT_FOUND` |
 | 24 | POST retry id thuộc user khác | id hợp lệ nhưng `userId` khác | 404 | `WRONG_ANSWER_NOT_FOUND` |
 | 25 | POST retry bản ghi đã hết hạn | `expiresAt < NOW()` | 404 | `WRONG_ANSWER_NOT_FOUND` |
+
+---
+
+## Test Cases: Admin User Management + Dashboard (008)
+
+### Happy Path
+
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | GET dashboard trả đủ 6 trường | `GET /api/admin/dashboard` + valid secret | 200, `{ totalUsers, newUsersThisWeek, newUsersThisMonth, totalExamSessions, examPassRate, onlineNow }` |
+| 2 | GET users không filter | `GET /api/admin/users` | 200, `{ users[], total, page:1, totalPages }` |
+| 3 | GET users tìm kiếm theo tên | `search=nguyen` | 200, danh sách chứa user có displayName chứa "nguyen" |
+| 4 | GET users filter theo role ADMIN | `role=ADMIN` | 200, chỉ trả user có role=ADMIN |
+| 5 | GET users filter isBlocked=true | `isBlocked=true` | 200, chỉ trả user bị khoá |
+| 6 | GET users phân trang | `page=2&limit=5` | 200, trả đúng trang 2 |
+| 7 | GET user detail | `GET /api/admin/users/:id` | 200, `{ user, stats, recentExams[] }` |
+| 8 | PATCH khoá tài khoản | `{ isBlocked: true }` | 200, `{ id, isBlocked: true }` |
+| 9 | PATCH mở khoá tài khoản | `{ isBlocked: false }` | 200, `{ id, isBlocked: false }` |
+| 10 | POST reset password có email | user có email | 200, `{ resetLink: "https://..." }` |
+| 11 | PATCH đổi STUDENT → ADMIN | `{ role: "ADMIN" }` | 200, `{ id, role: "ADMIN" }` |
+| 12 | PATCH đổi ADMIN → STUDENT | `{ role: "STUDENT" }` | 200, `{ id, role: "STUDENT" }` |
+| 13 | DELETE xoá tài khoản | `DELETE /api/admin/users/:id` | 200, `{ message: "..." }` |
+
+### Edge Cases
+
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 14 | GET users khi DB rỗng | DB không có user | 200, `{ users:[], total:0, totalPages:1 }` (totalPages tối thiểu 1) |
+| 15 | GET dashboard khi Redis down | Redis không kết nối được | 200, `onlineNow: 0` — không crash |
+| 16 | GET dashboard khi chưa có phiên thi | examSessions = 0 | 200, `examPassRate: 0` — không chia cho 0 |
+| 17 | GET user detail user không có phiên thi | `recentExams=[]` | 200, `recentExams:[], stats.totalExamSessions:0` |
+| 18 | GET user detail examPaper đã bị xoá | examPaperId không còn trong DB | 200, `examPaperTitle: "(Đề thi đã bị xoá)"` |
+| 19 | DELETE user DB lỗi sau khi Firebase xoá | DB throw error | 200, vẫn thành công (Firebase đã mất, ghi log) |
+| 20 | DELETE user displayName=null | user không có tên | 200, message dùng userId làm fallback |
+
+### Error Cases
+
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 21 | GET dashboard sai secret | `X-Admin-Secret: wrong` | 401 | `ADMIN_UNAUTHORIZED` |
+| 22 | GET user không tồn tại | `GET /api/admin/users/no-such-id` | 404 | `ADMIN_USER_NOT_FOUND` |
+| 23 | PATCH block thiếu body | `PATCH .../block` với `{}` | 400 | Zod validation error |
+| 24 | PATCH block isBlocked không phải boolean | `{ isBlocked: "yes" }` | 400 | Zod validation error |
+| 25 | POST reset-password user không có email | user.email = null | 400 | `ADMIN_USER_NO_EMAIL` |
+| 26 | POST reset-password user không tồn tại | id không có trong DB | 404 | `ADMIN_USER_NOT_FOUND` |
+| 27 | PATCH role giá trị không hợp lệ | `{ role: "SUPERADMIN" }` | 400 | Zod validation error |
+| 28 | PATCH role user không tồn tại | id không có trong DB | 404 | `ADMIN_USER_NOT_FOUND` |
+| 29 | DELETE user không tồn tại | id không có trong DB | 404 | `ADMIN_USER_NOT_FOUND` |
+| 30 | User bị khoá gọi API bình thường | Bearer token hợp lệ nhưng isBlocked=true | 403 | `USER_BLOCKED` |
