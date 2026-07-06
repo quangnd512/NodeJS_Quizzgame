@@ -1062,6 +1062,7 @@ function ExamPage({
   const [result, setResult]     = useState<SubmitExamResult | null>(null);
   const [loadingSubj, setLoadingSubj] = useState('');
   const [hubError, setHubError] = useState('');
+  const [sessionError, setSessionError] = useState('');
   const [submitting, setSubmitting]   = useState(false);
 
   async function handleStart(subject: string) {
@@ -1077,6 +1078,8 @@ function ExamPage({
         setHubError('Bạn cần tối thiểu 60 điểm tích lũy để vào thi thử.');
       } else if (err instanceof ApiError && err.code === 'EXAM_PAPER_EMPTY') {
         setHubError('Môn học này hiện chưa có đề thi thử. Vui lòng thử lại sau.');
+      } else if (err instanceof ApiError && err.code === 'EXAM_SESSION_ALREADY_ACTIVE') {
+        setHubError('Bạn đang có phiên thi chưa hoàn thành. Hãy hoàn thành hoặc chờ hết giờ.');
       } else {
         onError(err);
       }
@@ -1097,6 +1100,7 @@ function ExamPage({
   async function handleSubmit() {
     if (!session || submitting) return;
     setSubmitting(true);
+    setSessionError('');
     try {
       const answers = session.data.questions.map((q) => ({
         examQuestionId: q.id,
@@ -1113,6 +1117,11 @@ function ExamPage({
         setSub('result');
         return;
       }
+      if (err instanceof ApiError && err.code === 'EXAM_SUBMIT_TOO_EARLY') {
+        // Hien thi thong bao truc tiep trong man hinh lam bai (khong phai global error)
+        setSessionError(err.message);
+        return;
+      }
       onError(err);
     } finally {
       setSubmitting(false);
@@ -1126,6 +1135,8 @@ function ExamPage({
         onAnswerChange={handleAnswerChange}
         onSubmit={() => void handleSubmit()}
         submitting={submitting}
+        submitError={sessionError}
+        onClearSubmitError={() => setSessionError('')}
       />
     );
   }
@@ -1181,12 +1192,14 @@ function ExamPage({
 // ─── ExamSessionScreen ──────────────────────────────────────────────────────
 
 function ExamSessionScreen({
-  session, onAnswerChange, onSubmit, submitting,
+  session, onAnswerChange, onSubmit, submitting, submitError, onClearSubmitError,
 }: {
   session: ActiveExamSession;
   onAnswerChange: (qId: string, value: ExamAnswerValue) => void;
   onSubmit: () => void;
   submitting: boolean;
+  submitError?: string;
+  onClearSubmitError?: () => void;
 }) {
   const { data, answers } = session;
 
@@ -1239,6 +1252,16 @@ function ExamSessionScreen({
       </div>
 
       <div className="ps-footer">
+        {submitError && (
+          <div
+            className="exam-submit-error"
+            role="alert"
+            onClick={onClearSubmitError}
+            style={{ cursor: 'pointer', marginBottom: '0.5rem', padding: '0.5rem 0.75rem', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '0.5rem', color: '#b91c1c', fontSize: '0.875rem', textAlign: 'center' }}
+          >
+            ⏱ {submitError}
+          </div>
+        )}
         <button className="btn-primary btn-lg" disabled={submitting} onClick={onSubmit}>
           {submitting ? <Spinner /> : null} Nộp bài
         </button>
@@ -1399,12 +1422,21 @@ function ExamResultScreen({
                 <div key={w.examQuestionId} className="exam-wrong-card">
                   {w.chapter && <span className="exam-chapter-tag">{w.chapter}</span>}
                   <p className="exam-question-text">{w.questionText}</p>
-                  <p className="exam-wrong-line">
-                    <strong>Bạn chọn:</strong> {describeExamAnswer(w.questionType, w.options, w.selectedAnswer)}
-                  </p>
-                  <p className="exam-wrong-line correct">
-                    <strong>Đáp án đúng:</strong> {describeExamAnswer(w.questionType, w.options, w.correctAnswer)}
-                  </p>
+                  {/* Bug 1b: correctAnswer = null → câu bỏ trắng, không lộ đáp án */}
+                  {w.correctAnswer === null ? (
+                    <p className="exam-wrong-line" style={{ color: '#94a3b8', fontStyle: 'italic' }}>
+                      Bạn chưa trả lời câu này
+                    </p>
+                  ) : (
+                    <>
+                      <p className="exam-wrong-line">
+                        <strong>Bạn chọn:</strong> {describeExamAnswer(w.questionType, w.options, w.selectedAnswer)}
+                      </p>
+                      <p className="exam-wrong-line correct">
+                        <strong>Đáp án đúng:</strong> {describeExamAnswer(w.questionType, w.options, w.correctAnswer)}
+                      </p>
+                    </>
+                  )}
                   {w.explanation && <p className="fb-explain">{w.explanation}</p>}
                 </div>
               ))}

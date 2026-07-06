@@ -13,6 +13,12 @@ export const EXAM_ENTRY_FEE = 60;
 /** So giay "an toan" cong them sau khi het gio lam bai, truoc khi tinh la EXPIRED. */
 export const EXAM_GRACE_SECONDS = 30;
 
+/**
+ * Ti le thoi gian toi thieu can lam bai truoc khi duoc phep nop.
+ * Vi du: de 60 phut → phai lam it nhat 60 * 0.3 = 18 phut moi duoc nop.
+ */
+export const EXAM_MIN_SUBMIT_RATIO = 0.3;
+
 /** Cac dang cau hoi thi thu hop le. */
 export const EXAM_QUESTION_TYPES = ['MCQ_4', 'TRUE_FALSE_4', 'FILL_BLANK'] as const;
 export type ExamQuestionType = (typeof EXAM_QUESTION_TYPES)[number];
@@ -203,7 +209,12 @@ export interface ExamWrongAnswerItem {
   questionType: ExamQuestionType;
   chapter: string | null;
   options: Prisma.JsonValue | null;
-  correctAnswer: Prisma.JsonValue;
+  /**
+   * Dap an dung cua cau hoi.
+   * null khi cau bi bo trang (selectedAnswer la sentinel {} - hoc sinh chua tra loi).
+   * Frontend hien thi "Ban chua tra loi cau nay" thay vi dap an dung.
+   */
+  correctAnswer: Prisma.JsonValue | null;
   selectedAnswer: Prisma.JsonValue;
   explanation: string | null;
   points: number;
