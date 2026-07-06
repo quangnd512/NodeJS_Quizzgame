@@ -4696,3 +4696,534 @@ curl http://localhost:4000/api/wrong-answers
   Có thể thêm trường `retriedAt` hoặc `masteredAt` để thống kê mức độ tiến bộ.
 - TODO: Thêm smoke test tích hợp (cần DB thật) kiểm tra luồng end-to-end.
 - TODO: Lưu `subjectId` thẳng vào bảng `wrong_answers` để tối ưu query filter theo môn.
+
+---
+
+## 8. Admin User Management + Dashboard — Quản lý người dùng & Bảng tổng quan
+
+**Trạng thái:** ✅ Hoàn thành
+**Ngày hoàn thành:** 2026-07-05
+**Branch / commit liên quan:** `feature/admin-user-management`
+
+---
+
+### Tổng quan
+
+Module này bổ sung 2 tab mới cho trang Admin Dashboard (`/#admin`), cho phép quản
+trị viên theo dõi hoạt động hệ thống và quản lý toàn bộ tài khoản người dùng mà
+không cần truy cập trực tiếp vào DB hay dùng Prisma Studio.
+
+**Tab Dashboard (📊):** Hiển thị 6 chỉ số thời gian thực — tổng user, user mới
+tuần/tháng, tổng phiên thi, tỷ lệ đậu, và số user đang online ngay lúc đó.
+
+**Tab Người dùng (👥):** Danh sách đầy đủ người dùng với tìm kiếm (theo tên/email),
+lọc (theo role, trạng thái khoá), phân trang. Click vào từng user để xem chi tiết
+(thông tin cá nhân, thống kê học tập, 5 kỳ thi gần nhất) và thực hiện các hành động
+quản trị: khoá/mở khoá tài khoản, đặt lại mật khẩu, thay đổi quyền (STUDENT/ADMIN),
+xóa tài khoản.
+
+**Tác động bảo mật:** Khi tài khoản bị khoá (`isBlocked=true`), mọi API call có
+xác thực của user đó trả về lỗi `403 USER_BLOCKED` ngay lập tức (middleware
+`verifyAppToken` kiểm tra trước khi xử lý nghiệp vụ).
+
+---
+
+### Data Model
+
+**Thay đổi bảng `users`** (migration: `20260705120000_add_user_isblocked_role`):
+
+| Field | Kiểu | Mô tả |
+|-------|------|-------|
+| `isBlocked` | `Boolean DEFAULT false` | Trạng thái khoá tài khoản |
+| `role` | `String DEFAULT 'STUDENT'` | Quyền hạn: `'STUDENT'` hoặc `'ADMIN'` |
+
+Index mới:
+- `users_isBlocked_idx` trên cột `isBlocked` (tối ưu filter danh sách user bị khoá)
+- `users_role_idx` trên cột `role` (tối ưu filter danh sách admin)
+
+**Tracking online user (Redis):** Không tạo bảng mới. Mỗi khi `verifyAppToken`
+thành công, hệ thống ghi:
+```
+SET online:{userId} 1 EX 300
+```
+TTL = 300 giây (5 phút). Đếm online bằng SCAN `online:*`.
+
+---
+
+### API Reference
+
+**Auth:** Tất cả endpoint yêu cầu header `X-Admin-Secret: <ADMIN_SECRET>`.
+
+| Method | Path | Mô tả |
+|--------|------|-------|
+| GET | `/api/admin/dashboard` | 6 chỉ số tổng quan hệ thống |
+| GET | `/api/admin/users` | Danh sách user (search/filter/phân trang) |
+| GET | `/api/admin/users/:id` | Chi tiết user + stats + 5 kỳ thi gần nhất |
+| PATCH | `/api/admin/users/:id/block` | Khoá hoặc mở khoá tài khoản |
+| POST | `/api/admin/users/:id/reset-password` | Tạo link đặt lại mật khẩu qua Firebase |
+| PATCH | `/api/admin/users/:id/role` | Đổi quyền STUDENT ↔ ADMIN |
+| DELETE | `/api/admin/users/:id` | Xóa tài khoản (Firebase + DB) |
+
+---
+
+#### GET /api/admin/dashboard
+
+**Mô tả:** Chạy 6 query song song (Promise.all) để trả về thống kê hệ thống.
+Số "online" được đếm bằng Redis SCAN cursor-based (tránh dùng KEYS).
+
+**Response (200):**
+```json
+{
+  "totalUsers": 1250,
+  "newUsersThisWeek": 38,
+  "newUsersThisMonth": 142,
+  "totalExamSessions": 4870,
+  "examPassRate": 61.4,
+  "onlineNow": 23
+}
+```
+
+**Luồng xử lý:**
+```
+GET /api/admin/dashboard
+  └─ verifyAdminSecret
+  └─ getDashboardStats()
+       ├─ Promise.all:
+       │   ├─ prisma.user.count()
+       │   ├─ prisma.user.count({ createdAt >= 7 ngày trước })
+       │   ├─ prisma.user.count({ createdAt >= 30 ngày trước })
+       │   ├─ prisma.examSession.count({ status: 'COMPLETED' })
+       │   ├─ prisma.examSession.count({ status: 'COMPLETED', score >= 7.0 })
+       │   └─ countOnlineUsers()  ← Redis SCAN cursor loop
+       └─ Tính examPassRate = round(passed/total * 100, 1)
+       └─ Trả DashboardStats
+```
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 401 | `ADMIN_UNAUTHORIZED` | Thiếu/sai X-Admin-Secret |
+
+---
+
+#### GET /api/admin/users
+
+**Query parameters:**
+
+| Param | Kiểu | Mô tả |
+|-------|------|-------|
+| `search` | string? | Tìm theo `displayName` hoặc `email` (ILIKE, không phân biệt hoa thường) |
+| `role` | `'STUDENT' \| 'ADMIN'`? | Lọc theo quyền |
+| `isBlocked` | `'true' \| 'false'`? | Lọc theo trạng thái khoá |
+| `page` | number (mặc định 1) | Số trang |
+| `limit` | number (mặc định 20) | Số user/trang |
+
+**Response (200):**
+```json
+{
+  "users": [
+    {
+      "id": "uuid",
+      "displayName": "Nguyễn Văn A",
+      "email": "a@example.com",
+      "role": "STUDENT",
+      "isBlocked": false,
+      "createdAt": "2026-06-10T08:00:00.000Z",
+      "lastLoginAt": "2026-07-04T15:30:00.000Z",
+      "avatarUrl": null
+    }
+  ],
+  "total": 1250,
+  "page": 1,
+  "totalPages": 63
+}
+```
+
+> **Lưu ý:** `totalPages` tối thiểu là 1 dù không có kết quả — tránh frontend
+> bị nhầm lẫn với `totalPages = 0`.
+
+**Luồng xử lý:**
+```
+GET /api/admin/users?search=nguyen&role=STUDENT&page=2
+  └─ verifyAdminSecret
+  └─ Parse + validate query params
+  └─ listUsers({ search, role, isBlocked, page, limit })
+       ├─ Xây where động:
+       │   search → OR [displayName ILIKE, email ILIKE]
+       │   role   → { role }
+       │   isBlocked → { isBlocked: boolean }
+       ├─ Promise.all: findMany(skip, take, orderBy createdAt desc) + count(where)
+       └─ Trả AdminUserListResult
+```
+
+---
+
+#### GET /api/admin/users/:id
+
+**Response (200):**
+```json
+{
+  "user": {
+    "id": "uuid",
+    "displayName": "Trần Thị B",
+    "email": "b@example.com",
+    "phone": "0912345678",
+    "school": "THPT Chu Văn An",
+    "province": "Hà Nội",
+    "role": "STUDENT",
+    "isBlocked": false,
+    "createdAt": "2026-06-15T10:00:00.000Z",
+    "lastLoginAt": "2026-07-05T09:00:00.000Z",
+    "avatarUrl": "http://localhost:4000/uploads/avatars/uuid.jpg",
+    "subjects": ["TOAN", "LY", "HOA"]
+  },
+  "stats": {
+    "totalPracticeSessions": 47,
+    "totalExamSessions": 12,
+    "avgExamScore": 7.8
+  },
+  "recentExams": [
+    {
+      "id": "session-uuid",
+      "examPaperTitle": "Đề thi thử THPT QG 2024 - Toán Mã đề 101",
+      "score": 8.25,
+      "status": "COMPLETED",
+      "completedAt": "2026-07-04T14:00:00.000Z"
+    }
+  ]
+}
+```
+
+**Lưu ý kỹ thuật:** Để tránh N+1 query khi lấy tên đề thi cho 5 phiên thi gần
+nhất, service dùng batch query tách biệt:
+```
+1. Lấy recentExams (chỉ select examPaperId)
+2. Lấy Set<examPaperId> unique
+3. examPaper.findMany({ where: { id: { in: examPaperIds } } })
+4. Tạo Map<id, title> → O(1) lookup
+```
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 404 | `ADMIN_USER_NOT_FOUND` | Không tìm thấy user với ID đã cho |
+
+---
+
+#### PATCH /api/admin/users/:id/block
+
+**Request:**
+```json
+{ "isBlocked": true }
+```
+
+**Response (200):**
+```json
+{ "id": "uuid", "isBlocked": true }
+```
+
+**Luồng xử lý:**
+```
+isBlocked = true  → UPDATE users SET isBlocked=true WHERE id=:id
+isBlocked = false → UPDATE users SET isBlocked=false WHERE id=:id
+                    + redis.del("online:{userId}")  ← xóa key để tránh hiển thị nhầm
+```
+
+**Hiệu lực ngay lập tức:** Sau khi bị khoá, lần gọi API tiếp theo của user đó sẽ
+nhận `403 USER_BLOCKED` (do `verifyAppToken` kiểm tra `isBlocked` trong DB mỗi request).
+
+---
+
+#### POST /api/admin/users/:id/reset-password
+
+**Mô tả:** Gọi Firebase Admin SDK `generatePasswordResetLink(email)` để tạo link
+đặt lại mật khẩu. Admin nhận link và tự gửi cho người dùng (qua email, chat...).
+
+**Điều kiện:** User phải có `email` (user đăng nhập bằng SĐT sẽ bị lỗi `400`).
+
+**Response (200):**
+```json
+{
+  "resetLink": "https://accounts.google.com/signin/v2/...?oobCode=...&apiKey=..."
+}
+```
+
+| HTTP | Code | Nguyên nhân |
+|------|------|-------------|
+| 400 | `ADMIN_USER_NO_EMAIL` | User không có email (đăng nhập bằng SĐT) |
+| 404 | `ADMIN_USER_NOT_FOUND` | User không tồn tại |
+
+---
+
+#### PATCH /api/admin/users/:id/role
+
+**Request:**
+```json
+{ "role": "ADMIN" }
+```
+
+**Response (200):**
+```json
+{ "id": "uuid", "role": "ADMIN" }
+```
+
+Giá trị hợp lệ: `"STUDENT"` hoặc `"ADMIN"`. Giá trị khác → `400 ADMIN_INVALID_ROLE`.
+
+---
+
+#### DELETE /api/admin/users/:id
+
+**Mô tả:** Xóa hoàn toàn tài khoản — không thể hoàn tác.
+
+**Chiến lược xóa (Firebase-first):**
+```
+1. Tìm user trong DB → 404 nếu không có
+2. getFirebaseAuth().deleteUser(user.firebaseUid)
+   └─ Lỗi Firebase → ném lỗi, dừng (DB không bị thay đổi)
+3. prisma.user.delete({ where: { id: userId } })
+   └─ Lỗi DB → log lỗi + tiếp tục trả success
+   (Firebase user đã mất → user không thể đăng nhập lại dù DB vẫn còn bản ghi)
+4. redis.del("online:{userId}")  ← dọn dẹp
+```
+
+**Response (200):**
+```json
+{ "message": "Da xoa tai khoan nguoi dung 'Nguyễn Văn A' thanh cong." }
+```
+
+**Cascade delete trong DB:** Bảng `wrong_answers` có `ON DELETE CASCADE` →
+toàn bộ câu sai của user bị xóa tự động cùng bản ghi `users`.
+
+---
+
+### Luồng chạy (Flow)
+
+#### Luồng khoá tài khoản người dùng
+
+```
+[Admin bấm "Khoá"]
+       │
+       ▼
+PATCH /api/admin/users/:id/block { isBlocked: true }
+       │
+       ├─ verifyAdminSecret
+       ├─ setUserBlocked(id, true)
+       │   ├─ prisma.user.update({ isBlocked: true })
+       │   └─ (không xóa Redis key khi khoá — key sẽ tự expire sau 5 phút)
+       └─ Response 200 { isBlocked: true }
+               │
+               ▼
+[User gọi bất kỳ API nào tiếp theo]
+       │
+       ▼
+verifyAppToken middleware
+       ├─ Decode JWT → lấy userId
+       ├─ prisma.user.findUnique(userId) → user.isBlocked = true
+       ├─ throw UserBlockedError()
+       └─ Response 403 { error: "USER_BLOCKED", message: "..." }
+```
+
+#### Luồng online tracking
+
+```
+[Bất kỳ API nào dùng verifyAppToken]
+       │
+       ▼
+verifyAppToken
+       ├─ Validate JWT + load user từ DB
+       ├─ Check isBlocked → throw 403 nếu bị khoá
+       ├─ redis.set("online:{userId}", "1", "EX", 300)  ← fire-and-forget (catch() {})
+       └─ next() → route handler tiếp tục bình thường
+```
+
+```
+[GET /api/admin/dashboard]
+       │
+       ▼
+countOnlineUsers()
+       ├─ cursor = "0"
+       ├─ loop: redis.scan(cursor, "MATCH", "online:*", "COUNT", 100)
+       │   └─ cộng dồn số key tìm thấy mỗi lần scan
+       └─ Khi cursor trở về "0" → trả count
+```
+
+---
+
+### File Structure
+
+```
+backend/
+├── prisma/
+│   ├── schema.prisma                   Thêm isBlocked, role + 2 index vào model User
+│   └── migrations/
+│       └── 20260705120000_add_user_isblocked_role/
+│           └── migration.sql           ALTER TABLE users ADD COLUMN isBlocked, role; CREATE INDEX
+│
+├── src/
+│   ├── middleware/
+│   │   └── auth.middleware.ts          + check isBlocked → UserBlockedError
+│   │                                   + redis.set online:{userId} EX 300 (fire-and-forget)
+│   │
+│   ├── services/
+│   │   ├── auth/
+│   │   │   └── auth.errors.ts          + UserBlockedError (code: USER_BLOCKED)
+│   │   │
+│   │   └── admin-users/               (module mới)
+│   │       ├── admin-users.errors.ts   AdminUsersError base + 3 lớp con:
+│   │       │                           AdminUserNotFoundError  (ADMIN_USER_NOT_FOUND → 404)
+│   │       │                           AdminUserNoEmailError   (ADMIN_USER_NO_EMAIL  → 400)
+│   │       │                           AdminInvalidRoleError   (ADMIN_INVALID_ROLE   → 400)
+│   │       ├── admin-users.types.ts    VALID_ROLES + 6 interface DTO
+│   │       ├── admin-users.service.ts  7 hàm nghiệp vụ (xem bên dưới)
+│   │       └── __tests__/
+│   │           └── admin-users.service.test.ts  26 unit test (Vitest + mock Prisma/Redis/Firebase)
+│   │
+│   ├── routes/
+│   │   └── admin-users.route.ts        7 endpoint, Zod validation body
+│   │
+│   └── app.ts                          + 4 error code mới trong ERROR_CODE_TO_HTTP_STATUS
+│                                        + register adminUsersRouter tại /api/admin
+│
+frontend/
+├── src/
+│   ├── lib/api.ts                      + 4 interface + 7 hàm gọi API admin
+│   ├── App.tsx                         + AdminDashboardPage, AdminUsersPage components
+│   │                                   + 2 tab button mới (📊 Dashboard, 👥 Người dùng)
+│   └── App.css                         + CSS cho dashboard cards, users table, modal, badges
+│
+docs/
+├── api/drafts/admin-user-management.yaml   API contract đầy đủ (do S1 tạo, S3 verify)
+├── TEST_CASES.md                           + 30 test case mới (TC-008-*)
+└── CODE_REVIEW_LOG.md                      + Entry #008 (2 vấn đề tìm thấy + đã fix)
+```
+
+---
+
+### Catalogue lỗi đầy đủ (module admin-users)
+
+| Class | Code | HTTP | Nguyên nhân |
+|-------|------|------|-------------|
+| `UserBlockedError` | `USER_BLOCKED` | 403 | Tài khoản bị khoá — mọi request của user |
+| `AdminUserNotFoundError` | `ADMIN_USER_NOT_FOUND` | 404 | Không tìm thấy user theo ID |
+| `AdminUserNoEmailError` | `ADMIN_USER_NO_EMAIL` | 400 | Reset password nhưng user không có email |
+| `AdminInvalidRoleError` | `ADMIN_INVALID_ROLE` | 400 | Giá trị role không hợp lệ |
+
+---
+
+### Ghi chú kỹ thuật
+
+1. **Online tracking fire-and-forget:** `redis.set(...)` được gọi không `await`,
+   lỗi Redis được `.catch(() => {})` im lặng — tránh gián đoạn luồng xác thực
+   khi Redis tạm thời không khả dụng.
+
+2. **SCAN thay vì KEYS:** `KEYS online:*` sẽ block Redis trong O(N) — không dùng
+   trong production. Service dùng `SCAN cursor MATCH online:* COUNT 100` để scan
+   dần dần, không block. Với vài nghìn user online, vòng lặp SCAN thực thi trong
+   vài millisecond.
+
+3. **Xóa Firebase trước khi xóa DB:** Nếu xóa DB trước, Firebase account còn
+   lại nhưng không có bản ghi tương ứng → user có thể đăng nhập lại và tạo tài
+   khoản mới (gây dữ liệu mồ côi). Chiến lược Firebase-first đảm bảo user không
+   thể đăng nhập lại bất kể DB ra sao.
+
+4. **Tác động `isBlocked` lên middleware:** `verifyAppToken` hiện query DB mỗi
+   request để load user (đã có từ trước). Thêm kiểm tra `user.isBlocked` không
+   tốn thêm query — zero performance overhead.
+
+5. **Tại sao xóa Redis key khi mở khoá:** Khi user bị khoá mà Redis key `online:{id}`
+   vẫn còn TTL, Dashboard sẽ đếm nhầm user bị khoá là đang online. Xóa key khi
+   mở khoá đảm bảo count chính xác trong vòng 5 phút tiếp theo.
+
+6. **`totalPages = Math.max(1, ...):`** Khi không có kết quả (total=0), `ceil(0/20) = 0`.
+   Frontend thường render "Trang 1/0" gây confuse — ép minimum = 1.
+
+---
+
+### Cách tự kiểm thử (manual test)
+
+**1. Unit test tự động:**
+```bash
+cd backend
+npm run test
+# Kỳ vọng: 44/44 PASS (18 test cũ + 26 test mới cho adminUsersService)
+# Hoặc chạy riêng:
+npx vitest run src/services/admin-users/__tests__/admin-users.service.test.ts
+# Kỳ vọng: 26/26 PASS
+# Nhóm test:
+#   getDashboardStats (3)  — all zeros, Redis error, pass rate tính đúng
+#   listUsers (4)          — search, filter role, filter isBlocked, pagination
+#   getUserDetail (4)      — happy path, not found, no exams, no practice
+#   setUserBlocked (4)     — block, unblock (xóa Redis), not found, idempotent
+#   resetUserPassword (3)  — happy path, no email, not found
+#   setUserRole (4)        — to ADMIN, to STUDENT, invalid role, not found
+#   deleteUser (4)         — happy path, DB error (log+continue), not found, Firebase error
+```
+
+**2. Kiểm tra API qua curl:**
+```bash
+# Xem dashboard
+curl http://localhost:4000/api/admin/dashboard \
+  -H "X-Admin-Secret: your-admin-secret"
+# Kỳ vọng: { totalUsers, newUsersThisWeek, ..., onlineNow }
+
+# Danh sách user (có search)
+curl "http://localhost:4000/api/admin/users?search=nguyen&page=1" \
+  -H "X-Admin-Secret: your-admin-secret"
+
+# Chi tiết user
+curl http://localhost:4000/api/admin/users/<userId> \
+  -H "X-Admin-Secret: your-admin-secret"
+
+# Khoá tài khoản
+curl -X PATCH http://localhost:4000/api/admin/users/<userId>/block \
+  -H "X-Admin-Secret: your-admin-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"isBlocked": true}'
+# Kỳ vọng: { id, isBlocked: true }
+
+# Xác nhận khoá có hiệu lực: dùng session token của user đó gọi API bất kỳ
+curl http://localhost:4000/api/users/me \
+  -H "Authorization: Bearer <user-session-token>"
+# Kỳ vọng: 403 { error: "USER_BLOCKED" }
+
+# Đặt lại mật khẩu
+curl -X POST http://localhost:4000/api/admin/users/<userId>/reset-password \
+  -H "X-Admin-Secret: your-admin-secret"
+# Kỳ vọng: { resetLink: "https://accounts.google.com/..." }
+
+# Thay đổi role
+curl -X PATCH http://localhost:4000/api/admin/users/<userId>/role \
+  -H "X-Admin-Secret: your-admin-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"role": "ADMIN"}'
+
+# Xóa tài khoản
+curl -X DELETE http://localhost:4000/api/admin/users/<userId> \
+  -H "X-Admin-Secret: your-admin-secret"
+# Kỳ vọng: { message: "Da xoa tai khoan..." }
+```
+
+**3. Kiểm tra qua giao diện web:**
+1. Mở `http://localhost:5173/#admin`, đăng nhập bằng `ADMIN_SECRET`.
+2. Tab 📊 Dashboard → kiểm tra 6 thẻ thống kê hiển thị đúng số.
+3. Tab 👥 Người dùng → tìm kiếm theo tên, lọc theo trạng thái khoá.
+4. Bấm vào 1 user → modal chi tiết hiển thị stats và 5 kỳ thi gần nhất.
+5. Bấm "Khoá" → xác nhận icon và trạng thái thay đổi trên danh sách.
+6. Bấm "Reset mật khẩu" → link xuất hiện qua `window.prompt`.
+7. Bấm "Xóa tài khoản" → dialog xác nhận trước khi xóa.
+
+---
+
+### Lưu ý / rủi ro / TODO tiếp theo
+
+- **`window.prompt` cho reset link:** Vì Firebase không gửi email tự động qua
+  Admin SDK, admin phải copy link từ popup và tự gửi cho user. TODO: Tích hợp
+  dịch vụ email (SendGrid / Resend) để tự động gửi nếu cần.
+- **Role ADMIN không phân cấp:** Hiện tại chỉ có 2 role `STUDENT` và `ADMIN`.
+  Khi cần phân quyền senh hơn (super-admin, moderator...), cần mở rộng hệ thống role.
+- **Online count có thể lệch ~5 phút:** Key Redis TTL = 300s — user đóng app nhưng
+  vẫn được tính online cho đến khi key expire. Chấp nhận được với dashboard tổng quan.
+- **Xóa tài khoản không rollback được:** Sau khi Firebase user bị xóa, không
+  thể khôi phục. Cân nhắc thêm soft-delete (isDeleted) hoặc archive trước khi
+  xóa vĩnh viễn trong tương lai.
+- TODO: Thêm phân quyền senh hơn trong module admin (ví dụ chỉ super-admin mới
+  có thể xóa tài khoản hoặc đổi role thành ADMIN).
+- TODO: Thêm audit log cho các hành động admin (khoá/mở khoá, xóa, đổi role).
