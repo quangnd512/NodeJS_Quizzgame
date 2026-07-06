@@ -1,0 +1,105 @@
+# API Draft: Admin User Management + Dashboard
+# Branch: feature/admin-user-management
+# Auth: X-Admin-Secret header (giống các route admin hiện có)
+
+endpoints:
+
+  - method: GET
+    path: /api/admin/dashboard
+    auth: X-Admin-Secret
+    description: Trả về 6 chỉ số tổng quan hệ thống
+    response_200:
+      totalUsers: number           # Tổng số tài khoản trong DB
+      newUsersThisWeek: number     # Tài khoản tạo trong 7 ngày qua
+      newUsersThisMonth: number    # Tài khoản tạo trong 30 ngày qua
+      totalExamSessions: number    # Tổng số phiên thi (status=COMPLETED)
+      examPassRate: number         # % phiên thi có score >= 7.0
+      onlineNow: number            # Số user có key Redis online:{userId} còn sống (TTL 5 phút)
+
+  - method: GET
+    path: /api/admin/users
+    auth: X-Admin-Secret
+    query:
+      search: string?              # Tìm theo displayName hoặc email (ILIKE)
+      role: "STUDENT|ADMIN"?
+      isBlocked: "true|false"?
+      page: number (default 1)
+      limit: number (default 20)
+    response_200:
+      users:
+        - id: string
+          displayName: string|null
+          email: string|null
+          role: string
+          isBlocked: boolean
+          createdAt: string (ISO)
+          lastLoginAt: string|null
+          avatarUrl: string|null
+      total: number
+      page: number
+      totalPages: number
+
+  - method: GET
+    path: /api/admin/users/:id
+    auth: X-Admin-Secret
+    response_200:
+      user:
+        id: string
+        displayName: string|null
+        email: string|null
+        phone: string|null
+        school: string|null
+        province: string|null
+        role: string
+        isBlocked: boolean
+        createdAt: string
+        lastLoginAt: string|null
+        avatarUrl: string|null
+        subjects: string[]
+      stats:
+        totalPracticeSessions: number
+        totalExamSessions: number
+        avgExamScore: number|null
+      recentExams:
+        - id: string
+          examPaperTitle: string
+          score: number|null
+          status: string
+          completedAt: string|null
+    errors: [404]
+
+  - method: PATCH
+    path: /api/admin/users/:id/block
+    auth: X-Admin-Secret
+    request:
+      isBlocked: boolean
+    response_200:
+      id: string
+      isBlocked: boolean
+    errors: [400, 404]
+
+  - method: POST
+    path: /api/admin/users/:id/reset-password
+    auth: X-Admin-Secret
+    description: Dùng Firebase Admin SDK generatePasswordResetLink — trả link cho admin
+    response_200:
+      resetLink: string
+    errors: [400, 404]     # 400 nếu user không có email (đăng nhập bằng phone)
+
+  - method: PATCH
+    path: /api/admin/users/:id/role
+    auth: X-Admin-Secret
+    request:
+      role: "STUDENT|ADMIN"
+    response_200:
+      id: string
+      role: string
+    errors: [400, 404]
+
+  - method: DELETE
+    path: /api/admin/users/:id
+    auth: X-Admin-Secret
+    description: Xóa Firebase user trước, rồi xóa DB. Rollback nếu DB lỗi.
+    response_200:
+      message: string
+    errors: [404]

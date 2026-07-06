@@ -10,9 +10,9 @@
 
 | Mục | Giá trị |
 |-----|---------|
-| Tính năng | _(chưa có — đang chờ S1 bắt đầu)_ |
-| Branch | _(chưa có)_ |
-| Bắt đầu từ | _(chưa có)_ |
+| Tính năng | Admin User Management + Dashboard (008) |
+| Branch | feature/admin-user-management |
+| Bắt đầu từ | 2026-07-05 |
 
 ---
 
@@ -20,14 +20,14 @@
 
 | Session | Tên | Trạng thái | Việc cần làm | Số lần làm lại |
 |---------|-----|------------|--------------|---------------|
-| S1 | Kiến Trúc Sư | ⏸ Chờ | — | 0 |
-| S2 | Thợ Code | ⏸ Chờ | — | 0 |
-| S3 | Người Soát Lỗi | ⏸ Chờ | — | 0 |
-| S4 | Người Ghi Chép | ⏸ Chờ | — | 0 |
-| S5 | Người Thử Nghiệm | ⏸ Chờ | — | 0 |
-| S6 | Người Giảng Giải | ⏸ Chờ | — | 0 |
-| S7 | Người Đóng Gói | ⏸ Chờ | — | 0 |
-| S8 | Giám Sát Chất Lượng | ⏸ Chờ | — | — |
+| S1 | Kiến Trúc Sư | ✅ Done | — | 0 |
+| S2 | Thợ Code | ✅ Done | — | 0 |
+| S3 | Người Soát Lỗi | ✅ Done | — | 0 |
+| S4 | Người Ghi Chép | ✅ Done | — | 0 |
+| S5 | Người Thử Nghiệm | ✅ Done | — | 0 |
+| S6 | Người Giảng Giải | ✅ Done | — | 0 |
+| S7 | Người Đóng Gói | ⏸ Chờ | Push & merge branch | 0 |
+| S8 | Giám Sát Chất Lượng | 🔄 Đang làm | Quality gate PASS → chờ S7 | — |
 | S9 | Cố Vấn Ra Mắt | ⏸ Chờ | — | — |
 
 **Trạng thái**: `⏸ Chờ` | `🔄 Đang làm` | `✅ Done` | `↩️ Làm lại` | `⛔ Bị chặn`

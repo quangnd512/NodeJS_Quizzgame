@@ -1,7 +1,7 @@
 # Hướng dẫn Admin — QuizzGame
 
 > Tài liệu này dành cho quản trị viên hệ thống. Bao gồm: quản lý câu hỏi,
-> xử lý báo cáo từ người dùng, và cấu hình ban đầu.
+> xử lý báo cáo từ người dùng, quản lý tài khoản người dùng, và cấu hình ban đầu.
 
 ---
 
@@ -18,6 +18,8 @@
    - [8.7 Tự động điền câu hỏi (Auto-Fill)](#87-tự-động-điền-câu-hỏi-auto-fill)
 9. [Bảng xếp hạng & Ảnh đại diện](#9-bảng-xếp-hạng--ảnh-đại-diện)
 10. [Ôn câu sai — Lưu ý cho Admin](#10-ôn-câu-sai--lưu-ý-cho-admin)
+11. [Tab Dashboard — Bảng tổng quan hệ thống](#11-tab-dashboard--bảng-tổng-quan-hệ-thống)
+12. [Tab Người dùng — Quản lý tài khoản](#12-tab-người-dùng--quản-lý-tài-khoản)
 
 ---
 
@@ -1204,3 +1206,197 @@ GROUP BY COALESCE(q.question, eq."questionText")
 ORDER BY total_wrong_count DESC
 LIMIT 10;
 ```
+
+---
+
+## 11. Tab Dashboard — Bảng tổng quan hệ thống
+
+### 11.1 Truy cập
+
+Vào Admin Dashboard (`http://localhost:5173/#admin`), đăng nhập bằng `ADMIN_SECRET`.
+Tab **📊 Dashboard** là tab mặc định ngay khi đăng nhập thành công.
+
+### 11.2 Các chỉ số hiển thị
+
+Trang Dashboard hiển thị **6 thẻ thống kê** được cập nhật mỗi lần tải trang:
+
+| Thẻ | Mô tả | Nguồn dữ liệu |
+|-----|-------|---------------|
+| 👥 Tổng tài khoản | Tổng số tài khoản đã đăng ký trong hệ thống | `users` table |
+| 🆕 Mới tuần này | Số tài khoản tạo trong 7 ngày qua | `users.createdAt >= 7 ngày trước` |
+| 📅 Mới tháng này | Số tài khoản tạo trong 30 ngày qua | `users.createdAt >= 30 ngày trước` |
+| 📝 Tổng phiên thi | Số phiên thi thử đã hoàn thành (`status = COMPLETED`) | `exam_sessions` |
+| ✅ Tỷ lệ đậu | % phiên thi có `score >= 7.0/10` trên tổng phiên hoàn thành | `exam_sessions` |
+| 🟢 Đang online | Số user có hoạt động trong 5 phút gần nhất | Redis `online:*` keys |
+
+> **Lưu ý về "Đang online":** Con số này có độ trễ tối đa 5 phút — user đóng
+> app nhưng vẫn được đếm là "online" cho đến khi key Redis hết hạn (TTL 300s).
+> Đây là thiết kế cố ý để tránh tốn thêm query DB.
+
+### 11.3 Khi nào nên xem Dashboard?
+
+- Đầu ngày làm việc: kiểm tra nhanh có bất thường về số user mới hay tỷ lệ đậu không.
+- Sau khi chạy chiến dịch marketing: theo dõi `Mới tuần này` / `Mới tháng này`.
+- Khi có báo cáo về lỗi đăng nhập: kiểm tra `Đang online` để ước lượng phạm vi ảnh hưởng.
+
+### 11.4 Làm mới dữ liệu
+
+Dữ liệu không tự cập nhật — nhấn **F5** hoặc **Ctrl+R** để tải lại trang và lấy
+số liệu mới nhất. (Tính năng auto-refresh sẽ được thêm trong phiên bản sau.)
+
+---
+
+## 12. Tab Người dùng — Quản lý tài khoản
+
+### 12.1 Truy cập
+
+Trong Admin Dashboard, nhấn tab **👥 Người dùng** ở thanh tab trên cùng.
+
+### 12.2 Xem danh sách người dùng
+
+Danh sách hiển thị theo thứ tự mới nhất trước, mỗi trang 20 người dùng.
+
+**Tìm kiếm:** Nhập tên hoặc email vào ô tìm kiếm (góc trên bên trái) → danh
+sách lọc ngay sau khi bạn nhấn Enter hoặc bấm nút tìm.
+
+**Lọc theo quyền:**
+- "Tất cả" — hiển thị cả STUDENT lẫn ADMIN
+- "STUDENT" — chỉ học sinh thông thường
+- "ADMIN" — chỉ tài khoản quản trị viên
+
+**Lọc theo trạng thái:**
+- "Tất cả" — hiển thị cả tài khoản đang hoạt động lẫn bị khoá
+- "Đang hoạt động" — chỉ tài khoản `isBlocked = false`
+- "Đã khoá" — chỉ tài khoản `isBlocked = true`
+
+**Phân trang:** Dùng nút ← → ở cuối danh sách để chuyển trang.
+
+### 12.3 Xem chi tiết người dùng
+
+Bấm vào bất kỳ dòng nào trong danh sách để mở modal chi tiết. Modal hiển thị:
+
+**Thông tin cá nhân:**
+- Tên hiển thị, email, số điện thoại
+- Trường THPT, tỉnh/thành
+- Môn học đã đăng ký
+- Ngày tạo tài khoản, lần đăng nhập cuối
+- Quyền hạn hiện tại (STUDENT/ADMIN) và trạng thái (Hoạt động/Khoá)
+
+**Thống kê học tập:**
+- Tổng số phiên ôn tập đã làm
+- Tổng số lần thi thử đã hoàn thành
+- Điểm trung bình thi thử (trên thang 10)
+
+**5 kỳ thi thử gần nhất:**
+- Tên đề thi, điểm số, trạng thái, thời gian hoàn thành
+
+### 12.4 Khoá và mở khoá tài khoản
+
+**Khi nào nên khoá?**
+- Tài khoản có hành vi gian lận (ví dụ dùng bot để làm bài)
+- Tài khoản spam báo cáo câu hỏi
+- Theo yêu cầu của người dùng (ví dụ mất thiết bị, nghi bị hack)
+
+**Cách khoá:**
+1. Mở modal chi tiết của user cần khoá.
+2. Nhấn nút **🔒 Khoá tài khoản**.
+3. Xác nhận trong hộp thoại hiện ra.
+4. Hệ thống cập nhật trạng thái ngay lập tức.
+
+**Hiệu lực:** Người dùng bị khoá **không cần đăng xuất** — lần API call tiếp
+theo của họ sẽ nhận lỗi "Tài khoản bị khoá" và không thể tiếp tục sử dụng app.
+
+**Cách mở khoá:**
+1. Tìm user bằng bộ lọc "Đã khoá" → mở modal chi tiết.
+2. Nhấn nút **🔓 Mở khoá tài khoản**.
+
+> **Lưu ý:** Sau khi mở khoá, người dùng có thể đăng nhập lại ngay lập tức bằng
+> session token cũ (nếu token chưa hết hạn 7 ngày). Không cần làm thêm thao tác nào.
+
+### 12.5 Đặt lại mật khẩu
+
+Dùng khi người dùng **quên mật khẩu** và cần admin hỗ trợ (chỉ áp dụng với tài
+khoản đăng nhập bằng **email** — không áp dụng được cho tài khoản đăng nhập qua SĐT).
+
+**Cách thực hiện:**
+1. Mở modal chi tiết của user.
+2. Nhấn nút **🔑 Reset mật khẩu**.
+3. Một cửa sổ popup (`window.prompt`) hiện link đặt lại mật khẩu Firebase.
+4. **Copy link** và gửi cho người dùng qua email, Zalo, hoặc kênh liên lạc khác.
+5. Link có hiệu lực trong vòng 1 giờ (theo quy định Firebase).
+
+> **Lưu ý:** Hệ thống KHÔNG tự động gửi email — admin phải tự gửi link cho người dùng.
+> Nếu user đăng nhập bằng SĐT (không có email), nút Reset sẽ hiện thông báo lỗi
+> "Tài khoản này không có email đăng nhập."
+
+### 12.6 Thay đổi quyền hạn (Role)
+
+**Khi nào nên đổi role?**
+- Nâng cấp nhân viên lên quyền ADMIN để họ có thể quản lý câu hỏi, đề thi.
+- Hạ quyền ADMIN về STUDENT khi nhân viên đó không còn làm việc trong hệ thống.
+
+**Cách thực hiện:**
+1. Mở modal chi tiết của user.
+2. Nhấn nút **👑 Đổi thành ADMIN** (nếu đang là STUDENT) hoặc **👤 Đổi thành STUDENT** (nếu đang là ADMIN).
+3. Xác nhận trong hộp thoại.
+
+> ⚠️ **Cẩn thận khi cấp quyền ADMIN:** Tài khoản ADMIN có thể quản lý câu hỏi,
+> đề thi, và cả người dùng khác. Chỉ cấp cho những người thực sự cần.
+
+> **Lưu ý:** Role ADMIN trong hệ thống này **chỉ ảnh hưởng đến UI** (hiển thị
+> badge màu đỏ). Quyền truy cập API admin thực sự vẫn được kiểm soát bằng header
+> `X-Admin-Secret` — không thay đổi khi đổi role.
+
+### 12.7 Xóa tài khoản
+
+> ⚠️ **Thao tác không thể hoàn tác.** Sau khi xóa, tài khoản Firebase và toàn
+> bộ dữ liệu liên quan (câu sai, lịch sử...) bị xóa vĩnh viễn.
+
+**Khi nào nên xóa?**
+- Tài khoản test/demo không còn cần thiết
+- Theo yêu cầu của người dùng (quyền xóa dữ liệu cá nhân — GDPR)
+- Tài khoản gian lận nghiêm trọng
+
+**Cách thực hiện:**
+1. Mở modal chi tiết của user cần xóa.
+2. Nhấn nút **🗑️ Xóa tài khoản** (màu đỏ, ở cuối modal).
+3. Một dialog xác nhận hiện ra: nhập tên user hoặc nhấn **"Tôi hiểu, xóa tài khoản này"**.
+4. Hệ thống xóa Firebase account trước, sau đó xóa DB.
+
+**Dữ liệu bị xóa cùng:**
+- Bản ghi user trong bảng `users`
+- Toàn bộ câu sai (`wrong_answers` — CASCADE DELETE)
+- Key Redis `online:{userId}`
+- Firebase Authentication account
+
+**Dữ liệu GIỮ LẠI** (để bảo toàn lịch sử hệ thống):
+- Phiên ôn tập (`practice_sessions`) — vẫn còn trong DB nhưng userId không còn hợp lệ
+- Phiên thi thử (`exam_sessions`) — tương tự
+- Điểm tích lũy (`user_points`, `point_transactions`) — vẫn còn
+
+> **Nếu chỉ muốn ngăn user đăng nhập:** Dùng **Khoá tài khoản** (mục 12.4) thay vì xóa —
+> an toàn hơn và có thể hoàn tác.
+
+### 12.8 Xử lý sự cố — Tab Người dùng
+
+**Danh sách trống dù có user trong hệ thống**
+→ Kiểm tra xem bộ lọc "Trạng thái" và "Quyền hạn" có đang bị set thành giá trị
+cụ thể không. Đặt về "Tất cả" và xóa ô tìm kiếm, rồi thử lại.
+
+**Nút "Reset mật khẩu" báo lỗi**
+→ User đó không có email (đăng nhập bằng SĐT). Hướng dẫn user tự đặt lại mật
+khẩu qua OTP SĐT trực tiếp trên màn hình đăng nhập của app.
+
+**Xóa tài khoản thất bại với thông báo lỗi Firebase**
+→ Firebase account đã bị xóa trước đó (ví dụ xóa trực tiếp từ Firebase Console).
+Thử xóa lại — lần này chỉ cần xóa DB. Hoặc xóa thủ công trong DB:
+```sql
+DELETE FROM users WHERE id = '<userId>';
+```
+
+**User bị khoá nhưng vẫn đang dùng được app**
+→ JWT session token của họ có thể đã được cache ở FE. Middleware kiểm tra DB
+mỗi request — nếu DB đã set `isBlocked=true`, request tiếp theo sẽ nhận 403.
+Thông thường không cần làm gì thêm; nếu cần ngắt ngay lập tức, thay đổi
+`JWT_SECRET` trong `.env` và restart backend (sẽ vô hiệu hoá TẤT CẢ session token,
+kể cả của admin và các user khác — dùng biện pháp này cẩn thận).

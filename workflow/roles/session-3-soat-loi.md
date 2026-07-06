@@ -195,10 +195,19 @@ cat > workflow/handoff/PENDING/S4.md << 'EOF'
 EOF
 ```
 
-**Bước 10b — Thông báo người dùng** (KHÔNG mở tab mới, KHÔNG gọi shell):
+**Bước 10b — Mở session tiếp theo**:
+
+Hỏi người dùng:
+> "Bạn có muốn tôi tự mở **S4-GhiChep** ngay bây giờ không?"
+- Nếu **có**: chạy lệnh sau để tự mở tab terminal mới:
+  ```bash
+  ./workflow/open.sh 4
+  ```
+- Nếu **không**: bạn tự chạy `./workflow/start.sh 4` khi sẵn sàng
+
+Thông báo người dùng:
 ```
 📬 Đã ghi lệnh cho **S4-GhiChep** vào `workflow/handoff/PENDING/S4.md`.
-Bạn có thể chuyển sang S4 khi sẵn sàng — nó sẽ tự đọc và tiếp tục từ đó.
 ```
 
 ---

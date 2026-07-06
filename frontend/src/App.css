@@ -1137,11 +1137,21 @@ body {
 
 .admin-tabs {
   display: flex;
+  align-items: center;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
   z-index: 10;
+}
+
+.admin-tab-logout {
+  margin-left: auto;
+  padding: .875rem 1rem;
+  font-size: .85rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex: none;
 }
 
 .admin-tab {
@@ -1495,4 +1505,230 @@ body {
 .progress-no-data {
   font-size: .85rem;
   color: var(--muted);
+}
+
+/* ─── Admin Dashboard ─────────────────────────────────────────────────────── */
+
+.admin-dashboard {
+  padding: 1.5rem;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.dashboard-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 1rem;
+}
+
+.dashboard-card {
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 12px;
+  padding: 1.25rem 1rem;
+  text-align: center;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+}
+
+.dashboard-card-icon {
+  font-size: 2rem;
+  margin-bottom: .4rem;
+}
+
+.dashboard-card-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--accent, #6366f1);
+}
+
+.dashboard-card-label {
+  font-size: .82rem;
+  color: var(--muted, #64748b);
+  margin-top: .2rem;
+}
+
+/* ─── Admin Users ────────────────────────────────────────────────────────── */
+
+.admin-users-page {
+  padding: 1.5rem;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.admin-users-filters {
+  display: flex;
+  gap: .75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.admin-search-input {
+  flex: 1;
+  min-width: 220px;
+  padding: .5rem .75rem;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+  font-size: .9rem;
+}
+
+.admin-select {
+  padding: .5rem .75rem;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+  font-size: .9rem;
+  background: #fff;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .9rem;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: .6rem .8rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+}
+
+.admin-table th {
+  background: var(--surface, #f8fafc);
+  font-weight: 600;
+  color: var(--muted, #64748b);
+  font-size: .82rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.admin-table tr:hover {
+  background: var(--hover, #f1f5f9);
+}
+
+.role-badge {
+  display: inline-block;
+  padding: .2rem .55rem;
+  border-radius: 20px;
+  font-size: .78rem;
+  font-weight: 600;
+}
+
+.role-admin {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.role-student {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.status-blocked {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.status-active {
+  color: #16a34a;
+  font-weight: 600;
+}
+
+.admin-pagination {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 1rem;
+}
+
+.admin-notice {
+  background: #dcfce7;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  padding: .6rem 1rem;
+  margin-bottom: .75rem;
+  cursor: pointer;
+  font-size: .9rem;
+}
+
+.admin-loading {
+  text-align: center;
+  padding: 2rem;
+  color: var(--muted, #64748b);
+}
+
+.admin-error {
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: .6rem 1rem;
+  margin-bottom: .75rem;
+  font-size: .9rem;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+
+/* ─── User Detail Modal ──────────────────────────────────────────────────── */
+
+.user-detail-section {
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+}
+
+.user-detail-section p {
+  margin: .3rem 0;
+  font-size: .9rem;
+}
+
+.user-detail-section h4 {
+  margin: 0 0 .5rem 0;
+  font-size: .95rem;
+  color: var(--muted, #64748b);
+}
+
+.user-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  margin-top: 1rem;
+}
+
+.btn-warning {
+  padding: .5rem 1rem;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: .9rem;
+  font-weight: 600;
+  background: #f59e0b;
+  color: #fff;
+}
+
+.btn-warning:hover:not(:disabled) {
+  background: #d97706;
+}
+
+.btn-danger {
+  padding: .5rem 1rem;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: .9rem;
+  font-weight: 600;
+  background: #dc2626;
+  color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #b91c1c;
+}
+
+.btn-warning:disabled,
+.btn-danger:disabled {
+  opacity: .5;
+  cursor: not-allowed;
 }

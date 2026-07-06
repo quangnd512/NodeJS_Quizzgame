@@ -836,3 +836,79 @@ id | userId | questionId | examQuestionId | wrongCount
 **Trong dự án này**: Dùng để chấm câu `FILL_BLANK`. `normalizeAnswer('  Hà Nội  ')` → `'hà nội'`. Nếu đáp án trong DB là `['Hà Nội', 'ha noi']` thì user gõ `'HA NOI'` (không dấu, chữ hoa) sẽ không khớp, nhưng `'ha noi'` sẽ khớp sau normalize.
 
 **Nguồn gốc**: Hàm này được tái sử dụng từ `exam.service.ts`, không viết lại, để đảm bảo logic chấm bài nhất quán giữa Exam và Wrong Answer Review.
+
+---
+
+## Admin User Management + Dashboard (Feature 008) — Thuật ngữ kỹ thuật
+
+### TTL (Time-To-Live) — Thời gian tự hết hạn
+**Định nghĩa**: Một giá trị được lưu kèm "hạn sử dụng" — sau thời gian đó tự động biến mất mà không cần ai xóa thủ công.
+
+**Trong dự án này**: Redis key `online:{userId}` có TTL = 300 giây. Mỗi khi user gọi API, key được ghi lại (và đồng thời reset đồng hồ đếm ngược). Nếu 5 phút không có hoạt động, key tự biến mất → user không còn được đếm là "online".
+
+**Ví dụ**:
+```
+14:00:00 — User gọi API → redis.set("online:abc", "1", EX 300)
+14:04:30 — User gọi API lại → key được gia hạn thêm 300 giây
+14:09:30 — Không có hoạt động → key tự xóa → user "offline"
+```
+
+---
+
+### Redis SCAN vs KEYS
+**Định nghĩa**: Hai cách tìm key trong Redis theo pattern, nhưng cách hoạt động rất khác nhau.
+
+**Trong dự án này**: Dùng `SCAN cursor MATCH "online:*" COUNT 100` thay vì `KEYS online:*` để đếm user online, vì SCAN không block Redis trong khi quét.
+
+**Ví dụ**:
+```
+KEYS online:*   → Redis dừng hết, quét 1 lần, trả tất cả  ← nguy hiểm khi có nhiều key
+SCAN 0 ...      → Quét 100 key, trả cursor tiếp theo
+SCAN cursor ... → Quét 100 key tiếp, trả cursor tiếp
+... lặp cho đến cursor = "0" → xong
+```
+
+---
+
+### Fire-and-Forget
+**Định nghĩa**: Gọi một hàm/lệnh mà không chờ kết quả — nếu thất bại thì bỏ qua, không ảnh hưởng đến luồng chính.
+
+**Trong dự án này**: Ghi Redis online tracking và xóa key Redis khi mở khoá/xóa user đều dùng pattern này: `redis.set(...).catch(() => {})` — không `await`, không ném lỗi ra ngoài.
+
+**Ví dụ**:
+```typescript
+// ❌ Không làm thế này — nếu Redis chậm, mọi request của user bị chậm theo
+await redis.set(`online:${userId}`, '1', 'EX', 300);
+
+// ✅ Fire-and-forget — Redis chết cũng không sao
+redis.set(`online:${userId}`, '1', 'EX', 300).catch(() => {});
+```
+
+---
+
+### Firebase-first Delete Strategy
+**Định nghĩa**: Chiến lược xóa dữ liệu trên nhiều hệ thống: ưu tiên xóa hệ thống xác thực (Firebase) trước để đảm bảo user không thể đăng nhập lại, dù các bước sau có thất bại.
+
+**Trong dự án này**: `deleteUser()` trong `admin-users.service.ts` xóa Firebase account trước, DB sau. Nếu DB xóa thất bại → log lỗi + admin xử lý thủ công, nhưng user đã không thể đăng nhập vì Firebase mất.
+
+**Tại sao không làm ngược lại**:
+```
+Xóa DB trước → Firebase còn → user đăng nhập lại bằng Firebase
+→ POST /login tạo bản ghi mới → tài khoản "hồi sinh" 👻
+
+Xóa Firebase trước → dù DB còn, user không vào được app ✓
+```
+
+---
+
+### Cascade Delete
+**Định nghĩa**: Khi xóa một bản ghi cha, các bản ghi con liên quan tự động bị xóa theo ở tầng DB (không cần code xóa thủ công).
+
+**Trong dự án này**: `wrong_answers` có `onDelete: Cascade` với `users` — khi admin xóa user, toàn bộ câu sai của user đó bị xóa ngay lập tức bởi PostgreSQL. Nhưng `practice_sessions` và `exam_sessions` **không** cascade — giữ lại để thống kê hệ thống chính xác.
+
+**Ví dụ**:
+```
+DELETE FROM users WHERE id = 'abc'
+→ PostgreSQL tự động: DELETE FROM wrong_answers WHERE userId = 'abc'
+→ KHÔNG tự động: practice_sessions, exam_sessions (giữ lại)
+```

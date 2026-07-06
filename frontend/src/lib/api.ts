@@ -905,3 +905,135 @@ export async function retryWrongAnswer(
   });
 }
 
+// ─── Admin User Management ──────────────────────────────────────────────────
+
+export interface DashboardStats {
+  totalUsers: number;
+  newUsersThisWeek: number;
+  newUsersThisMonth: number;
+  totalExamSessions: number;
+  examPassRate: number;
+  onlineNow: number;
+}
+
+export interface AdminUserListItem {
+  id: string;
+  displayName: string | null;
+  email: string | null;
+  role: string;
+  isBlocked: boolean;
+  createdAt: string;
+  lastLoginAt: string | null;
+  avatarUrl: string | null;
+}
+
+export interface AdminUserListResult {
+  users: AdminUserListItem[];
+  total: number;
+  page: number;
+  totalPages: number;
+}
+
+export interface AdminUserDetail {
+  user: {
+    id: string;
+    displayName: string | null;
+    email: string | null;
+    phone: string | null;
+    school: string | null;
+    province: string | null;
+    role: string;
+    isBlocked: boolean;
+    createdAt: string;
+    lastLoginAt: string | null;
+    avatarUrl: string | null;
+    subjects: string[];
+  };
+  stats: {
+    totalPracticeSessions: number;
+    totalExamSessions: number;
+    avgExamScore: number | null;
+  };
+  recentExams: {
+    id: string;
+    examPaperTitle: string;
+    score: number | null;
+    status: string;
+    completedAt: string | null;
+  }[];
+}
+
+/** GET /api/admin/dashboard */
+export async function adminGetDashboard(secret: string): Promise<DashboardStats> {
+  return adminRequest<DashboardStats>('/api/admin/dashboard', secret);
+}
+
+/** GET /api/admin/users */
+export async function adminListUsers(
+  secret: string,
+  opts: { search?: string; role?: string; isBlocked?: boolean; page?: number; limit?: number } = {},
+): Promise<AdminUserListResult> {
+  const params = new URLSearchParams();
+  if (opts.search) params.set('search', opts.search);
+  if (opts.role) params.set('role', opts.role);
+  if (opts.isBlocked !== undefined) params.set('isBlocked', String(opts.isBlocked));
+  params.set('page', String(opts.page ?? 1));
+  params.set('limit', String(opts.limit ?? 20));
+  return adminRequest<AdminUserListResult>(`/api/admin/users?${params.toString()}`, secret);
+}
+
+/** GET /api/admin/users/:id */
+export async function adminGetUserDetail(secret: string, userId: string): Promise<AdminUserDetail> {
+  return adminRequest<AdminUserDetail>(`/api/admin/users/${userId}`, secret);
+}
+
+/** PATCH /api/admin/users/:id/block */
+export async function adminBlockUser(
+  secret: string,
+  userId: string,
+  isBlocked: boolean,
+): Promise<{ id: string; isBlocked: boolean }> {
+  return adminRequest<{ id: string; isBlocked: boolean }>(
+    `/api/admin/users/${userId}/block`,
+    secret,
+    { method: 'PATCH', body: JSON.stringify({ isBlocked }) },
+  );
+}
+
+/** POST /api/admin/users/:id/reset-password */
+export async function adminResetPassword(
+  secret: string,
+  userId: string,
+): Promise<{ resetLink: string }> {
+  return adminRequest<{ resetLink: string }>(
+    `/api/admin/users/${userId}/reset-password`,
+    secret,
+    { method: 'POST' },
+  );
+}
+
+/** PATCH /api/admin/users/:id/role */
+export async function adminSetUserRole(
+  secret: string,
+  userId: string,
+  role: string,
+): Promise<{ id: string; role: string }> {
+  return adminRequest<{ id: string; role: string }>(
+    `/api/admin/users/${userId}/role`,
+    secret,
+    { method: 'PATCH', body: JSON.stringify({ role }) },
+  );
+}
+
+/** DELETE /api/admin/users/:id */
+export async function adminDeleteUser(
+  secret: string,
+  userId: string,
+): Promise<{ message: string }> {
+  return adminRequest<{ message: string }>(
+    `/api/admin/users/${userId}`,
+    secret,
+    { method: 'DELETE' },
+  );
+}
+

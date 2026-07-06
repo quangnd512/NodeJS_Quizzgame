@@ -89,6 +89,19 @@ export class UserNotRegisteredError extends AuthError {
 }
 
 /**
+ * Nem ra khi tai khoan bi admin khoa (`isBlocked = true`).
+ * HTTP 403 — khong cho phep truy cap bat ky endpoint nao yeu cau xac thuc.
+ */
+export class UserBlockedError extends AuthError {
+  constructor() {
+    super(
+      'Tai khoan cua ban da bi khoa boi quan tri vien. Vui long lien he ho tro de duoc giai quyet.',
+      'USER_BLOCKED',
+    );
+  }
+}
+
+/**
  * Nem ra khi tao tai khoan moi that bai vi MOT TRUONG DUY NHAT KHAC (vi du
  * `email`) da duoc dung boi mot tai khoan Firebase khac - KHONG PHAI truong
  * hop "dua tao user" thong thuong (xem `AuthService.findOrCreateUser`).

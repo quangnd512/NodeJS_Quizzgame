@@ -17,6 +17,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { FirebaseAuthError } from 'firebase-admin/auth';
 import { getFirebaseAuth } from '../lib/firebase-admin.js';
 import { prisma } from '../lib/prisma.js';
+import { redis } from '../lib/redis.js';
 // Doi ten khi import de tranh trung voi ten middleware `verifyAppToken` o duoi.
 import { InvalidAppTokenError, verifyAppToken as decodeAppToken } from '../lib/jwt.js';
 import {
@@ -24,8 +25,13 @@ import {
   InvalidSessionTokenError,
   MissingAuthTokenError,
   SessionUserNotFoundError,
+  UserBlockedError,
 } from '../services/auth/auth.errors.js';
 import type { FirebaseAuthenticatedUser } from '../services/auth/auth.types.js';
+
+// TTL (giay) cua key Redis danh dau user "dang online".
+// Moi request thanh cong se refresh TTL nay. User ngung gui request > 5 phut -> offline.
+const ONLINE_TTL_SECONDS = 300;
 
 const BEARER_PREFIX = 'Bearer ';
 
@@ -149,7 +155,19 @@ export async function verifyAppToken(req: Request, _res: Response, next: NextFun
       throw new SessionUserNotFoundError(payload.userId);
     }
 
+    // Kiem tra tai khoan co bi khoa khong — tra HTTP 403 neu bi khoa.
+    if (user.isBlocked) {
+      throw new UserBlockedError();
+    }
+
     req.currentUser = user;
+
+    // Danh dau user "dang online" trong Redis (fire-and-forget, khong lam that bai request).
+    // Key: "online:<userId>", TTL: 5 phut. Neu Redis mat ket noi, bo qua.
+    redis.set(`online:${user.id}`, '1', 'EX', ONLINE_TTL_SECONDS).catch(() => {
+      // Redis offline — bo qua, khong anh huong den logic chinh.
+    });
+
     next();
   } catch (err) {
     next(err);

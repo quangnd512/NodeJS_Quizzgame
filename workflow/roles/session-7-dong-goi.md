@@ -173,10 +173,17 @@ Hãy hỏi: "Bạn muốn thêm hoặc thay đổi gì tiếp theo trong ứng d
 EOF
 ```
 
-Thông báo người dùng (KHÔNG mở tab mới, KHÔNG gọi shell):
+Hỏi người dùng:
+> "Bạn có muốn tôi tự mở **S1-KienTrucSu** ngay bây giờ không?"
+- Nếu **có**: chạy lệnh sau để tự mở tab terminal mới:
+  ```bash
+  ./workflow/open.sh 1
+  ```
+- Nếu **không**: bạn tự chạy `./workflow/start.sh 1` khi sẵn sàng
+
+Thông báo người dùng:
 ```
 📬 Đã ghi lệnh cho **S1-KienTrucSu** vào `workflow/handoff/PENDING/S1.md`.
-Bạn có thể chuyển sang S1 khi sẵn sàng — nó sẽ tự đọc và tiếp tục từ đó.
 ```
 
 #### 7B. Nếu chọn "2 — Triển khai thật"
@@ -205,10 +212,17 @@ triển khai và tư vấn phương án phù hợp.
 EOF
 ```
 
-Thông báo người dùng (KHÔNG mở tab mới, KHÔNG gọi shell):
+Hỏi người dùng:
+> "Bạn có muốn tôi tự mở **S9-CoVan** ngay bây giờ không?"
+- Nếu **có**: chạy lệnh sau để tự mở tab terminal mới:
+  ```bash
+  ./workflow/open.sh 9
+  ```
+- Nếu **không**: bạn tự chạy `./workflow/start.sh 9` khi sẵn sàng
+
+Thông báo người dùng:
 ```
 📬 Đã ghi lệnh cho **S9-CoVan** vào `workflow/handoff/PENDING/S9.md`.
-Bạn có thể chuyển sang S9 khi sẵn sàng — nó sẽ tự đọc và tiếp tục từ đó.
 ```
 
 ---

@@ -141,10 +141,19 @@ cat > workflow/handoff/PENDING/S5.md << 'EOF'
 EOF
 ```
 
-**Bước 9b — Thông báo người dùng** (KHÔNG mở tab mới, KHÔNG gọi shell):
+**Bước 9b — Mở session tiếp theo**:
+
+Hỏi người dùng:
+> "Bạn có muốn tôi tự mở **S5-ThuNghiem** ngay bây giờ không?"
+- Nếu **có**: chạy lệnh sau để tự mở tab terminal mới:
+  ```bash
+  ./workflow/open.sh 5
+  ```
+- Nếu **không**: bạn tự chạy `./workflow/start.sh 5` khi sẵn sàng
+
+Thông báo người dùng:
 ```
 📬 Đã ghi lệnh cho **S5-ThuNghiem** vào `workflow/handoff/PENDING/S5.md`.
-Bạn có thể chuyển sang S5 khi sẵn sàng — nó sẽ tự đọc và tiếp tục từ đó.
 ```
 
 ---
