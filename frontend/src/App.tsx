@@ -1118,8 +1118,11 @@ function ExamPage({
         return;
       }
       if (err instanceof ApiError && err.code === 'EXAM_SUBMIT_TOO_EARLY') {
-        // Hien thi thong bao truc tiep trong man hinh lam bai (khong phai global error)
-        setSessionError(err.message);
+        // Tính thời gian còn thiếu từ phía client (tránh dùng err.message không dấu từ server)
+        const elapsedSec = (Date.now() - new Date(session.data.startedAt).getTime()) / 1000;
+        const minRequiredSec = session.data.durationMinutes * 60 * 0.3;
+        const remainingMin = Math.max(1, Math.ceil((minRequiredSec - elapsedSec) / 60));
+        setSessionError(`Bạn cần làm bài thêm ít nhất ${remainingMin} phút nữa mới được nộp.`);
         return;
       }
       onError(err);

@@ -84,8 +84,9 @@ export function normalizeAnswer(value: string): string {
  * Bug 1b: Phat hien "sentinel value" {} trong ExamAnswer.selectedAnswer.
  * {} la gia tri danh dau "cau hoi bi bo trang" — khi phat hien, frontend
  * hien thi "Ban chua tra loi cau nay" thay vi lo dap an dung.
+ * Export de co the unit test doc lap.
  */
-function isSentinelUnanswered(value: Prisma.JsonValue | null): boolean {
+export function isSentinelUnanswered(value: Prisma.JsonValue | null): boolean {
   return (
     value !== null &&
     typeof value === 'object' &&
