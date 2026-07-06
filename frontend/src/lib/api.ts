@@ -292,7 +292,8 @@ export async function startExam(token: string, subject: string): Promise<StartEx
 export async function submitExam(
   token: string,
   sessionId: string,
-  answers: { examQuestionId: string; selectedAnswer: ExamAnswerValue }[],
+  // selectedAnswer dùng `unknown` để chứa cả sentinel {} (câu bỏ trắng)
+  answers: { examQuestionId: string; selectedAnswer: unknown }[],
 ): Promise<SubmitExamResult> {
   return request('/api/exam/submit', token, {
     method: 'POST',

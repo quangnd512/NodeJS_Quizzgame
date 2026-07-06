@@ -1018,6 +1018,18 @@ function defaultAnswerFor(type: ExamQuestionType): ExamAnswerValue {
   return -1;
 }
 
+/**
+ * Chuyển giá trị "chưa trả lời" (mặc định từ defaultAnswerFor) thành
+ * sentinel {} trước khi gửi lên server.
+ * Backend dùng {} để phát hiện câu bỏ trắng và ẩn đáp án đúng.
+ */
+function toSubmitAnswer(type: ExamQuestionType, value: ExamAnswerValue): unknown {
+  if (type === 'MCQ_4' && value === -1) return {};
+  if (type === 'TRUE_FALSE_4' && Array.isArray(value) && value.length === 0) return {};
+  if (type === 'FILL_BLANK' && value === '') return {};
+  return value;
+}
+
 /** Hien thi mot dap an (da chon hoac dung) o man ket qua, theo dang cau hoi. */
 function describeExamAnswer(type: ExamQuestionType, options: string[] | null, value: unknown): string {
   if (type === 'MCQ_4') {
@@ -1104,7 +1116,10 @@ function ExamPage({
     try {
       const answers = session.data.questions.map((q) => ({
         examQuestionId: q.id,
-        selectedAnswer: session.answers.get(q.id) ?? defaultAnswerFor(q.questionType),
+        selectedAnswer: toSubmitAnswer(
+          q.questionType,
+          session.answers.get(q.id) ?? defaultAnswerFor(q.questionType),
+        ),
       }));
       const res = await submitExam(sessionToken, session.data.sessionId, answers);
       setResult(res);
