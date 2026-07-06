@@ -65,7 +65,7 @@ adminUsersRouter.get(
         isBlockedRaw === 'true' ? true : isBlockedRaw === 'false' ? false : undefined;
 
       const page = Math.max(1, parseInt(String(req.query['page'] ?? '1'), 10) || 1);
-      const limit = Math.min(100, Math.max(1, parseInt(String(req.query['limit'] ?? '20'), 10) || 20));
+      const limit = Math.min(100, Math.max(1, parseInt(String(req.query['limit'] ?? '10'), 10) || 10));
 
       const result = await adminUsersService.listUsers({ search, role, isBlocked, page, limit });
       res.status(200).json(result);

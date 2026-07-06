@@ -1740,6 +1740,9 @@ function AdminPage() {
         <button className={`admin-tab ${tab === 'bank' ? 'active' : ''}`} onClick={() => setTab('bank')}>
           Ngân hàng câu hỏi
         </button>
+        <button className="btn-link admin-tab-logout" onClick={handleLogout}>
+          Đăng xuất
+        </button>
       </div>
       {tab === 'dashboard' && <AdminDashboardPage secret={secret} onLogout={handleLogout} />}
       {tab === 'users'     && <AdminUsersPage secret={secret} onLogout={handleLogout} />}
@@ -3993,7 +3996,7 @@ function AdminDashboardPage({ secret, onLogout }: { secret: string; onLogout: ()
 
 // ─── AdminUsersPage ──────────────────────────────────────────────────────────
 
-const USERS_PAGE_SIZE = 20;
+const USERS_PAGE_SIZE = 10;
 
 function AdminUsersPage({ secret, onLogout }: { secret: string; onLogout: () => void }) {
   const [users, setUsers] = useState<AdminUserListItem[]>([]);

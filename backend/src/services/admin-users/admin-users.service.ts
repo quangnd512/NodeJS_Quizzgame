@@ -288,7 +288,19 @@ async function deleteUser(userId: string): Promise<{ message: string }> {
   if (!user) throw new AdminUserNotFoundError(userId);
 
   // Xoa Firebase truoc.
-  await getFirebaseAuth().deleteUser(user.firebaseUid);
+  // Neu Firebase bao 'auth/user-not-found' (user chi ton tai trong DB, khong co trong Firebase)
+  // → log canh bao va van tiep tuc xoa DB. Cac loi khac (network, permission...) → nem ra.
+  try {
+    await getFirebaseAuth().deleteUser(user.firebaseUid);
+  } catch (firebaseErr: unknown) {
+    const code = (firebaseErr as { code?: string })?.code;
+    if (code !== 'auth/user-not-found') {
+      throw firebaseErr;
+    }
+    console.warn(
+      `[AdminUsersService] Firebase user ${user.firebaseUid} khong ton tai (auth/user-not-found), tiep tuc xoa DB.`,
+    );
+  }
 
   // Xoa DB — neu loi, ghi log (Firebase da mat, khong rollback duoc).
   try {

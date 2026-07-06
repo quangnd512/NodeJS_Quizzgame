@@ -1137,11 +1137,21 @@ body {
 
 .admin-tabs {
   display: flex;
+  align-items: center;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
   z-index: 10;
+}
+
+.admin-tab-logout {
+  margin-left: auto;
+  padding: .875rem 1rem;
+  font-size: .85rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex: none;
 }
 
 .admin-tab {
