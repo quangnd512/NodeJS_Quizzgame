@@ -168,10 +168,19 @@ nếu đạt thì cho phép Session 7 push & merge.
 EOF
 ```
 
-**Bước 6b — Thông báo người dùng** (KHÔNG mở tab mới, KHÔNG gọi shell):
+**Bước 6b — Mở session tiếp theo**:
+
+Hỏi người dùng:
+> "Bạn có muốn tôi tự mở **S8-GiamSat** ngay bây giờ không?"
+- Nếu **có**: chạy lệnh sau để tự mở tab terminal mới:
+  ```bash
+  ./workflow/open.sh 8
+  ```
+- Nếu **không**: bạn tự chạy `./workflow/start.sh 8` khi sẵn sàng
+
+Thông báo người dùng:
 ```
 📬 Đã ghi lệnh cho **S8-GiamSat** vào `workflow/handoff/PENDING/S8.md`.
-Bạn có thể chuyển sang S8 khi sẵn sàng — nó sẽ tự đọc và tiếp tục từ đó.
 ```
 
 ---

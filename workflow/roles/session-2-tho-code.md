@@ -160,10 +160,19 @@ sửa lỗi, clear code, viết chú thích tiếng Việt, bổ sung test case 
 EOF
 ```
 
-**Bước 7b — Thông báo người dùng** (KHÔNG mở tab mới, KHÔNG gọi shell):
+**Bước 7b — Mở session tiếp theo**:
+
+Hỏi người dùng:
+> "Bạn có muốn tôi tự mở **S3-SoatLoi** ngay bây giờ không?"
+- Nếu **có**: chạy lệnh sau để tự mở tab terminal mới:
+  ```bash
+  ./workflow/open.sh 3
+  ```
+- Nếu **không**: bạn tự chạy `./workflow/start.sh 3` khi sẵn sàng
+
+Thông báo người dùng:
 ```
 📬 Đã ghi lệnh cho **S3-SoatLoi** vào `workflow/handoff/PENDING/S3.md`.
-Bạn có thể chuyển sang S3 khi sẵn sàng — nó sẽ tự đọc và tiếp tục từ đó.
 ```
 
 ---

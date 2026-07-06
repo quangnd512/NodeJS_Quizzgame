@@ -246,11 +246,28 @@ Nếu có tiêu chí nào mơ hồ, ghi phản hồi vào PENDING/S1.md.
 EOF
 ```
 
-**Bước 9c — Thông báo người dùng** (KHÔNG mở tab, KHÔNG gọi shell):
+**Bước 9c — Mở session tiếp theo**:
+
+Hỏi người dùng:
+> "Bạn có muốn tôi tự mở **S2-ThoCode** ngay bây giờ không?"
+- Nếu **có**: chạy lệnh sau để tự mở tab terminal mới:
+  ```bash
+  ./workflow/open.sh 2
+  ```
+- Nếu **không**: bạn tự chạy `./workflow/start.sh 2` khi sẵn sàng
+
+Hỏi người dùng:
+> "Bạn có muốn tôi tự mở **S8-GiamSat** ngay bây giờ không?"
+- Nếu **có**: chạy lệnh sau để tự mở tab terminal mới:
+  ```bash
+  ./workflow/open.sh 8
+  ```
+- Nếu **không**: bạn tự chạy `./workflow/start.sh 8` khi sẵn sàng
+
+Thông báo người dùng:
 ```
 📬 Đã ghi lệnh cho **S2-ThoCode** vào `workflow/handoff/PENDING/S2.md`.
    Đồng thời đã gửi DoD cho **S8-GiamSat** để pre-review.
-   Bạn có thể chuyển sang S2 khi sẵn sàng — nó sẽ tự đọc và tiếp tục từ đó.
 ```
 
 ### Bước 10 — Chờ vòng lặp quay về

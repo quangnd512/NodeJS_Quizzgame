@@ -112,9 +112,16 @@ cat > workflow/handoff/PENDING/S7.md << 'EOF'
 👉 Yêu cầu: Push branch lên GitHub, kiểm tra CI pass, hỏi người dùng merge.
 EOF
 ```
+Hỏi người dùng:
+> "Bạn có muốn tôi tự mở **S7-DongGoi** ngay bây giờ không?"
+- Nếu **có**: chạy lệnh sau để tự mở tab terminal mới:
+  ```bash
+  ./workflow/open.sh 7
+  ```
+- Nếu **không**: bạn tự chạy `./workflow/start.sh 7` khi sẵn sàng
+
 ```
 📬 Đã ghi lệnh cho **S7-DongGoi** vào `workflow/handoff/PENDING/S7.md`.
-Bạn có thể chuyển sang S7 khi sẵn sàng — nó sẽ tự đọc và tiếp tục từ đó.
 ```
 
 #### 4B. Nếu KHÔNG ĐẠT
@@ -162,11 +169,18 @@ EOF
 # Tăng cột "Số lần làm lại" lên 1
 ```
 
-Thông báo người dùng (KHÔNG mở tab mới, KHÔNG gọi shell):
+Hỏi người dùng:
+> "Bạn có muốn tôi tự mở **S<số>** ngay bây giờ không?"
+- Nếu **có**: chạy lệnh sau để tự mở tab terminal mới (thay `<số>` bằng số session tương ứng: 2, 3, 4, 5, hoặc 6):
+  ```bash
+  ./workflow/open.sh <số>
+  ```
+- Nếu **không**: bạn tự chạy `./workflow/start.sh <số>` khi sẵn sàng
+
+Thông báo người dùng:
 ```
 [S8-GiamSat] ❌ Cần SX làm lại: <vấn đề>
 📬 Đã ghi lệnh vào PENDING/SX.md.
-👉 Nhờ bạn thông báo cho SX. Khi SX xong, nó sẽ ghi kết quả vào PENDING/S8.md.
 ```
 
 5. Khi session đó báo lại xong, **quay lại Bước 3** (rà soát lại checklist liên quan đến vấn đề đã sửa)
