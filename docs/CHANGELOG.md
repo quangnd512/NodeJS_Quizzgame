@@ -5,6 +5,31 @@
 
 ---
 
+## [Unreleased] — Anti-Cheat Security Fixes (Feature 011)
+
+**Branch:** `feature/anti-cheat-fixes`
+
+### Fixed
+- **Bug 1a**: Nộp bài thi thử trước khi đủ 30% thời gian làm bài → `POST /api/exam/submit` trả 400 `EXAM_SUBMIT_TOO_EARLY`
+- **Bug 1b**: Đáp án đúng bị lộ cho câu bỏ trắng trong kết quả thi → `correctAnswer = null` cho câu có `selectedAnswer = {}` (sentinel)
+- **Bug 2**: Redis down khiến rate limit luyện tập bị vô hiệu (fail-open) → đổi thành fail-closed, throw `PRACTICE_RATE_LIMIT_EXCEEDED`
+- **Bug 3**: `completeSession()` không kiểm tra timeout → thêm elapsed check bên trong `$transaction` với 60s grace
+- **Bug 4**: Học sinh có thể mở nhiều tab thi cùng môn → `POST /api/exam/start` kiểm tra IN_PROGRESS session, trả 409 `EXAM_SESSION_ALREADY_ACTIVE`
+
+### Added
+- Hằng số `EXAM_MIN_SUBMIT_RATIO = 0.3` trong `exam.types.ts`
+- Error class `ExamSubmitTooEarlyError` (HTTP 400)
+- Error class `ExamSessionAlreadyActiveError` (HTTP 409)
+- Helper `isSentinelUnanswered()` để detect câu bỏ trắng
+- 22 unit test mới cho anti-cheat logic
+
+### Changed
+- `ExamWrongAnswerItem.correctAnswer`: `Prisma.JsonValue` → `Prisma.JsonValue | null`
+- Frontend: hiển thị "Bạn chưa trả lời câu này" thay vì đáp án đúng cho câu bỏ trắng
+- Frontend: thông báo "Bạn cần làm thêm X phút nữa" khi nộp bài quá sớm
+
+---
+
 ## [Unreleased] — Admin User Management + Dashboard (Feature 008)
 
 **Branch:** `feature/admin-user-management`
