@@ -1018,6 +1018,18 @@ function defaultAnswerFor(type: ExamQuestionType): ExamAnswerValue {
   return -1;
 }
 
+/**
+ * Chuyển giá trị "chưa trả lời" (mặc định từ defaultAnswerFor) thành
+ * sentinel {} trước khi gửi lên server.
+ * Backend dùng {} để phát hiện câu bỏ trắng và ẩn đáp án đúng.
+ */
+function toSubmitAnswer(type: ExamQuestionType, value: ExamAnswerValue): unknown {
+  if (type === 'MCQ_4' && value === -1) return {};
+  if (type === 'TRUE_FALSE_4' && Array.isArray(value) && value.length === 0) return {};
+  if (type === 'FILL_BLANK' && value === '') return {};
+  return value;
+}
+
 /** Hien thi mot dap an (da chon hoac dung) o man ket qua, theo dang cau hoi. */
 function describeExamAnswer(type: ExamQuestionType, options: string[] | null, value: unknown): string {
   if (type === 'MCQ_4') {
@@ -1062,6 +1074,7 @@ function ExamPage({
   const [result, setResult]     = useState<SubmitExamResult | null>(null);
   const [loadingSubj, setLoadingSubj] = useState('');
   const [hubError, setHubError] = useState('');
+  const [sessionError, setSessionError] = useState('');
   const [submitting, setSubmitting]   = useState(false);
 
   async function handleStart(subject: string) {
@@ -1077,6 +1090,8 @@ function ExamPage({
         setHubError('Bạn cần tối thiểu 60 điểm tích lũy để vào thi thử.');
       } else if (err instanceof ApiError && err.code === 'EXAM_PAPER_EMPTY') {
         setHubError('Môn học này hiện chưa có đề thi thử. Vui lòng thử lại sau.');
+      } else if (err instanceof ApiError && err.code === 'EXAM_SESSION_ALREADY_ACTIVE') {
+        setHubError('Bạn đang có phiên thi chưa hoàn thành. Hãy hoàn thành hoặc chờ hết giờ.');
       } else {
         onError(err);
       }
@@ -1097,10 +1112,14 @@ function ExamPage({
   async function handleSubmit() {
     if (!session || submitting) return;
     setSubmitting(true);
+    setSessionError('');
     try {
       const answers = session.data.questions.map((q) => ({
         examQuestionId: q.id,
-        selectedAnswer: session.answers.get(q.id) ?? defaultAnswerFor(q.questionType),
+        selectedAnswer: toSubmitAnswer(
+          q.questionType,
+          session.answers.get(q.id) ?? defaultAnswerFor(q.questionType),
+        ),
       }));
       const res = await submitExam(sessionToken, session.data.sessionId, answers);
       setResult(res);
@@ -1111,6 +1130,14 @@ function ExamPage({
         setResult({ sessionId: session.data.sessionId, score: 0, pointsAwarded: 0 });
         void getMyProfile(sessionToken).then(onProfileUpdate).catch(() => {});
         setSub('result');
+        return;
+      }
+      if (err instanceof ApiError && err.code === 'EXAM_SUBMIT_TOO_EARLY') {
+        // Tính thời gian còn thiếu từ phía client (tránh dùng err.message không dấu từ server)
+        const elapsedSec = (Date.now() - new Date(session.data.startedAt).getTime()) / 1000;
+        const minRequiredSec = session.data.durationMinutes * 60 * 0.3;
+        const remainingMin = Math.max(1, Math.ceil((minRequiredSec - elapsedSec) / 60));
+        setSessionError(`Bạn cần làm bài thêm ít nhất ${remainingMin} phút nữa mới được nộp.`);
         return;
       }
       onError(err);
@@ -1126,6 +1153,8 @@ function ExamPage({
         onAnswerChange={handleAnswerChange}
         onSubmit={() => void handleSubmit()}
         submitting={submitting}
+        submitError={sessionError}
+        onClearSubmitError={() => setSessionError('')}
       />
     );
   }
@@ -1181,12 +1210,14 @@ function ExamPage({
 // ─── ExamSessionScreen ──────────────────────────────────────────────────────
 
 function ExamSessionScreen({
-  session, onAnswerChange, onSubmit, submitting,
+  session, onAnswerChange, onSubmit, submitting, submitError, onClearSubmitError,
 }: {
   session: ActiveExamSession;
   onAnswerChange: (qId: string, value: ExamAnswerValue) => void;
   onSubmit: () => void;
   submitting: boolean;
+  submitError?: string;
+  onClearSubmitError?: () => void;
 }) {
   const { data, answers } = session;
 
@@ -1207,13 +1238,31 @@ function ExamSessionScreen({
     return () => clearInterval(id);
   }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Auto-submit dua tren thoi gian thuc tu server (data.startedAt + durationMinutes),
+  // khong phu thuoc vao timeLeft state de tranh race condition khi ExamPage re-render.
+  // Dung ref de luon goi onSubmit moi nhat (tranh stale closure).
+  const onSubmitRef = useRef(onSubmit);
+  useEffect(() => { onSubmitRef.current = onSubmit; }); // cap nhat ref sau moi render
   const autoSubmitted = useRef(false);
   useEffect(() => {
-    if (timeLeft === 0 && !autoSubmitted.current && !submitting) {
-      autoSubmitted.current = true;
-      onSubmit();
+    const expiryMs = new Date(data.startedAt).getTime() + data.durationMinutes * 60_000;
+    const msLeft = expiryMs - Date.now();
+    if (msLeft <= 0) {
+      // Da het gio luc component mount (vi du: resume phien cu)
+      if (!autoSubmitted.current) {
+        autoSubmitted.current = true;
+        onSubmitRef.current();
+      }
+      return;
     }
-  }, [timeLeft, submitting, onSubmit]);
+    const id = setTimeout(() => {
+      if (!autoSubmitted.current) {
+        autoSubmitted.current = true;
+        onSubmitRef.current();
+      }
+    }, msLeft);
+    return () => clearTimeout(id);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const mins = String(Math.floor(timeLeft / 60)).padStart(2, '0');
   const secs = String(timeLeft % 60).padStart(2, '0');
@@ -1239,6 +1288,16 @@ function ExamSessionScreen({
       </div>
 
       <div className="ps-footer">
+        {submitError && (
+          <div
+            className="exam-submit-error"
+            role="alert"
+            onClick={onClearSubmitError}
+            style={{ cursor: 'pointer', marginBottom: '0.5rem', padding: '0.5rem 0.75rem', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '0.5rem', color: '#b91c1c', fontSize: '0.875rem', textAlign: 'center' }}
+          >
+            ⏱ {submitError}
+          </div>
+        )}
         <button className="btn-primary btn-lg" disabled={submitting} onClick={onSubmit}>
           {submitting ? <Spinner /> : null} Nộp bài
         </button>
@@ -1399,12 +1458,21 @@ function ExamResultScreen({
                 <div key={w.examQuestionId} className="exam-wrong-card">
                   {w.chapter && <span className="exam-chapter-tag">{w.chapter}</span>}
                   <p className="exam-question-text">{w.questionText}</p>
-                  <p className="exam-wrong-line">
-                    <strong>Bạn chọn:</strong> {describeExamAnswer(w.questionType, w.options, w.selectedAnswer)}
-                  </p>
-                  <p className="exam-wrong-line correct">
-                    <strong>Đáp án đúng:</strong> {describeExamAnswer(w.questionType, w.options, w.correctAnswer)}
-                  </p>
+                  {/* Bug 1b: correctAnswer = null → câu bỏ trắng, không lộ đáp án */}
+                  {w.correctAnswer === null ? (
+                    <p className="exam-wrong-line" style={{ color: '#94a3b8', fontStyle: 'italic' }}>
+                      Bạn chưa trả lời câu này
+                    </p>
+                  ) : (
+                    <>
+                      <p className="exam-wrong-line">
+                        <strong>Bạn chọn:</strong> {describeExamAnswer(w.questionType, w.options, w.selectedAnswer)}
+                      </p>
+                      <p className="exam-wrong-line correct">
+                        <strong>Đáp án đúng:</strong> {describeExamAnswer(w.questionType, w.options, w.correctAnswer)}
+                      </p>
+                    </>
+                  )}
                   {w.explanation && <p className="fb-explain">{w.explanation}</p>}
                 </div>
               ))}

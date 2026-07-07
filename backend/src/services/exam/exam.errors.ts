@@ -103,6 +103,41 @@ export class ExamExpiredError extends ExamError {
 }
 
 /**
+ * User nop bai khi chua du thoi gian lam bai toi thieu (EXAM_MIN_SUBMIT_RATIO * durationMinutes).
+ * HTTP 400. `remainingSeconds` la so giay con thieu.
+ * Frontend hien: "Ban can lam them it nhat X phut nua moi duoc nop."
+ */
+export class ExamSubmitTooEarlyError extends ExamError {
+  constructor(remainingSeconds: number) {
+    const remainingMinutes = Math.ceil(remainingSeconds / 60);
+    super(
+      `Ban can lam bai them it nhat ${remainingMinutes} phut nua moi duoc nop.`,
+      'EXAM_SUBMIT_TOO_EARLY',
+    );
+    this.remainingSeconds = remainingSeconds;
+  }
+
+  public readonly remainingSeconds: number;
+}
+
+/**
+ * User co phien thi thu cung mon dang IN_PROGRESS - khong the bat dau phien moi.
+ * HTTP 409. `existingSessionId` la ID phien dang trong tien trinh.
+ * Frontend hien: "Ban dang co phien thi chua hoan thanh. Hay hoan thanh hoac cho het gio."
+ */
+export class ExamSessionAlreadyActiveError extends ExamError {
+  constructor(existingSessionId: string) {
+    super(
+      `Ban dang co phien thi thu chua hoan thanh ('${existingSessionId}'). Hay hoan thanh hoac cho het gio.`,
+      'EXAM_SESSION_ALREADY_ACTIVE',
+    );
+    this.existingSessionId = existingSessionId;
+  }
+
+  public readonly existingSessionId: string;
+}
+
+/**
  * Du lieu cau hoi (options/correctAnswer) khong khop voi questionType.
  * Dung cho ca API admin tao/sua cau hoi VA khi import Excel (moi dong loi
  * se duoc bat va chuyen thanh ExamImportRowError theo so dong).

@@ -581,3 +581,40 @@
 | 28 | PATCH role user không tồn tại | id không có trong DB | 404 | `ADMIN_USER_NOT_FOUND` |
 | 29 | DELETE user không tồn tại | id không có trong DB | 404 | `ADMIN_USER_NOT_FOUND` |
 | 30 | User bị khoá gọi API bình thường | Bearer token hợp lệ nhưng isBlocked=true | 403 | `USER_BLOCKED` |
+
+---
+
+## Test Cases: Anti-Cheat Security Fixes
+
+### Happy Path
+
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | Nộp bài sau đúng 30% thời gian (de 10p, đợi 3p) | elapsed = 180s, durationMinutes = 10 | 200, chấm điểm bình thường |
+| 2 | Nộp bài sau hơn 30% thời gian (de 60p, đợi 20p) | elapsed = 1200s, durationMinutes = 60 | 200, chấm điểm bình thường |
+| 3 | Bắt đầu phiên thi khi không có session IN_PROGRESS | DB không có row IN_PROGRESS cùng user+subject | 200, trả sessionId + đề thi |
+| 4 | Bắt đầu phiên mới sau khi phiên cũ COMPLETED | DB có row COMPLETED (không phải IN_PROGRESS) | 200, tạo phiên mới thành công |
+| 5 | Xem kết quả: câu có trả lời → hiện đáp án đúng | selectedAnswer = 2 (MCQ_4 hợp lệ) | correctAnswer ≠ null |
+| 6 | Luyện tập bình thường, Redis hoạt động, dưới giới hạn | count = 5, MAX = 10 | Tạo phiên thành công |
+| 7 | completeSession trong giờ (elapsed < timeout) | elapsed = 600s, timeout = 1020s | 200, cộng điểm bình thường |
+
+### Edge Cases
+
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 8 | Câu bỏ trắng (sentinel {}) → correctAnswer = null trong kết quả | selectedAnswer = {} trong DB | correctAnswer: null, frontend hiện "Bạn chưa trả lời câu này" |
+| 9 | Câu bỏ trắng không xuất hiện trong wrongAnswers nếu đúng điểm | isSentinelUnanswered({}) = true | Không thêm vào wrongAnswers khi pointsEarned >= q.points |
+| 10 | completeSession ngay ranh giới timeout + 60s grace | elapsed = 1080s (= 1020 + 60) | 200, pass — chính xác ở ranh giới |
+| 11 | isSentinelUnanswered với array rỗng [] | value = [] | false (không phải sentinel) |
+| 12 | isSentinelUnanswered với null | value = null | false (chưa có answer) |
+| 13 | ExamSubmitTooEarlyError: 61 giây → làm tròn lên 2 phút | remainingSeconds = 61 | message chứa "2" |
+
+### Error Cases
+
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 14 | Nộp bài sau 1 giây (de 60 phut) | elapsed = 1s, durationMinutes = 60 | 400 | `EXAM_SUBMIT_TOO_EARLY` |
+| 15 | Bắt đầu phiên thi khi đang có session IN_PROGRESS cùng môn | DB có row IN_PROGRESS | 409 | `EXAM_SESSION_ALREADY_ACTIVE` |
+| 16 | Redis down → bắt đầu luyện tập | redis.get() throw error | 429 | `PRACTICE_RATE_LIMIT_EXCEEDED` |
+| 17 | completeSession sau khi hết giờ + 60s grace | elapsed > 1080s | 410 | `PRACTICE_SESSION_EXPIRED` |
+| 18 | Bắt đầu phiên mới cùng môn khi phiên IN_PROGRESS khác đang chạy | existingSessionId = 'abc' | 409, message chứa 'abc' | `EXAM_SESSION_ALREADY_ACTIVE` |

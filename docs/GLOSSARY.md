@@ -912,3 +912,92 @@ DELETE FROM users WHERE id = 'abc'
 → PostgreSQL tự động: DELETE FROM wrong_answers WHERE userId = 'abc'
 → KHÔNG tự động: practice_sessions, exam_sessions (giữ lại)
 ```
+
+---
+
+### Sentinel Value (Giá trị đánh dấu)
+**Định nghĩa**: Một giá trị đặc biệt được dùng để đánh dấu trạng thái "không có dữ liệu thực" — khác với `null` (không tồn tại) hay `undefined`.
+
+**Trong dự án này**: `{}` (object rỗng) được dùng làm sentinel cho "câu hỏi bị bỏ trắng" trong `ExamAnswer.selectedAnswer`. Frontend gửi `{}` thay vì bỏ qua field, giúp backend phân biệt "chưa trả lời" vs "trả lời sai".
+
+**Cách detect**:
+```typescript
+function isSentinelUnanswered(value: Prisma.JsonValue | null): boolean {
+  return value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0;
+}
+```
+
+**Tại sao không dùng `null`**: `null` đã có nghĩa riêng trong Prisma — "không có bản ghi ExamAnswer cho câu hỏi này". `{}` rõ ràng hơn về ý nghĩa "đã ghi nhận câu trả lời, nhưng là bỏ trống".
+
+---
+
+### Fail-Closed (Đóng khi lỗi)
+**Định nghĩa**: Chiến lược xử lý lỗi hệ thống phụ thuộc (như Redis, external API): khi hệ thống đó không phản hồi, từ chối request thay vì cho phép qua.
+
+**Đối lập**: **Fail-Open** (Mở khi lỗi) — cho phép qua khi hệ thống phụ thuộc lỗi. Ưu tiên tính khả dụng (availability) hơn an toàn.
+
+**Trong dự án này**: `checkRateLimit()` trong `practice.service.ts` dùng fail-closed — khi Redis không phản hồi, throw `PracticeRateLimitError` thay vì bỏ qua. Ưu tiên bảo mật (không cho vượt giới hạn) hơn UX (user bị block tạm thời khi Redis down).
+
+---
+
+### EXAM_MIN_SUBMIT_RATIO
+**Định nghĩa**: Tỉ lệ thời gian tối thiểu học sinh phải làm bài trước khi được phép nộp.
+
+**Giá trị**: `0.3` (30%)
+
+**Ví dụ**: Đề thi 60 phút → học sinh phải làm ít nhất 60 × 0.3 = 18 phút trước khi bấm "Nộp bài".
+
+**Lý do tồn tại**: Ngăn gian lận bằng cách submit ngay sau khi bắt đầu, nhận session ID và xem đáp án qua công cụ khác, rồi submit lại với đáp án đúng.
+
+---
+
+### ExamSubmitTooEarlyError
+**Định nghĩa**: Lỗi 400 Bad Request được throw khi học sinh cố nộp bài trước khi đủ `EXAM_MIN_SUBMIT_RATIO × durationMinutes` thời gian.
+
+**Thuộc tính**: `remainingSeconds` — số giây còn thiếu để được nộp. Frontend dùng để hiển thị "Bạn cần làm thêm X phút nữa".
+
+---
+
+### ExamSessionAlreadyActiveError
+**Định nghĩa**: Lỗi 409 Conflict được throw khi học sinh cố bắt đầu phiên thi mới trong khi đang có phiên `IN_PROGRESS` cho cùng môn học.
+
+**Thuộc tính**: `existingSessionId` — ID của phiên đang chạy. Ngăn gian lận kiểu "mở nhiều tab để bypass timer".
+
+---
+
+### SESSION_TIMEOUT_SECONDS
+**Định nghĩa**: Thời gian tối đa (giây) của một phiên luyện tập trước khi hết hạn.
+
+**Giá trị**: `1020` (17 phút = 17 × 60).
+
+**Grace period**: Khi `completeSession()` kiểm tra timeout, được cộng thêm 60 giây grace để học sinh không bị mất điểm do trễ mạng.
+
+---
+
+### Stale Closure (Closure cũ)
+**Định nghĩa**: Hiện tượng trong React khi một hàm (closure) bên trong `useEffect` hoặc `setTimeout` "nhớ" giá trị state/prop từ lần render trước, không phản ánh giá trị hiện tại.
+
+**Trong dự án này (S5 bug fix)**: Auto-submit cũ dùng `useEffect([..., onSubmit])` — `onSubmit` là hàm mới mỗi lần `ExamPage` render, khiến effect có thể chạy với phiên bản cũ của `handleSubmit` (bắt state cũ). Fix: dùng `onSubmitRef.current` — ref luôn trỏ đến phiên bản mới nhất.
+
+**Cách nhận biết**: Code có `useEffect(() => {...}, [someFunction])` mà `someFunction` được tạo inline (`() => ...`) → nguy cơ stale closure.
+
+---
+
+### Ref Pattern cho Callback (Latest Ref Pattern)
+**Định nghĩa**: Kỹ thuật React: lưu một callback vào `useRef` và cập nhật ref sau mỗi render, để `setTimeout`/`setInterval` luôn gọi phiên bản mới nhất của callback mà không cần đưa nó vào dependency array.
+
+**Trong dự án này**:
+```tsx
+const onSubmitRef = useRef(onSubmit);
+useEffect(() => { onSubmitRef.current = onSubmit; }); // không có deps → chạy sau mỗi render
+
+useEffect(() => {
+  const id = setTimeout(() => onSubmitRef.current(), msLeft);
+  return () => clearTimeout(id);
+}, []); // chỉ set up 1 lần lúc mount
+```
+
+**Khi nào dùng**: Khi cần gọi callback mới nhất từ bên trong một effect/timer có deps là `[]` (chỉ chạy 1 lần).

@@ -388,6 +388,18 @@ export class PracticeService {
           if (session.userId !== userId) throw new PracticeSessionNotOwnedError(sessionId);
           if (session.completedAt) throw new PracticeSessionAlreadyCompletedError(sessionId);
 
+          // Bug 3: Kiem tra timeout trong transaction (tranh race condition).
+          // 60 giay grace cho phep nop muon hon 1 chut do tre mang.
+          const elapsedSeconds = (Date.now() - session.startedAt.getTime()) / 1000;
+          if (elapsedSeconds > SESSION_TIMEOUT_SECONDS + 60) {
+            // Danh dau da ket thuc (tranh retry vo tan) nhung KHONG cong diem.
+            await tx.practiceSession.update({
+              where: { id: sessionId },
+              data: { completedAt: new Date() },
+            });
+            throw new PracticeSessionExpiredError(sessionId);
+          }
+
           // Lay tat ca cac tra loi trong phien
           const answers = await tx.practiceAnswer.findMany({
             where: { sessionId },
@@ -911,8 +923,9 @@ export class PracticeService {
     } catch (err) {
       // Neu la loi rate limit thi nem loi
       if (err instanceof PracticeRateLimitError) throw err;
-      // Neu la loi Redis (mat ket noi...) thi bo qua — khong can chan user
-      console.warn('[PracticeService] Redis rate limit check that bai (bo qua):', (err as Error).message);
+      // Bug 2: Fail-closed — Redis loi → chan user, tranh vuot gioi han khi Redis down.
+      console.error('[PracticeService] Redis rate limit check that bai (fail-closed):', (err as Error).message);
+      throw new PracticeRateLimitError();
     }
   }
 

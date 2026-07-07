@@ -18,15 +18,18 @@ import {
   ExamPaperNotFoundError,
   ExamQuestionInvalidError,
   ExamQuestionNotFoundError,
+  ExamSessionAlreadyActiveError,
   ExamSessionAlreadyCompletedError,
   ExamSessionNotCompletedError,
   ExamSessionNotFoundError,
   ExamSessionNotOwnedError,
+  ExamSubmitTooEarlyError,
 } from './exam.errors.js';
 import { wrongAnswerService } from '../wrongAnswer/wrongAnswer.service.js';
 import {
   EXAM_ENTRY_FEE,
   EXAM_GRACE_SECONDS,
+  EXAM_MIN_SUBMIT_RATIO,
   TRUE_FALSE_SCORE_RATIOS,
   getExamBonusPoints,
 } from './exam.types.js';
@@ -75,6 +78,21 @@ function shuffle<T>(arr: T[]): T[] {
 /** Chuan hoa dap an FILL_BLANK de so sanh: trim, lowercase, gop khoang trang lien tiep. */
 export function normalizeAnswer(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * Bug 1b: Phat hien "sentinel value" {} trong ExamAnswer.selectedAnswer.
+ * {} la gia tri danh dau "cau hoi bi bo trang" — khi phat hien, frontend
+ * hien thi "Ban chua tra loi cau nay" thay vi lo dap an dung.
+ * Export de co the unit test doc lap.
+ */
+export function isSentinelUnanswered(value: Prisma.JsonValue | null): boolean {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0
+  );
 }
 
 /** Kieu rut gon cua ExamQuestion - dung cho cac ham helper khong can toan bo cot. */
@@ -522,6 +540,13 @@ export class ExamService {
   async startExam(userId: string, subjectId: string): Promise<StartExamResponse> {
     if (!isValidSubjectId(subjectId)) throw new ExamInvalidSubjectError(subjectId);
 
+    // Bug 4: Ngan mo 2 phien thi cung mon cung luc (multi-tab / double-click).
+    const activeSession = await prisma.examSession.findFirst({
+      where: { userId, subjectId, status: 'IN_PROGRESS' },
+      select: { id: true },
+    });
+    if (activeSession) throw new ExamSessionAlreadyActiveError(activeSession.id);
+
     const chosenPaper = await pickFairExamPaper(userId, subjectId);
 
     for (let attempt = 1; attempt <= MAX_EXAM_RETRY; attempt++) {
@@ -595,6 +620,14 @@ export class ExamService {
     if (session.userId !== userId) throw new ExamSessionNotOwnedError(sessionId);
     if (session.status === 'COMPLETED') throw new ExamSessionAlreadyCompletedError(sessionId);
     if (session.status === 'EXPIRED') throw new ExamExpiredError(sessionId);
+
+    // Bug 1a: Ngan nop bai qua som (< 30% thoi gian lam bai).
+    const elapsedMs = Date.now() - session.startedAt.getTime();
+    const minRequiredMs = session.durationMinutes * 60_000 * EXAM_MIN_SUBMIT_RATIO;
+    if (elapsedMs < minRequiredMs) {
+      const remainingSeconds = Math.ceil((minRequiredMs - elapsedMs) / 1000);
+      throw new ExamSubmitTooEarlyError(remainingSeconds);
+    }
 
     const deadlineMs =
       session.startedAt.getTime() + session.durationMinutes * 60_000 + EXAM_GRACE_SECONDS * 1000;
@@ -763,14 +796,17 @@ export class ExamService {
       if (pointsEarned >= q.points) {
         entry.correctCount += 1;
       } else {
+        const selectedAnswer = answer?.selectedAnswer ?? null;
+        // Bug 1b: Cau bo trang (sentinel {}) → an dap an dung, tra null cho frontend.
+        const correctAnswer = isSentinelUnanswered(selectedAnswer) ? null : q.correctAnswer;
         wrongAnswers.push({
           examQuestionId: q.id,
           questionText: q.questionText,
           questionType: q.questionType as ExamQuestionType,
           chapter: q.chapter,
           options: q.options,
-          correctAnswer: q.correctAnswer,
-          selectedAnswer: answer?.selectedAnswer ?? null,
+          correctAnswer,
+          selectedAnswer,
           explanation: q.explanation,
           points: q.points,
           pointsEarned,

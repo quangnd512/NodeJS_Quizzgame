@@ -25,7 +25,13 @@ const submitExamSchema = z.object({
     z.object({
       examQuestionId: z.string().uuid('examQuestionId phai la UUID hop le'),
       // TRUE_FALSE_4: null = y chua tra loi (gradeQuestion tinh la sai).
-      selectedAnswer: z.union([z.number(), z.string(), z.array(z.union([z.boolean(), z.null()]))]),
+      // {} (object rong) = sentinel "cau bo trang" — phai accept de isSentinelUnanswered() xu ly.
+      selectedAnswer: z.union([
+        z.number(),
+        z.string(),
+        z.array(z.union([z.boolean(), z.null()])),
+        z.object({}).strict(), // sentinel {} = cau bo trang, khong lo dap an dung
+      ]),
     }),
   ),
 });

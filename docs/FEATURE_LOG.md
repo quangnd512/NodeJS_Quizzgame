@@ -5227,3 +5227,232 @@ curl -X DELETE http://localhost:4000/api/admin/users/<userId> \
 - TODO: Thêm phân quyền senh hơn trong module admin (ví dụ chỉ super-admin mới
   có thể xóa tài khoản hoặc đổi role thành ADMIN).
 - TODO: Thêm audit log cho các hành động admin (khoá/mở khoá, xóa, đổi role).
+
+---
+
+## 11. Anti-Cheat Security Fixes — Bảo mật chống gian lận
+
+> **Branch**: `feature/anti-cheat-fixes` | **Merge**: v1.9.0 | **Ngày**: 2026-07-07
+
+---
+
+### Tổng quan
+
+Vá 4 lỗ hổng bảo mật cho phép học sinh gian lận trong module Thi thử và Luyện tập:
+
+| Bug | Mô tả | Module |
+|-----|-------|--------|
+| **Bug 1a** | Nộp bài tức thì (không cần làm) | Exam |
+| **Bug 1b** | Xem đáp án đúng của câu bỏ trắng | Exam |
+| **Bug 2** | Redis down → vượt giới hạn phiên luyện tập | Practice |
+| **Bug 3** | Nộp phiên luyện tập đã hết giờ → vẫn nhận điểm | Practice |
+| **Bug 4** | Mở 2 tab thi cùng môn cùng lúc → 2 phiên song song | Exam |
+
+Không thêm endpoint mới, không migration DB.
+
+---
+
+### Data Model
+
+Không thay đổi schema DB. Các field đã có được dùng để detect gian lận:
+
+| Field | Bảng | Cách dùng |
+|-------|------|-----------|
+| `startedAt` | `exam_sessions` | Tính elapsed để chặn nộp sớm |
+| `durationMinutes` | `exam_sessions` | Ngưỡng 30% = durationMinutes × 60 × 0.3 |
+| `status` | `exam_sessions` | Lọc `IN_PROGRESS` để phát hiện phiên trùng |
+| `selectedAnswer` | `exam_answers` | Detect sentinel `{}` = câu bỏ trắng |
+| `startedAt` | `practice_sessions` | Tính elapsed để chặn complete quá hạn |
+
+---
+
+### Hằng số mới
+
+| Hằng số | Giá trị | File | Ý nghĩa |
+|---------|---------|------|---------|
+| `EXAM_MIN_SUBMIT_RATIO` | `0.3` | `exam.types.ts` | Tỉ lệ thời gian tối thiểu trước khi được nộp bài |
+
+---
+
+### Error classes mới
+
+| Class | HTTP | Code | Khi nào throw |
+|-------|------|------|---------------|
+| `ExamSubmitTooEarlyError` | 400 | `EXAM_SUBMIT_TOO_EARLY` | Nộp bài khi chưa đủ 30% thời gian |
+| `ExamSessionAlreadyActiveError` | 409 | `EXAM_SESSION_ALREADY_ACTIVE` | Bắt đầu phiên khi đang có phiên IN_PROGRESS cùng môn |
+
+---
+
+### API Reference (behavior thay đổi — không có endpoint mới)
+
+#### POST /api/exam/start
+
+**Thay đổi**: Trả 409 nếu user đang có phiên IN_PROGRESS cùng môn.
+
+```
+Trước: Tạo phiên mới, user có thể có nhiều phiên cùng lúc
+Sau:   Kiểm tra IN_PROGRESS → nếu có → 409 EXAM_SESSION_ALREADY_ACTIVE
+```
+
+**Error mới**:
+```json
+HTTP 409
+{ "error": "EXAM_SESSION_ALREADY_ACTIVE", "message": "Ban dang co phien thi thu chua hoan thanh ('abc123'). Hay hoan thanh hoac cho het gio." }
+```
+
+---
+
+#### POST /api/exam/submit
+
+**Thay đổi**: Trả 400 nếu elapsed < 30% durationMinutes.
+
+```
+Trước: Nộp bài bất kỳ lúc nào sau khi bắt đầu
+Sau:   elapsed < durationMinutes × 60 × 0.3 → 400 EXAM_SUBMIT_TOO_EARLY
+```
+
+**Error mới**:
+```json
+HTTP 400
+{ "error": "EXAM_SUBMIT_TOO_EARLY", "message": "Ban can lam bai them it nhat 5 phut nua moi duoc nop." }
+```
+
+---
+
+#### GET /api/exam/:id/result
+
+**Thay đổi**: `correctAnswer` trong `wrongAnswers` có thể là `null` cho câu bỏ trắng.
+
+```
+Trước: correctAnswer luôn có giá trị (lộ đáp án dù câu bỏ trắng)
+Sau:   correctAnswer = null nếu selectedAnswer = {} (sentinel)
+```
+
+**Response mẫu (câu bỏ trắng)**:
+```json
+{
+  "examQuestionId": "q-xxx",
+  "questionText": "Tìm x biết ...",
+  "correctAnswer": null,
+  "selectedAnswer": {},
+  "pointsEarned": 0
+}
+```
+
+---
+
+### Luồng xử lý chống gian lận
+
+#### Bug 1a — Nộp bài tối thiểu 30%
+
+```
+POST /api/exam/submit
+      │
+      ▼
+┌─────────────────────────────────────┐
+│ elapsed = now - session.startedAt   │
+│ minRequired = duration × 60 × 0.3  │
+├─────────────────────────────────────┤
+│  elapsed < minRequired?             │
+│  ├─ YES → 400 EXAM_SUBMIT_TOO_EARLY │
+│  └─ NO  → Tiếp tục chấm điểm       │
+└─────────────────────────────────────┘
+```
+
+#### Bug 1b — Sentinel câu bỏ trắng
+
+```
+getExamResult()
+      │
+      ▼
+Với mỗi câu sai (pointsEarned < q.points):
+      │
+      ▼
+┌─────────────────────────────────────────────────────┐
+│ selectedAnswer = answer?.selectedAnswer ?? null     │
+│ isSentinelUnanswered(selectedAnswer)?               │
+│   ├─ YES (là {}) → correctAnswer = null             │
+│   │                → frontend: "Bạn chưa trả lời"  │
+│   └─ NO           → correctAnswer = q.correctAnswer │
+└─────────────────────────────────────────────────────┘
+```
+
+#### Bug 2 — Fail-closed Redis
+
+```
+POST /api/practice/start
+      │
+      ▼
+checkRateLimit()
+      │
+      ├─ Redis OK, count < MAX → cho phép
+      ├─ Redis OK, count >= MAX → 429 PRACTICE_RATE_LIMIT_EXCEEDED
+      └─ Redis ERROR → 429 PRACTICE_RATE_LIMIT_EXCEEDED  ← thay đổi!
+           (trước đây: bỏ qua lỗi → fail-open → gian lận được)
+```
+
+#### Bug 3 — Timeout check trong transaction
+
+```
+completeSession($transaction)
+      │
+      ▼
+┌──────────────────────────────────────────────────────┐
+│ elapsedSeconds = now - session.startedAt             │
+│ if elapsed > SESSION_TIMEOUT_SECONDS + 60:           │
+│   ├─ UPDATE completedAt = now (đánh dấu, tránh retry)│
+│   └─ throw PracticeSessionExpiredError → 410          │
+│ else: tiếp tục chấm điểm bình thường                 │
+└──────────────────────────────────────────────────────┘
+```
+
+#### Bug 4 — Chặn phiên trùng lặp
+
+```
+POST /api/exam/start
+      │
+      ▼
+findFirst({ where: { userId, subjectId, status: 'IN_PROGRESS' } })
+      │
+      ├─ Có kết quả → 409 EXAM_SESSION_ALREADY_ACTIVE
+      └─ Không có  → Tiếp tục tạo phiên mới
+```
+
+---
+
+### File Structure
+
+| File | Thay đổi |
+|------|----------|
+| `backend/src/services/exam/exam.types.ts` | +`EXAM_MIN_SUBMIT_RATIO`, `ExamWrongAnswerItem.correctAnswer: null` |
+| `backend/src/services/exam/exam.errors.ts` | +`ExamSubmitTooEarlyError`, +`ExamSessionAlreadyActiveError` |
+| `backend/src/services/exam/exam.service.ts` | Bug 4 (startExam), Bug 1a (submitExam), Bug 1b (getExamResult) |
+| `backend/src/services/practice/practice.service.ts` | Bug 2 (checkRateLimit), Bug 3 (completeSession) |
+| `backend/src/app.ts` | Đăng ký 2 HTTP status code mới |
+| `frontend/src/App.tsx` | Xử lý 3 error case mới, cảnh báo nộp sớm |
+| `backend/src/services/exam/__tests__/anti-cheat.test.ts` | 22 unit test mới |
+
+---
+
+### Ghi chú kỹ thuật
+
+**Sentinel value `{}`**:
+Khi học sinh không trả lời 1 câu, frontend gửi `selectedAnswer: {}` (object rỗng) thay vì bỏ qua field. Backend detect bằng `isSentinelUnanswered()` — xem ADR-009 để biết lý do chọn pattern này.
+
+**Fail-closed vs Fail-open**:
+`checkRateLimit()` đổi từ fail-open (bỏ qua lỗi Redis) sang fail-closed (throw khi Redis lỗi). Đánh đổi: Redis down thì user không bắt đầu luyện tập được (~rất hiếm) nhưng không gian lận được. Xem ADR-009.
+
+**Ngưỡng 30% (EXAM_MIN_SUBMIT_RATIO = 0.3)**:
+Đề 60 phút → phải làm ít nhất 18 phút. Có thể điều chỉnh hằng số này mà không cần sửa logic.
+
+**Grace 60s ở Bug 3**:
+`SESSION_TIMEOUT_SECONDS + 60` cho phép học sinh nộp muộn tối đa 1 phút do trễ mạng. Kết hợp với grace 30s của Exam module, tổng grace tối đa là 60s.
+
+---
+
+### Lưu ý / rủi ro / TODO tiếp theo
+
+- **Race condition nhỏ ở Bug 4**: check `findFirst` nằm ngoài transaction → 2 request cực kỳ đồng thời có thể vượt qua. Để fix hoàn toàn cần unique constraint DB `(userId, subjectId, WHERE status = 'IN_PROGRESS')` — là migration schema, để sau.
+- **Fail-closed ảnh hưởng UX khi Redis down**: Rất hiếm xảy ra (~99.9% uptime Redis). Nếu cần SLA cao hơn, có thể đổi về fail-open cho các môi trường có nhiều người dùng VIP.
+- TODO: Thêm monitoring alert khi Redis down để phát hiện sớm.
+- TODO: Xem xét thêm unique constraint DB cho phiên thi `(userId, subjectId, status)` khi có thời gian làm migration.
