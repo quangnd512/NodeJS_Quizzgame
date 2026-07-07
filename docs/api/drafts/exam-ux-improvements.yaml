@@ -1,0 +1,42 @@
+# API Draft: Exam UX Improvements (Feature 012)
+# Tạo bởi S1-KienTrucSu — 2026-07-07
+
+endpoints:
+  - method: GET
+    path: /api/exam/active
+    auth: required
+    description: >
+      Kiểm tra xem user hiện có ExamSession nào đang IN_PROGRESS không.
+      Trả về thông tin session kèm remainingSeconds tính từ thời điểm gọi API.
+      Trả null nếu không có session nào đang dở.
+    response_200:
+      session:
+        id: string (UUID)
+        subject: string
+        title: string              # tên đề thi — để hiển thị trong dialog resume
+        startedAt: string (ISO 8601)
+        durationMinutes: number
+        remainingSeconds: number   # = (startedAt + durationMinutes*60s) - now; có thể âm nếu hết giờ
+    response_200_no_session:
+      session: null
+    errors: [401]
+    notes:
+      - remainingSeconds âm có nghĩa bài đã hết giờ — frontend xử lý auto-submit
+      - Không trả đáp án câu hỏi (frontend load từ localStorage exam_draft_{sessionId})
+
+  - method: POST
+    path: /api/exam/:id/abandon
+    auth: required
+    description: >
+      Huỷ bài thi đang IN_PROGRESS. Đổi status thành ABANDONED.
+      Sau khi ABANDONED, user không còn bị chặn 409 khi bắt đầu bài thi mới.
+    response_200:
+      success: true
+    errors:
+      - 401: chưa đăng nhập
+      - 403: sessionId không thuộc về user này
+      - 404: session không tồn tại
+      - 409: session không ở trạng thái IN_PROGRESS (đã COMPLETED hoặc ABANDONED)
+    notes:
+      - Idempotent-friendly: nếu gọi lại khi đã ABANDONED → 409 (không crash)
+      - Không tính điểm, không lưu đáp án vào DB

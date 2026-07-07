@@ -619,13 +619,15 @@ export class ExamService {
 
     if (!session) return { session: null };
 
-    // Lay ten de thi de frontend hien trong dialog
+    // Lay ten de thi de frontend hien trong dialog "Tiep tuc?"
+    // (2 query rieng biet vi ExamSession chua co @relation toi ExamPaper trong schema)
     const paper = await prisma.examPaper.findUnique({
       where: { id: session.examPaperId },
       select: { title: true },
     });
 
     const expiryMs = session.startedAt.getTime() + session.durationMinutes * 60_000;
+    // remainingSeconds co the am neu het gio — frontend xu ly auto-submit
     const remainingSeconds = Math.round((expiryMs - Date.now()) / 1000);
 
     return {

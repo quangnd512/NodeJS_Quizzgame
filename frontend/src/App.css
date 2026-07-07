@@ -633,6 +633,35 @@ body {
 }
 .btn-icon-back:hover { background: rgba(255,255,255,.25); }
 
+/* Banner nhắc tiếp tục bài thi đang dở (ExamPage hub) */
+.exam-resume-banner {
+  margin: .75rem 1.25rem 0;
+  padding: .875rem 1rem;
+  background: #fffbeb;
+  border: 1.5px solid #fcd34d;
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: .625rem;
+}
+.exam-resume-msg {
+  margin: 0;
+  font-size: .9rem;
+  color: var(--text);
+  line-height: 1.5;
+}
+.exam-resume-actions {
+  display: flex;
+  gap: .5rem;
+}
+
+/* Nút kích thước nhỏ — dùng trong banner resume và các nơi cần nút nhỏ gọn */
+.btn-sm {
+  padding: .4rem .875rem;
+  font-size: .825rem;
+  border-radius: var(--radius-sm);
+}
+
 .practice-subjects {
   display: flex;
   flex-direction: column;
