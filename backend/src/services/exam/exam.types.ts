@@ -23,8 +23,14 @@ export const EXAM_MIN_SUBMIT_RATIO = 0.3;
 export const EXAM_QUESTION_TYPES = ['MCQ_4', 'TRUE_FALSE_4', 'FILL_BLANK'] as const;
 export type ExamQuestionType = (typeof EXAM_QUESTION_TYPES)[number];
 
-/** Cac trang thai phien thi thu hop le. */
-export const EXAM_SESSION_STATUSES = ['IN_PROGRESS', 'COMPLETED', 'EXPIRED'] as const;
+/**
+ * Cac trang thai phien thi thu hop le.
+ * - IN_PROGRESS: dang lam bai
+ * - COMPLETED: da nop bai, da cham diem
+ * - EXPIRED: qua gio nop bai, khong duoc cham diem
+ * - ABANDONED: nguoi dung chu dong huy phien (nhan nut Thoat va xac nhan)
+ */
+export const EXAM_SESSION_STATUSES = ['IN_PROGRESS', 'COMPLETED', 'EXPIRED', 'ABANDONED'] as const;
 export type ExamSessionStatus = (typeof EXAM_SESSION_STATUSES)[number];
 
 /**

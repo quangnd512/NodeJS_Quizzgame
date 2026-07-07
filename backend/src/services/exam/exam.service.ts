@@ -18,6 +18,7 @@ import {
   ExamPaperNotFoundError,
   ExamQuestionInvalidError,
   ExamQuestionNotFoundError,
+  ExamSessionAbandonedError,
   ExamSessionAlreadyActiveError,
   ExamSessionAlreadyCompletedError,
   ExamSessionNotCompletedError,
@@ -620,6 +621,7 @@ export class ExamService {
     if (session.userId !== userId) throw new ExamSessionNotOwnedError(sessionId);
     if (session.status === 'COMPLETED') throw new ExamSessionAlreadyCompletedError(sessionId);
     if (session.status === 'EXPIRED') throw new ExamExpiredError(sessionId);
+    if (session.status === 'ABANDONED') throw new ExamSessionAbandonedError(sessionId);
 
     // Bug 1a: Ngan nop bai qua som (< 30% thoi gian lam bai).
     const elapsedMs = Date.now() - session.startedAt.getTime();
@@ -762,7 +764,8 @@ export class ExamService {
     const session = await prisma.examSession.findUnique({ where: { id: sessionId } });
     if (!session) throw new ExamSessionNotFoundError(sessionId);
     if (session.userId !== userId) throw new ExamSessionNotOwnedError(sessionId);
-    if (session.status === 'IN_PROGRESS') throw new ExamSessionNotCompletedError(sessionId);
+    if (session.status === 'IN_PROGRESS' || session.status === 'ABANDONED')
+      throw new ExamSessionNotCompletedError(sessionId);
 
     const [questions, answers] = await Promise.all([
       prisma.examQuestion.findMany({
