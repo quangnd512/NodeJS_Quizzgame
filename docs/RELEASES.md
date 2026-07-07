@@ -4,6 +4,32 @@
 
 ---
 
+## v1.8.1 — 2026-07-07
+
+### Anti-Cheat Security Fixes (Feature 011)
+
+#### Fixed
+- **Bug 1a**: Nộp bài trước 30% thời gian → `EXAM_SUBMIT_TOO_EARLY` (400), frontend hiển thị "Bạn cần làm thêm X phút nữa"
+- **Bug 1b**: Đáp án đúng bị lộ cho câu bỏ trắng → `correctAnswer = null`, frontend hiển thị "Bạn chưa trả lời câu này"
+- **Bug 2**: Redis down khiến rate limit luyện tập vô hiệu → đổi sang fail-closed, chặn luôn khi Redis lỗi
+- **Bug 3**: Practice session không kiểm tra timeout → thêm elapsed check trong `$transaction` (17 phút + 60s grace)
+- **Bug 4**: Mở nhiều tab thi cùng môn → `EXAM_SESSION_ALREADY_ACTIVE` (409)
+- **Bonus**: Zod schema không nhận sentinel `{}` → thêm `z.object({}).strict()`
+- **Bonus**: Auto-submit không trigger khi hết giờ → thay bằng `setTimeout` + Latest Ref Pattern
+
+#### Added
+- Hằng số `EXAM_MIN_SUBMIT_RATIO = 0.3`
+- Error class `ExamSubmitTooEarlyError` (HTTP 400)
+- Error class `ExamSessionAlreadyActiveError` (HTTP 409)
+- Helper `isSentinelUnanswered()` (exported, có unit test)
+- 22 unit test mới cho anti-cheat logic
+- `docs/guides/troubleshooting.md`: hướng dẫn xử lý 6 lỗi phổ biến
+- `docs/adr/009-anti-cheat-sentinel-fail-closed.md`: ADR về sentinel và fail-closed
+
+**Migration**: Không cần migration DB.
+
+---
+
 ## v1.8.0 — 2026-07-06
 
 ### Admin User Management + Dashboard (Feature 008)
