@@ -1238,13 +1238,31 @@ function ExamSessionScreen({
     return () => clearInterval(id);
   }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Auto-submit dua tren thoi gian thuc tu server (data.startedAt + durationMinutes),
+  // khong phu thuoc vao timeLeft state de tranh race condition khi ExamPage re-render.
+  // Dung ref de luon goi onSubmit moi nhat (tranh stale closure).
+  const onSubmitRef = useRef(onSubmit);
+  useEffect(() => { onSubmitRef.current = onSubmit; }); // cap nhat ref sau moi render
   const autoSubmitted = useRef(false);
   useEffect(() => {
-    if (timeLeft === 0 && !autoSubmitted.current && !submitting) {
-      autoSubmitted.current = true;
-      onSubmit();
+    const expiryMs = new Date(data.startedAt).getTime() + data.durationMinutes * 60_000;
+    const msLeft = expiryMs - Date.now();
+    if (msLeft <= 0) {
+      // Da het gio luc component mount (vi du: resume phien cu)
+      if (!autoSubmitted.current) {
+        autoSubmitted.current = true;
+        onSubmitRef.current();
+      }
+      return;
     }
-  }, [timeLeft, submitting, onSubmit]);
+    const id = setTimeout(() => {
+      if (!autoSubmitted.current) {
+        autoSubmitted.current = true;
+        onSubmitRef.current();
+      }
+    }, msLeft);
+    return () => clearTimeout(id);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const mins = String(Math.floor(timeLeft / 60)).padStart(2, '0');
   const secs = String(timeLeft % 60).padStart(2, '0');
