@@ -170,6 +170,23 @@ export interface StartExamResponse {
   questions: ExamQuestionPublicDto[];
 }
 
+/**
+ * Ket qua tra ve cho GET /api/exam/active — phien thi dang IN_PROGRESS (neu co).
+ * remainingSeconds: so giay con lai, co the am neu da het gio nhung chua het grace period.
+ * Frontend dung de hien dialog "Tiep tuc?" va tinh thoi gian hien thi dong ho.
+ */
+export interface ActiveExamSessionResponse {
+  session: {
+    id: string;
+    subject: string;
+    title: string;
+    durationMinutes: number;
+    startedAt: Date;
+    /** So giay con lai = (startedAt + durationMinutes*60s) - now. Co the am. */
+    remainingSeconds: number;
+  } | null;
+}
+
 /** 1 cau tra loi user gui khi nop bai. */
 export interface SubmitExamAnswerInput {
   examQuestionId: string;
