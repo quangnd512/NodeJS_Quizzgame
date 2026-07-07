@@ -51,3 +51,20 @@
 - **isBlocked check trong middleware**: Đặt check khoá tài khoản ở
   `verifyAppToken` (middleware chạy mọi request) thay vì từng route riêng
   → đảm bảo không route nào "lọt" qua, không cần nhớ thêm check ở nhiều nơi.
+
+---
+
+## Vòng 11: Anti-Cheat Security Fixes (2026-07-07)
+
+### Phức tạp hơn dự kiến
+- **Sentinel value `{}` cần xuyên suốt 3 lớp**: Frontend cần `toSubmitAnswer()` để convert, Zod cần `z.object({}).strict()` để validate, backend cần `isSentinelUnanswered()` để detect. Ban đầu S2 quên lớp Zod validation → bug phát sinh khi test.
+- **Auto-submit React**: Tưởng đơn giản nhưng `useEffect([..., onSubmit])` có race condition tinh vi. Cần thêm 1 vòng debug và fix với Latest Ref Pattern.
+
+### Nên làm khác lần sau
+- **Test Zod schema trước khi test E2E**: Mỗi khi thêm kiểu dữ liệu mới vào API, viết test Zod schema riêng ngay trong S2 — không để đến S5 manual test mới phát hiện.
+- **React timer + auto-submit**: Dùng `setTimeout` + Latest Ref Pattern ngay từ đầu thay vì `useEffect` watch state. Pattern này ổn định hơn trong mọi hoàn cảnh.
+
+### Quyết định thiết kế đáng ghi nhớ
+- **Fail-Closed > Fail-Open cho security**: Khi Redis lỗi, chặn user (tạm thời bất tiện) thay vì cho qua (nguy cơ bảo mật vĩnh viễn). Đây là triết lý "mặc định an toàn".
+- **Sentinel `{}` thay vì `null`**: `null` đã có ngữ nghĩa riêng trong Prisma ("không có bản ghi"). Dùng `{}` tạo một ký hiệu không thể nhầm lẫn, không xung đột với bất kỳ đáp án hợp lệ nào của 3 loại câu hỏi.
+- **`EXAM_MIN_SUBMIT_RATIO` là constant, không hardcode**: Ngưỡng 30% được đặt trong `exam.types.ts` thay vì hardcode ở nhiều nơi → dễ điều chỉnh sau này (ví dụ đổi thành 25% cho đề ngắn hơn).

@@ -974,3 +974,30 @@ function isSentinelUnanswered(value: Prisma.JsonValue | null): boolean {
 **Giá trị**: `1020` (17 phút = 17 × 60).
 
 **Grace period**: Khi `completeSession()` kiểm tra timeout, được cộng thêm 60 giây grace để học sinh không bị mất điểm do trễ mạng.
+
+---
+
+### Stale Closure (Closure cũ)
+**Định nghĩa**: Hiện tượng trong React khi một hàm (closure) bên trong `useEffect` hoặc `setTimeout` "nhớ" giá trị state/prop từ lần render trước, không phản ánh giá trị hiện tại.
+
+**Trong dự án này (S5 bug fix)**: Auto-submit cũ dùng `useEffect([..., onSubmit])` — `onSubmit` là hàm mới mỗi lần `ExamPage` render, khiến effect có thể chạy với phiên bản cũ của `handleSubmit` (bắt state cũ). Fix: dùng `onSubmitRef.current` — ref luôn trỏ đến phiên bản mới nhất.
+
+**Cách nhận biết**: Code có `useEffect(() => {...}, [someFunction])` mà `someFunction` được tạo inline (`() => ...`) → nguy cơ stale closure.
+
+---
+
+### Ref Pattern cho Callback (Latest Ref Pattern)
+**Định nghĩa**: Kỹ thuật React: lưu một callback vào `useRef` và cập nhật ref sau mỗi render, để `setTimeout`/`setInterval` luôn gọi phiên bản mới nhất của callback mà không cần đưa nó vào dependency array.
+
+**Trong dự án này**:
+```tsx
+const onSubmitRef = useRef(onSubmit);
+useEffect(() => { onSubmitRef.current = onSubmit; }); // không có deps → chạy sau mỗi render
+
+useEffect(() => {
+  const id = setTimeout(() => onSubmitRef.current(), msLeft);
+  return () => clearTimeout(id);
+}, []); // chỉ set up 1 lần lúc mount
+```
+
+**Khi nào dùng**: Khi cần gọi callback mới nhất từ bên trong một effect/timer có deps là `[]` (chỉ chạy 1 lần).
