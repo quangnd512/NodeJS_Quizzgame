@@ -5,7 +5,7 @@ import {
   loginWithFirebaseToken, getMyProfile, updateSubjects, updateProfile, ApiError,
   startPracticeSession, answerQuestion, completeSession, reportQuestion,
   getPracticeHistory, getPracticeStats,
-  startExam, submitExam, getExamResult,
+  startExam, submitExam, getExamResult, getActiveExamSession, abandonExam,
   adminListReports, adminUpdateReportStatus, adminGetReportsSummary,
   adminListExamPapers, adminGetExamPaperDetail, adminCreateExamPaper, adminUpdateExamPaper,
   adminUpdateExamQuestion, adminDeleteExamQuestion, adminRestoreExamQuestion, adminImportExamQuestions,
@@ -22,7 +22,7 @@ import {
 import type {
   UserProfile, StartSessionResult, AnswerResult, CompleteResult,
   HistoryItem, SubjectStat, QuestionReportDto, ReportsSummary, ReportStatus,
-  StartExamResult, SubmitExamResult, ExamResult, ExamAnswerValue, ExamQuestionType, ExamQuestionPublic,
+  StartExamResult, SubmitExamResult, ExamResult, ExamAnswerValue, ExamQuestionType, ExamQuestionPublic, ActiveExamSession as ActiveExamSessionInfo,
   ExamPaperSummary, ExamPaperDetail, ExamImportResultDto,
   QuestionBankItem, QuestionBankUsage,
   LeaderboardEntry, MyRankResponse,
@@ -1060,6 +1060,41 @@ interface ActiveExamSession {
   answers: Map<string, ExamAnswerValue>;
 }
 
+// ─── Helpers cho localStorage draft đáp án ──────────────────────────────────
+
+/** Key lưu draft đáp án trong localStorage theo sessionId. */
+function examDraftKey(sessionId: string) {
+  return `exam_draft_${sessionId}`;
+}
+
+/** Lưu Map đáp án vào localStorage. Lỗi lưu bị bỏ qua (storage đầy). */
+function saveDraftAnswers(sessionId: string, answers: Map<string, ExamAnswerValue>) {
+  try {
+    const obj: Record<string, ExamAnswerValue> = {};
+    answers.forEach((v, k) => { obj[k] = v; });
+    localStorage.setItem(examDraftKey(sessionId), JSON.stringify(obj));
+  } catch {
+    // Bỏ qua nếu localStorage đầy hoặc bị chặn
+  }
+}
+
+/** Đọc draft đáp án từ localStorage. Trả về Map rỗng nếu không có. */
+function loadDraftAnswers(sessionId: string): Map<string, ExamAnswerValue> {
+  try {
+    const raw = localStorage.getItem(examDraftKey(sessionId));
+    if (!raw) return new Map();
+    const obj = JSON.parse(raw) as Record<string, ExamAnswerValue>;
+    return new Map(Object.entries(obj));
+  } catch {
+    return new Map();
+  }
+}
+
+/** Xóa draft đáp án khỏi localStorage sau khi nộp/huỷ. */
+function clearDraftAnswers(sessionId: string) {
+  try { localStorage.removeItem(examDraftKey(sessionId)); } catch { /* bỏ qua */ }
+}
+
 function ExamPage({
   profile, sessionToken, onBack, onProfileUpdate, onError,
 }: {
@@ -1077,11 +1112,109 @@ function ExamPage({
   const [sessionError, setSessionError] = useState('');
   const [submitting, setSubmitting]   = useState(false);
 
+  // TASK 5: Trạng thái resume — phiên đang dở phát hiện khi mở hub
+  const [resumeCandidate, setResumeCandidate] = useState<ActiveExamSessionInfo | null>(null);
+  // Bắt đầu ở true vì ta luôn kiểm tra ngay khi mount
+  const [checkingActive, setCheckingActive]   = useState(true);
+
+  // Kiểm tra phiên đang dở ngay khi mở ExamPage (hub)
+  useEffect(() => {
+    let cancelled = false;
+    void getActiveExamSession(sessionToken)
+      .then(({ session: active }) => {
+        if (cancelled) return;
+        if (active) setResumeCandidate(active);
+      })
+      .catch(() => { /* bỏ qua lỗi mạng, không block UI */ })
+      .finally(() => { if (!cancelled) setCheckingActive(false); });
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Người dùng chọn "Tiếp tục" bài thi đang dở. */
+  async function handleResume(active: ActiveExamSessionInfo) {
+    setCheckingActive(true);
+    setHubError('');
+    try {
+      // Kiểm tra còn giờ không
+      const expiryMs = new Date(active.startedAt).getTime() + active.durationMinutes * 60_000;
+      const msLeft = expiryMs - Date.now();
+
+      if (msLeft <= 0) {
+        // Hết giờ → nộp luôn với đáp án đã lưu
+        const savedAnswers = loadDraftAnswers(active.id);
+        setSubmitting(true);
+        try {
+          const answerList = Array.from(savedAnswers.entries()).map(([qId, val]) => ({
+            examQuestionId: qId,
+            selectedAnswer: val,
+          }));
+          const res = await submitExam(sessionToken, active.id, answerList);
+          clearDraftAnswers(active.id);
+          setResult(res);
+          void getMyProfile(sessionToken).then(onProfileUpdate).catch(() => {});
+          setResumeCandidate(null);
+          setSub('result');
+        } catch {
+          // Backend từ chối (quá grace 30s) → abandon và thông báo
+          try { await abandonExam(sessionToken, active.id); } catch { /* bỏ qua */ }
+          clearDraftAnswers(active.id);
+          setResumeCandidate(null);
+          setHubError('Bài thi đã hết giờ và không thể nộp. Bạn có thể bắt đầu bài thi mới.');
+        } finally {
+          setSubmitting(false);
+        }
+        return;
+      }
+
+      // Còn giờ → cần lấy lại đề thi từ server để build lại session UI
+      // Dùng startExam sẽ tạo phiên MỚI nên không dùng được.
+      // Thay vào đó: gọi abandon phiên cũ rồi để user tự bấm bắt đầu.
+      // Nhưng user đã chọn "Tiếp tục" — ta cần dùng GET /api/exam/:id để lấy lại câu hỏi.
+      // Backend chưa có endpoint đó → dùng workaround: lưu StartExamResult vào localStorage.
+      // Kiểm tra xem có StartExamResult đã lưu không.
+      const savedDataRaw = localStorage.getItem(`exam_session_data_${active.id}`);
+      if (!savedDataRaw) {
+        // Không có dữ liệu câu hỏi — abandon và bắt đầu bài mới
+        try { await abandonExam(sessionToken, active.id); } catch { /* bỏ qua */ }
+        clearDraftAnswers(active.id);
+        setResumeCandidate(null);
+        setHubError('Không thể khôi phục bài thi. Bạn có thể bắt đầu bài mới.');
+        return;
+      }
+
+      const savedData = JSON.parse(savedDataRaw) as StartExamResult;
+      const savedAnswers = loadDraftAnswers(active.id);
+      setSession({ data: savedData, answers: savedAnswers });
+      setResumeCandidate(null);
+      setSub('session');
+    } catch (err) {
+      onError(err);
+    } finally {
+      setCheckingActive(false);
+    }
+  }
+
+  /** Người dùng chọn "Huỷ bài" từ dialog resume → abandon phiên cũ. */
+  async function handleAbandonFromResume(active: ActiveExamSessionInfo) {
+    setCheckingActive(true);
+    try {
+      await abandonExam(sessionToken, active.id);
+      clearDraftAnswers(active.id);
+      localStorage.removeItem(`exam_session_data_${active.id}`);
+    } catch { /* bỏ qua lỗi, session có thể đã hết hạn */ }
+    setResumeCandidate(null);
+    setCheckingActive(false);
+  }
+
   async function handleStart(subject: string) {
     setLoadingSubj(subject);
     setHubError('');
     try {
       const data = await startExam(sessionToken, subject);
+      // TASK 4: Lưu toàn bộ StartExamResult vào localStorage để có thể resume
+      try {
+        localStorage.setItem(`exam_session_data_${data.sessionId}`, JSON.stringify(data));
+      } catch { /* bỏ qua */ }
       setSession({ data, answers: new Map() });
       setSub('session');
       void getMyProfile(sessionToken).then(onProfileUpdate).catch(() => {});
@@ -1091,6 +1224,7 @@ function ExamPage({
       } else if (err instanceof ApiError && err.code === 'EXAM_PAPER_EMPTY') {
         setHubError('Môn học này hiện chưa có đề thi thử. Vui lòng thử lại sau.');
       } else if (err instanceof ApiError && err.code === 'EXAM_SESSION_ALREADY_ACTIVE') {
+        // Trường hợp này không nên xảy ra nữa vì ta đã kiểm tra getActiveExamSession trước
         setHubError('Bạn đang có phiên thi chưa hoàn thành. Hãy hoàn thành hoặc chờ hết giờ.');
       } else {
         onError(err);
@@ -1105,6 +1239,8 @@ function ExamPage({
       if (!s) return s;
       const next = new Map(s.answers);
       next.set(qId, value);
+      // TASK 4: Lưu vào localStorage sau mỗi lần chọn đáp án
+      saveDraftAnswers(s.data.sessionId, next);
       return { ...s, answers: next };
     });
   }
@@ -1122,11 +1258,16 @@ function ExamPage({
         ),
       }));
       const res = await submitExam(sessionToken, session.data.sessionId, answers);
+      // Xóa draft sau khi nộp thành công
+      clearDraftAnswers(session.data.sessionId);
+      localStorage.removeItem(`exam_session_data_${session.data.sessionId}`);
       setResult(res);
       void getMyProfile(sessionToken).then(onProfileUpdate).catch(() => {});
       setSub('result');
     } catch (err) {
       if (err instanceof ApiError && err.code === 'EXAM_EXPIRED') {
+        clearDraftAnswers(session.data.sessionId);
+        localStorage.removeItem(`exam_session_data_${session.data.sessionId}`);
         setResult({ sessionId: session.data.sessionId, score: 0, pointsAwarded: 0 });
         void getMyProfile(sessionToken).then(onProfileUpdate).catch(() => {});
         setSub('result');
@@ -1146,12 +1287,36 @@ function ExamPage({
     }
   }
 
+  // TASK 6: Xử lý khi user xác nhận thoát khỏi bài thi
+  async function handleAbandonFromSession() {
+    if (!session || submitting) return;
+    setSubmitting(true);
+    try {
+      await abandonExam(sessionToken, session.data.sessionId);
+      clearDraftAnswers(session.data.sessionId);
+      localStorage.removeItem(`exam_session_data_${session.data.sessionId}`);
+      setSession(null);
+      setSub('hub');
+      // Làm mới điểm vì đã mất điểm vào thi (không hoàn lại)
+      void getMyProfile(sessionToken).then(onProfileUpdate).catch(() => {});
+    } catch {
+      // Nếu session đã expired/completed thì cũng coi như thoát thành công
+      clearDraftAnswers(session.data.sessionId);
+      localStorage.removeItem(`exam_session_data_${session.data.sessionId}`);
+      setSession(null);
+      setSub('hub');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   if (sub === 'session' && session) {
     return (
       <ExamSessionScreen
         session={session}
         onAnswerChange={handleAnswerChange}
         onSubmit={() => void handleSubmit()}
+        onAbandon={() => void handleAbandonFromSession()}
         submitting={submitting}
         submitError={sessionError}
         onClearSubmitError={() => setSessionError('')}
@@ -1180,7 +1345,40 @@ function ExamPage({
         <h2 className="page-title" style={{ flex: 1 }}>Thi thử</h2>
       </div>
 
+      {/* TASK 5: Dialog hỏi tiếp tục bài thi đang dở */}
+      {resumeCandidate && (
+        <div className="exam-resume-banner" role="alert">
+          <p className="exam-resume-msg">
+            📋 Bạn có bài thi <strong>{resumeCandidate.title}</strong> đang dở
+            {resumeCandidate.remainingSeconds > 0
+              ? ` (còn ${Math.ceil(resumeCandidate.remainingSeconds / 60)} phút)`
+              : ' (đã hết giờ)'}
+            . Tiếp tục không?
+          </p>
+          <div className="exam-resume-actions">
+            <button
+              className="btn-primary btn-sm"
+              disabled={checkingActive}
+              onClick={() => void handleResume(resumeCandidate)}
+            >
+              {checkingActive ? <Spinner /> : 'Tiếp tục'}
+            </button>
+            <button
+              className="btn-secondary btn-sm"
+              disabled={checkingActive}
+              onClick={() => void handleAbandonFromResume(resumeCandidate)}
+            >
+              Huỷ bài
+            </button>
+          </div>
+        </div>
+      )}
+
       {hubError && <p className="report-error admin-msg">{hubError}</p>}
+
+      {checkingActive && !resumeCandidate && (
+        <div style={{ textAlign: 'center', padding: '1rem' }}><Spinner /></div>
+      )}
 
       <div className="practice-subjects">
         {subjects.map((s) => {
@@ -1191,7 +1389,7 @@ function ExamPage({
               key={s.id}
               className="practice-subject-card"
               onClick={() => void handleStart(s.id)}
-              disabled={!!loadingSubj}
+              disabled={!!loadingSubj || checkingActive || !!resumeCandidate}
             >
               <span className="ps-emoji">{info.emoji}</span>
               <div className="ps-info">
@@ -1210,16 +1408,19 @@ function ExamPage({
 // ─── ExamSessionScreen ──────────────────────────────────────────────────────
 
 function ExamSessionScreen({
-  session, onAnswerChange, onSubmit, submitting, submitError, onClearSubmitError,
+  session, onAnswerChange, onSubmit, onAbandon, submitting, submitError, onClearSubmitError,
 }: {
   session: ActiveExamSession;
   onAnswerChange: (qId: string, value: ExamAnswerValue) => void;
   onSubmit: () => void;
+  onAbandon: () => void;
   submitting: boolean;
   submitError?: string;
   onClearSubmitError?: () => void;
 }) {
   const { data, answers } = session;
+  // TASK 6: Trạng thái hộp xác nhận thoát
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
 
   const [timeLeft, setTimeLeft] = useState(() => {
     const startedAt = new Date(data.startedAt).getTime();
@@ -1270,7 +1471,44 @@ function ExamSessionScreen({
 
   return (
     <div className="screen practice-session">
+      {/* TASK 6: Hộp xác nhận thoát */}
+      {showExitConfirm && (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-box">
+            <h3 className="modal-title">Thoát bài thi?</h3>
+            <p className="modal-body">
+              Bạn có chắc muốn thoát? Bài thi sẽ bị huỷ và bạn sẽ mất điểm đã đặt cược.
+            </p>
+            <div className="modal-actions">
+              <button
+                className="btn-danger"
+                disabled={submitting}
+                onClick={() => { setShowExitConfirm(false); onAbandon(); }}
+              >
+                {submitting ? <Spinner /> : 'Huỷ bài thi'}
+              </button>
+              <button
+                className="btn-secondary"
+                disabled={submitting}
+                onClick={() => setShowExitConfirm(false)}
+              >
+                Ở lại
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="ps-topbar">
+        {/* TASK 6: Nút Thoát ở góc trái topbar */}
+        <button
+          className="btn-icon-back"
+          onClick={() => setShowExitConfirm(true)}
+          disabled={submitting}
+          title="Thoát bài thi"
+        >
+          ✕
+        </button>
         <span className="ps-progress-text">{data.title}</span>
         <span className={`ps-timer ${timerDanger ? 'danger' : ''}`}>{mins}:{secs}</span>
       </div>
