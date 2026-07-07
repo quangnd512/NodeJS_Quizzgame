@@ -5456,3 +5456,180 @@ Khi học sinh không trả lời 1 câu, frontend gửi `selectedAnswer: {}` (o
 - **Fail-closed ảnh hưởng UX khi Redis down**: Rất hiếm xảy ra (~99.9% uptime Redis). Nếu cần SLA cao hơn, có thể đổi về fail-open cho các môi trường có nhiều người dùng VIP.
 - TODO: Thêm monitoring alert khi Redis down để phát hiện sớm.
 - TODO: Xem xét thêm unique constraint DB cho phiên thi `(userId, subjectId, status)` khi có thời gian làm migration.
+
+---
+
+## 12. Exam UX Improvements — Cải tiến trải nghiệm thi thử
+
+### Tổng quan
+
+Thêm 3 cải tiến trải nghiệm cho module thi thử: khôi phục bài đang dở, nút thoát có xác nhận, và cho phép thi môn khác ngay sau khi thoát.
+
+**Vấn đề trước đây:**
+- Lỡ thoát app giữa bài thi → mất toàn bộ tiến độ, bị chặn không thi lại được
+- Không có cách thoát bài thi chủ động (phải đợi hết giờ hoặc nộp bài)
+- Sau khi phiên hết hạn / bị huỷ vẫn bị chặn 409 khi thi môn khác
+
+### Data Model
+
+**Không thêm bảng mới.** Chỉ thêm giá trị `ABANDONED` vào trạng thái `ExamSession.status`:
+
+| Status | Ý nghĩa |
+|--------|---------|
+| `IN_PROGRESS` | Đang làm bài |
+| `COMPLETED` | Đã nộp bài, đã chấm điểm |
+| `EXPIRED` | Quá giờ nộp bài, không được chấm điểm |
+| `ABANDONED` | Người dùng chủ động huỷ (nút Thoát). Không hoàn điểm đã tru |
+
+**Frontend localStorage** (không lưu DB):
+- `exam_draft_{sessionId}` — Map đáp án đã chọn (cập nhật realtime)
+- `exam_session_data_{sessionId}` — Toàn bộ `StartExamResult` (câu hỏi, thông tin đề)
+
+### API Reference
+
+| Method | Path | Auth | Mô tả |
+|--------|------|------|-------|
+| GET | `/api/exam/active` | ✅ | Lấy phiên thi đang IN_PROGRESS (nếu có) |
+| POST | `/api/exam/:id/abandon` | ✅ | Huỷ phiên thi đang IN_PROGRESS |
+
+#### GET /api/exam/active
+
+Kiểm tra xem user có phiên thi nào đang `IN_PROGRESS` không. Dùng để hiển thị banner "Tiếp tục?" khi mở lại trang thi.
+
+**Response 200 (có phiên dở):**
+```json
+{
+  "session": {
+    "id": "3f2a1b4c-...",
+    "subject": "toan",
+    "title": "Đề Toán 2024 — Số 1",
+    "durationMinutes": 60,
+    "startedAt": "2026-07-07T10:30:00.000Z",
+    "remainingSeconds": 2134
+  }
+}
+```
+
+**Response 200 (không có phiên nào):**
+```json
+{ "session": null }
+```
+
+> ⚠️ `remainingSeconds` có thể âm nếu phiên đã hết giờ — frontend sẽ tự nộp bài thay vì hỏi "tiếp tục?".
+
+**Error codes:**
+| HTTP | Code | Khi nào |
+|------|------|---------|
+| 401 | `MISSING_AUTH_TOKEN` | Chưa đăng nhập |
+
+#### POST /api/exam/:id/abandon
+
+Huỷ phiên thi đang `IN_PROGRESS`. Đổi status thành `ABANDONED`. Điểm vào thi (60đ) **không được hoàn lại**.
+
+**Request:** Không cần body.
+
+**Response 200:**
+```json
+{ "success": true }
+```
+
+**Error codes:**
+| HTTP | Code | Khi nào |
+|------|------|---------|
+| 401 | `MISSING_AUTH_TOKEN` | Chưa đăng nhập |
+| 403 | `EXAM_SESSION_NOT_OWNED` | Session không thuộc user này |
+| 404 | `EXAM_SESSION_NOT_FOUND` | Không tìm thấy session |
+| 409 | `EXAM_SESSION_ABANDONED` | Session đã bị huỷ trước đó |
+| 409 | `EXAM_SESSION_ALREADY_COMPLETED` | Session đã COMPLETED hoặc EXPIRED |
+
+### Luồng chạy (Flow)
+
+#### Luồng 1: Khôi phục bài thi đang dở (Resume)
+
+```
+User mở ExamPage (hub)
+        │
+        ▼
+GET /api/exam/active
+        │
+   ┌────┴────┐
+   │         │
+null     session tồn tại
+   │         │
+   │    remainingSeconds > 0?
+   │         │
+   │    ┌────┴────┐
+   │   Có        Không
+   │    │         │
+   │  Banner   Tự submit
+   │  "Tiếp    với draft
+   │   tục?"   answers
+   │    │         │
+   │  ┌─┴─┐    Kết quả
+   │  Có Không
+   │  │   │
+   │ Vào Abandon
+   │ bài  └──────┐
+   │              │
+   └──────────────┘
+   Chọn môn → thi mới
+```
+
+#### Luồng 2: Thoát bài thi có xác nhận
+
+```
+User đang làm bài
+        │
+        ▼
+Bấm nút ✕ (góc trên trái)
+        │
+        ▼
+Dialog xác nhận:
+"Bạn có chắc muốn thoát?
+ Bài thi sẽ bị huỷ."
+        │
+   ┌────┴────┐
+ Huỷ bài   Ở lại
+   │
+   ▼
+POST /api/exam/:id/abandon
+   │
+   ▼
+Về hub chọn môn
+(có thể thi môn mới ngay)
+```
+
+### File Structure
+
+| File | Thay đổi |
+|------|---------|
+| `backend/prisma/schema.prisma` | Cập nhật comment field `status` — thêm `ABANDONED` |
+| `backend/src/services/exam/exam.types.ts` | Thêm `'ABANDONED'` vào `EXAM_SESSION_STATUSES`; thêm `ActiveExamSessionResponse` |
+| `backend/src/services/exam/exam.errors.ts` | Thêm `ExamSessionAbandonedError` (code: `EXAM_SESSION_ABANDONED`, HTTP 409) |
+| `backend/src/services/exam/exam.service.ts` | Thêm `getActiveSession()`, `abandonSession()`; cập nhật `submitExam()` và `getExamResult()` handle ABANDONED |
+| `backend/src/routes/exam.route.ts` | Thêm `GET /api/exam/active` và `POST /api/exam/:id/abandon` |
+| `backend/src/app.ts` | Thêm `EXAM_SESSION_ABANDONED → 409` |
+| `backend/src/services/exam/__tests__/exam-ux.test.ts` | 12 unit test mới (78/78 PASS) |
+| `frontend/src/lib/api.ts` | Thêm `getActiveExamSession()`, `abandonExam()`, `ActiveExamSession` interface |
+| `frontend/src/App.tsx` | Resume flow, localStorage auto-save, nút ✕ + dialog xác nhận |
+| `frontend/src/App.css` | Thêm `.exam-resume-banner`, `.exam-resume-msg`, `.exam-resume-actions`, `.btn-sm` |
+
+### Ghi chú kỹ thuật
+
+**LocalStorage làm nơi lưu draft:**
+Đáp án được lưu vào `localStorage` thay vì backend vì:
+- Không cần thêm bảng DB hay endpoint mới (giữ scope nhỏ)
+- Phù hợp với use case: resume trên cùng thiết bị / trình duyệt
+- Đáp án draft không ảnh hưởng tính toán điểm (chỉ dùng khi submit)
+- Rủi ro: clear localStorage → mất draft; chấp nhận được
+
+**Giới hạn của Resume:**
+- Resume chỉ hoạt động nếu `exam_session_data_{sessionId}` tồn tại trong localStorage (lưu lúc `handleStart`).
+- Nếu user clear localStorage hoặc đổi thiết bị → không resume được câu hỏi, hệ thống tự abandon phiên cũ và thông báo.
+
+**Điểm vào thi không hoàn lại khi ABANDON:**
+Đây là quyết định chủ ý — để tránh lạm dụng "vào xem câu hỏi rồi thoát". Giống với EXPIRED.
+
+**ABANDONED ≠ EXPIRED:**
+- `EXPIRED`: hệ thống tự đánh dấu khi nộp bài quá giờ
+- `ABANDONED`: người dùng chủ động chọn thoát và xác nhận

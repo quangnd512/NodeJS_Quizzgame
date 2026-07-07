@@ -1145,3 +1145,51 @@ Hãy thử làm mới trang (pull-to-refresh hoặc quay lại màn hình rồi 
 A: Nếu admin ẩn hoặc xóa câu hỏi gốc, câu đó sẽ tự động không hiển thị trong
 danh sách của bạn — bạn không cần xử lý gì.
 
+
+---
+
+## Thi thử — Tính năng nâng cao
+
+### Quay lại bài thi đang dở
+
+Nếu bạn lỡ thoát app hoặc đóng tab trong khi đang làm bài thi, **đồng hồ vẫn tiếp tục chạy** nhưng bài thi chưa bị mất. Khi mở lại trang thi:
+
+1. Hệ thống tự động kiểm tra xem bạn có bài đang dở không
+2. Nếu có, một thông báo sẽ hiện ra:
+   > *"Bạn có bài thi [Tên đề] đang dở (còn X phút). Tiếp tục không?"*
+3. Bấm **Tiếp tục** → vào lại bài, đáp án đã chọn được khôi phục, đồng hồ đúng thời gian còn lại
+4. Bấm **Huỷ bài** → bài thi bị huỷ, bạn có thể chọn môn thi mới
+
+> ⚠️ **Lưu ý**: Nếu bài thi đã hết giờ khi bạn quay lại, hệ thống sẽ tự động nộp bài với những câu đã làm và hiển thị kết quả.
+
+> ⚠️ **Giới hạn**: Tính năng khôi phục chỉ hoạt động trên cùng thiết bị và trình duyệt. Nếu bạn dùng thiết bị khác hoặc xóa dữ liệu trình duyệt, đáp án đã chọn sẽ không được khôi phục.
+
+---
+
+### Thoát bài thi giữa chừng
+
+Bạn có thể thoát bài thi bất kỳ lúc nào bằng cách bấm nút **✕** ở góc trên bên trái màn hình thi.
+
+Một hộp thoại xác nhận sẽ hiện ra:
+> *"Bạn có chắc muốn thoát? Bài thi sẽ bị huỷ."*
+
+- Bấm **Huỷ bài thi** → bài bị huỷ, bạn về màn hình chọn môn, có thể thi môn khác ngay
+- Bấm **Ở lại** → tiếp tục làm bài bình thường
+
+> ⚠️ **Lưu ý quan trọng**: Khi huỷ bài, **60 điểm vào thi sẽ không được hoàn lại** — giống như khi bài thi hết giờ.
+
+---
+
+### Câu hỏi thường gặp (FAQ)
+
+**Q: Tôi thoát bài rồi muốn thi môn khác, có được không?**
+
+A: Được ngay! Sau khi xác nhận huỷ bài, bạn có thể bấm vào bất kỳ môn nào để bắt đầu bài thi mới.
+
+**Q: Tôi mở app trên điện thoại khác, đáp án đã chọn có được giữ không?**
+
+A: Không. Đáp án nháp chỉ lưu trên thiết bị bạn đang dùng. Trên thiết bị khác, bạn sẽ chỉ thấy thông báo "tiếp tục?" nhưng đáp án sẽ bắt đầu từ đầu.
+
+**Q: Bài thi hết giờ khi tôi đang không dùng điện thoại, điểm tính thế nào?**
+
+A: Hệ thống sẽ tự nộp bài với những câu bạn đã làm. Câu bỏ trắng tính là sai, không lộ đáp án đúng.

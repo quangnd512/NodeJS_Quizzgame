@@ -68,3 +68,34 @@
 - **Fail-Closed > Fail-Open cho security**: Khi Redis lỗi, chặn user (tạm thời bất tiện) thay vì cho qua (nguy cơ bảo mật vĩnh viễn). Đây là triết lý "mặc định an toàn".
 - **Sentinel `{}` thay vì `null`**: `null` đã có ngữ nghĩa riêng trong Prisma ("không có bản ghi"). Dùng `{}` tạo một ký hiệu không thể nhầm lẫn, không xung đột với bất kỳ đáp án hợp lệ nào của 3 loại câu hỏi.
 - **`EXAM_MIN_SUBMIT_RATIO` là constant, không hardcode**: Ngưỡng 30% được đặt trong `exam.types.ts` thay vì hardcode ở nhiều nơi → dễ điều chỉnh sau này (ví dụ đổi thành 25% cho đề ngắn hơn).
+
+---
+
+## Vòng 12: Exam UX Improvements (2026-07-07)
+
+### Bài học kỹ thuật
+
+**1. localStorage đủ tốt cho draft — không cần backend mới**
+Thay vì thêm API `GET /api/exam/:id/questions` để fetch lại câu hỏi khi resume, ta lưu `StartExamResult` vào localStorage lúc bắt đầu thi. Đơn giản hơn nhiều, không cần migration hay endpoint mới. Trade-off: chỉ hoạt động cùng thiết bị — chấp nhận được cho MVP.
+
+**2. Kiểm tra phiên dở khi mount, không block UI**
+`getActiveSession` được gọi trong `useEffect` với `cancelled` flag để tránh set state sau khi component unmount. Khởi tạo `checkingActive = true` thay vì gọi `setCheckingActive(true)` trong effect (tránh lỗi lint `set-state-in-effect`).
+
+**3. `catch (err)` trong TypeScript strict mode → dùng `catch {` (bỏ tham số)**
+TypeScript 4.0+ cho phép `catch {` khi không dùng biến `err`. Dùng thay cho `catch (_err)` — ngắn gọn hơn và tránh lỗi `no-unused-vars`.
+
+### Bài học quy trình
+
+**4. S3 phải kiểm tra CSS classes mới**
+S2 thêm class CSS mới (`exam-resume-banner`...) vào JSX nhưng quên thêm vào App.css. S3 phát hiện và sửa. Bài học: khi thêm class CSS mới trong component, kiểm tra ngay trong App.css trước khi commit.
+
+**5. Scope nhỏ = ít rủi ro**
+3 tính năng UX được gộp thành 1 feature nhỏ gọn (6 TASK, không migration DB, không table mới). Tổng thời gian S2→S3 rất nhanh. So sánh với các feature lớn như Admin User Management — giữ scope nhỏ giúp review kỹ hơn và ít lỗi hơn.
+
+### Quyết định thiết kế đáng ghi nhớ
+
+**6. ABANDONED ≠ refund điểm**
+Học sinh thoát bài chủ động mất 60đ vào thi — giống với EXPIRED. Quyết định này ngăn lạm dụng "vào xem đề rồi thoát để không mất điểm". Nhất quán với triết lý fail-closed của Feature 011.
+
+**7. remainingSeconds có thể âm — thiết kế chủ ý**
+`GET /api/exam/active` trả `remainingSeconds` âm khi phiên đã hết giờ. Frontend dùng giá trị này để quyết định auto-submit thay vì hỏi "tiếp tục?". Không cần 2 trạng thái riêng ("còn giờ" / "hết giờ") — 1 số nguyên đủ mô tả cả 2.

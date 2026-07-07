@@ -1001,3 +1001,28 @@ useEffect(() => {
 ```
 
 **Khi nào dùng**: Khi cần gọi callback mới nhất từ bên trong một effect/timer có deps là `[]` (chỉ chạy 1 lần).
+
+---
+
+### ABANDONED (ExamSession)
+**Định nghĩa**: Trạng thái thứ 4 của `ExamSession` (bên cạnh `IN_PROGRESS`, `COMPLETED`, `EXPIRED`). Được đặt khi người dùng chủ động bấm nút Thoát và xác nhận huỷ bài thi.
+
+**Khác với EXPIRED**: `EXPIRED` do hệ thống đặt khi nộp bài quá giờ; `ABANDONED` do người dùng chủ động chọn.
+
+**Hậu quả**: Điểm vào thi (60đ) không được hoàn lại. Session không còn tính là `IN_PROGRESS` → user có thể bắt đầu bài thi mới bất kỳ môn nào ngay lập tức.
+
+---
+
+### Exam Resume (Khôi phục bài thi)
+**Định nghĩa**: Tính năng cho phép học sinh quay lại bài thi đang dở sau khi lỡ thoát app. Khi mở lại trang thi, hệ thống kiểm tra `GET /api/exam/active` — nếu có phiên `IN_PROGRESS`, hiển thị banner hỏi "Tiếp tục không?".
+
+**Giới hạn**: Chỉ hoạt động trên cùng thiết bị/trình duyệt vì đáp án draft lưu trong `localStorage`. Đổi thiết bị hoặc clear localStorage → không khôi phục được đáp án đã chọn.
+
+---
+
+### Draft Answers (Đáp án nháp)
+**Định nghĩa**: Bản ghi tạm của đáp án học sinh đang chọn trong bài thi, lưu vào `localStorage` với key `exam_draft_{sessionId}`. Được cập nhật sau **mỗi lần** học sinh chọn hoặc thay đổi đáp án.
+
+**Mục đích**: Hỗ trợ tính năng Resume — khi quay lại bài đang dở, đáp án đã chọn được tự động điền lại.
+
+**Xóa khi nào**: Tự động xóa sau khi nộp bài thành công hoặc abandon phiên.

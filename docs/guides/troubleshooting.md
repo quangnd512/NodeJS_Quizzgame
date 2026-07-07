@@ -99,3 +99,44 @@ redis-cli del "ratelimit:practice:<user_id>"
 | `EXAM_SESSION_ALREADY_ACTIVE` | Phiên IN_PROGRESS đang tồn tại | Xem mục #2 |
 | `EXAM_SESSION_ALREADY_COMPLETED` | Nộp bài 2 lần | Bình thường, bảo học sinh không bấm submit nhiều lần |
 | `EXAM_INSUFFICIENT_POINTS` | Không đủ 60 điểm vào thi | Học sinh cần tích thêm điểm qua luyện tập |
+
+---
+
+## Lỗi liên quan đến tính năng Exam UX Improvements
+
+### 7. Bấm "Tiếp tục" nhưng không vào được bài thi
+
+**Triệu chứng**: Bấm "Tiếp tục" trong banner resume → thông báo "Không thể khôi phục bài thi. Bạn có thể bắt đầu bài mới."
+
+**Nguyên nhân**: Dữ liệu câu hỏi (`exam_session_data_{sessionId}`) không còn trong localStorage — có thể do người dùng clear cache trình duyệt hoặc dùng chế độ ẩn danh.
+
+**Giải pháp**:
+- Hệ thống tự động huỷ phiên cũ và cho phép thi lại.
+- Học sinh mất 60đ vào thi của phiên đó (không hoàn lại).
+- Bấm vào môn học để bắt đầu bài thi mới bình thường.
+
+---
+
+### 8. Bài thi bị huỷ nhưng vẫn bị chặn khi thi lại
+
+**Triệu chứng**: Sau khi huỷ bài (abandon), bấm bắt đầu thi mới vẫn nhận 409 `EXAM_SESSION_ALREADY_ACTIVE`.
+
+**Nguyên nhân**: Có thể gọi abandon thất bại (mất mạng trong lúc xử lý) khiến session vẫn ở trạng thái `IN_PROGRESS`.
+
+**Giải pháp**:
+- Làm mới trang → banner "Tiếp tục?" hiện lại → bấm "Huỷ bài" lần nữa.
+- Hoặc đợi session tự hết giờ (tối đa bằng thời gian còn lại của đề thi).
+- Admin có thể kiểm tra DB và update status thủ công nếu cần giải quyết nhanh.
+
+---
+
+### 9. Đáp án đã chọn không được khôi phục khi resume
+
+**Triệu chứng**: Bấm "Tiếp tục" → vào bài thi nhưng tất cả câu đều trắng (chưa chọn gì).
+
+**Nguyên nhân**: File `exam_draft_{sessionId}` trong localStorage bị mất hoặc bị xóa.
+
+**Giải pháp**:
+- Đây là giới hạn đã biết của tính năng (draft lưu client-side).
+- Học sinh cần chọn lại đáp án. Đồng hồ vẫn chạy đúng — chỉ đáp án nháp bị mất.
+- Để tránh: không xóa cache trình duyệt trong khi đang có bài thi dở.
