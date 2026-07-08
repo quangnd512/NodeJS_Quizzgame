@@ -502,19 +502,27 @@ function ProfilePage({
         </div>
       )}
 
-      {/* Banner bài thi đang dở — hiện ngay khi quay lại app */}
+      {/* Modal bài thi đang dở — hiện ngay khi quay lại app */}
       {resumeAlert && (
-        <div className="exam-resume-banner" role="alert">
-          <p className="exam-resume-msg">
-            📋 Bạn có bài thi <strong>{resumeAlert.title || resumeAlert.subject}</strong> đang dở
-            {resumeAlert.remainingSeconds > 0
-              ? ` (còn ${Math.ceil(resumeAlert.remainingSeconds / 60)} phút)`
-              : ' (đã hết giờ)'}
-            . Tiếp tục không?
-          </p>
-          <div className="exam-resume-actions">
-            <button className="btn-primary btn-sm" onClick={onResumeExam}>Tiếp tục</button>
-            <button className="btn-secondary btn-sm" onClick={onAbandonResume}>Huỷ bài</button>
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-box modal-resume">
+            <div className="modal-resume-icon">📋</div>
+            <h3 className="modal-title">Bài thi đang dở</h3>
+            <p className="modal-body">
+              Bạn có bài thi <strong>{resumeAlert.title || resumeAlert.subject}</strong>
+              {resumeAlert.remainingSeconds > 0
+                ? ` còn ${Math.ceil(resumeAlert.remainingSeconds / 60)} phút`
+                : ' đã hết giờ'}
+              . Bạn muốn tiếp tục hay huỷ bài?
+            </p>
+            <div className="modal-actions">
+              <button className="btn-primary" onClick={onResumeExam}>
+                ▶ Tiếp tục làm bài
+              </button>
+              <button className="btn-secondary" onClick={onAbandonResume}>
+                Huỷ bài
+              </button>
+            </div>
           </div>
         </div>
       )}

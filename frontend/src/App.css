@@ -1311,6 +1311,49 @@ body {
   overflow-y: auto;
 }
 
+/* Tiêu đề modal */
+.modal-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 .5rem;
+  text-align: center;
+}
+
+/* Nội dung modal */
+.modal-body {
+  font-size: .9rem;
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 0 0 1.25rem;
+  text-align: center;
+}
+.modal-body strong { color: var(--text); }
+
+/* Hàng nút modal */
+.modal-actions {
+  display: flex;
+  flex-direction: column;
+  gap: .625rem;
+}
+.modal-actions .btn-primary,
+.modal-actions .btn-secondary,
+.modal-actions .btn-danger {
+  width: 100%;
+  justify-content: center;
+}
+
+/* Modal resume — bài thi đang dở */
+.modal-resume {
+  text-align: center;
+  padding: 2rem 1.5rem 1.5rem;
+}
+.modal-resume-icon {
+  font-size: 2.5rem;
+  margin-bottom: .75rem;
+  line-height: 1;
+}
+
 .modal-box-wide {
   max-width: 700px;
 }
