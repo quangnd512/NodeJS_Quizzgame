@@ -1165,11 +1165,16 @@ function ExamPage({
   const [resumeCandidate, setResumeCandidate] = useState<ActiveExamSessionInfo | null>(initialResume ?? null);
   // Không cần kiểm tra nếu đã có dữ liệu từ App-level
   const [checkingActive, setCheckingActive]   = useState(!initialResume);
+  // Ref chống StrictMode double-invoke: đảm bảo handleResume chỉ chạy đúng 1 lần
+  const resumeAttempted = useRef(false);
 
   // Kiểm tra hoặc tự động resume khi mount
   useEffect(() => {
     if (initialResume) {
       // Đã xác nhận từ ProfilePage → auto resume, không hỏi lại
+      // Guard chống StrictMode gọi effect 2 lần (dev mode)
+      if (resumeAttempted.current) return;
+      resumeAttempted.current = true;
       void handleResume(initialResume);
       return;
     }
@@ -1210,11 +1215,13 @@ function ExamPage({
           setResumeCandidate(null);
           setSub('result');
         } catch {
-          // Backend từ chối (quá grace 30s) → abandon và thông báo
+          // Backend từ chối (quá grace 30s) → abandon và về hub sạch (không hiện lỗi)
           try { await abandonExam(sessionToken, active.id); } catch { /* bỏ qua */ }
           clearDraftAnswers(active.id);
           setResumeCandidate(null);
-          setHubError('Bài thi đã hết giờ và không thể nộp. Bạn có thể bắt đầu bài thi mới.');
+          onResumeClear?.();
+          // Không set hubError — user đã thấy kết quả (nếu nộp thành công trước đó)
+          // hoặc đơn giản hết giờ mà không có gì để nộp → về hub im lặng
         } finally {
           setSubmitting(false);
         }
@@ -1386,7 +1393,7 @@ function ExamPage({
         sessionToken={sessionToken}
         result={result}
         onHome={onBack}
-        onRetry={() => { setResult(null); setSession(null); setSub('hub'); }}
+        onRetry={() => { setResult(null); setSession(null); setHubError(''); setSub('hub'); }}
       />
     );
   }
