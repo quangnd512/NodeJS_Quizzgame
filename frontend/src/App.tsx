@@ -62,6 +62,8 @@ export default function App() {
   const [sessionToken, setSessionToken] = useState('');
   const [profile, setProfile]           = useState<UserProfile | null>(null);
   const [globalError, setGlobalError]   = useState('');
+  // Bài thi đang dở — kiểm tra ngay sau khi đăng nhập để hiển thị ngay trên ProfilePage
+  const [resumeAlert, setResumeAlert]   = useState<ActiveExamSessionInfo | null>(null);
 
   useEffect(() => {
     // Trang Admin chay doc lap, khong can dang nhap Firebase
@@ -71,6 +73,7 @@ export default function App() {
         setScreen('login');
         setSessionToken('');
         setProfile(null);
+        setResumeAlert(null);
         return;
       }
       setScreen('loading');
@@ -83,6 +86,10 @@ export default function App() {
         } else {
           const me = await getMyProfile(result.token);
           setProfile(me);
+          // Kiểm tra bài thi đang dở ngay sau khi đăng nhập
+          // để hiển thị thông báo ngay trên ProfilePage (không cần vào trang thi trước)
+          const { session: active } = await getActiveExamSession(result.token).catch(() => ({ session: null }));
+          if (active) setResumeAlert(active);
           setScreen('profile');
         }
       } catch (err) {
@@ -142,6 +149,15 @@ export default function App() {
           onWrongAnswers={() => setScreen('wrongAnswers')}
           onError={handleApiError}
           onLogout={() => void signOut(firebaseAuth)}
+          resumeAlert={resumeAlert}
+          onResumeExam={() => setScreen('exam')}
+          onAbandonResume={async () => {
+            if (!resumeAlert) return;
+            try { await abandonExam(sessionToken, resumeAlert.id); } catch { /* bỏ qua */ }
+            clearDraftAnswers(resumeAlert.id);
+            localStorage.removeItem(`exam_session_data_${resumeAlert.id}`);
+            setResumeAlert(null);
+          }}
         />
       )}
       {screen === 'practice' && profile && (
@@ -157,9 +173,11 @@ export default function App() {
         <ExamPage
           profile={profile}
           sessionToken={sessionToken}
-          onBack={() => setScreen('profile')}
+          onBack={() => { setResumeAlert(null); setScreen('profile'); }}
           onProfileUpdate={setProfile}
           onError={handleApiError}
+          initialResume={resumeAlert}
+          onResumeClear={() => setResumeAlert(null)}
         />
       )}
       {screen === 'leaderboard' && profile && (
@@ -318,6 +336,7 @@ function OnboardingPage({
 
 function ProfilePage({
   profile, sessionToken, onProfileUpdate, onChangeSubjects, onPractice, onExam, onLeaderboard, onProgress, onWrongAnswers, onError, onLogout,
+  resumeAlert, onResumeExam, onAbandonResume,
 }: {
   profile: UserProfile;
   sessionToken: string;
@@ -330,6 +349,9 @@ function ProfilePage({
   onWrongAnswers: () => void;
   onError: (e: unknown) => void;
   onLogout: () => void;
+  resumeAlert?: ActiveExamSessionInfo | null;
+  onResumeExam?: () => void;
+  onAbandonResume?: () => void;
 }) {
   const [editMode, setEditMode]         = useState(false);
   const [busy, setBusy]                 = useState(false);
@@ -477,6 +499,23 @@ function ProfilePage({
           <button className="btn-link" style={{ color: '#e53' }} onClick={() => void handleAvatarDelete()} disabled={avatarBusy}>
             {avatarBusy ? 'Đang xoá…' : 'Xoá ảnh đại diện'}
           </button>
+        </div>
+      )}
+
+      {/* Banner bài thi đang dở — hiện ngay khi quay lại app */}
+      {resumeAlert && (
+        <div className="exam-resume-banner" role="alert">
+          <p className="exam-resume-msg">
+            📋 Bạn có bài thi <strong>{resumeAlert.title || resumeAlert.subject}</strong> đang dở
+            {resumeAlert.remainingSeconds > 0
+              ? ` (còn ${Math.ceil(resumeAlert.remainingSeconds / 60)} phút)`
+              : ' (đã hết giờ)'}
+            . Tiếp tục không?
+          </p>
+          <div className="exam-resume-actions">
+            <button className="btn-primary btn-sm" onClick={onResumeExam}>Tiếp tục</button>
+            <button className="btn-secondary btn-sm" onClick={onAbandonResume}>Huỷ bài</button>
+          </div>
         </div>
       )}
 
@@ -1096,13 +1135,15 @@ function clearDraftAnswers(sessionId: string) {
 }
 
 function ExamPage({
-  profile, sessionToken, onBack, onProfileUpdate, onError,
+  profile, sessionToken, onBack, onProfileUpdate, onError, initialResume, onResumeClear,
 }: {
   profile: UserProfile;
   sessionToken: string;
   onBack: () => void;
   onProfileUpdate: (p: UserProfile) => void;
   onError: (e: unknown) => void;
+  initialResume?: ActiveExamSessionInfo | null;
+  onResumeClear?: () => void;
 }) {
   const [sub, setSub]           = useState<ExamSub>('hub');
   const [session, setSession]   = useState<ActiveExamSession | null>(null);
@@ -1112,13 +1153,19 @@ function ExamPage({
   const [sessionError, setSessionError] = useState('');
   const [submitting, setSubmitting]   = useState(false);
 
-  // TASK 5: Trạng thái resume — phiên đang dở phát hiện khi mở hub
-  const [resumeCandidate, setResumeCandidate] = useState<ActiveExamSessionInfo | null>(null);
-  // Bắt đầu ở true vì ta luôn kiểm tra ngay khi mount
-  const [checkingActive, setCheckingActive]   = useState(true);
+  // Nếu đã có resumeAlert từ ProfilePage thì dùng ngay, không cần gọi API lại
+  const [resumeCandidate, setResumeCandidate] = useState<ActiveExamSessionInfo | null>(initialResume ?? null);
+  // Không cần kiểm tra nếu đã có dữ liệu từ App-level
+  const [checkingActive, setCheckingActive]   = useState(!initialResume);
 
-  // Kiểm tra phiên đang dở ngay khi mở ExamPage (hub)
+  // Kiểm tra hoặc tự động resume khi mount
   useEffect(() => {
+    if (initialResume) {
+      // Đã xác nhận từ ProfilePage → auto resume, không hỏi lại
+      void handleResume(initialResume);
+      return;
+    }
+    // Chưa có info → gọi API kiểm tra (user vào thẳng trang thi)
     let cancelled = false;
     void getActiveExamSession(sessionToken)
       .then(({ session: active }) => {
@@ -1203,6 +1250,7 @@ function ExamPage({
       localStorage.removeItem(`exam_session_data_${active.id}`);
     } catch { /* bỏ qua lỗi, session có thể đã hết hạn */ }
     setResumeCandidate(null);
+    onResumeClear?.(); // Xóa resumeAlert ở App-level
     setCheckingActive(false);
   }
 
