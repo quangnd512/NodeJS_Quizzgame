@@ -633,6 +633,24 @@ body {
 }
 .btn-icon-back:hover { background: rgba(255,255,255,.25); }
 
+/* Nút thoát bài thi — dùng trên topbar nền sáng */
+.btn-icon-exit {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  width: 34px; height: 34px;
+  border-radius: var(--radius-sm);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1rem; cursor: pointer; font-family: inherit; flex-shrink: 0;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.btn-icon-exit:hover:not(:disabled) {
+  background: #fef2f2;
+  color: var(--danger);
+  border-color: #fca5a5;
+}
+.btn-icon-exit:disabled { opacity: .45; cursor: not-allowed; }
+
 /* Banner nhắc tiếp tục bài thi đang dở (ExamPage hub) */
 .exam-resume-banner {
   margin: .75rem 1.25rem 0;

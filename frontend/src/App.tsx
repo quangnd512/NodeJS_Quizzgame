@@ -1565,7 +1565,7 @@ function ExamSessionScreen({
       <div className="ps-topbar">
         {/* TASK 6: Nút Thoát ở góc trái topbar */}
         <button
-          className="btn-icon-back"
+          className="btn-icon-exit"
           onClick={() => setShowExitConfirm(true)}
           disabled={submitting}
           title="Thoát bài thi"
