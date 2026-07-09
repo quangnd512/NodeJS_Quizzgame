@@ -6,6 +6,7 @@
 //   - markAsRead: đánh dấu 1 thông báo đã đọc
 //   - markAllAsRead: đánh dấu tất cả thông báo của user là đã đọc
 // ============================================================================
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { NotificationNotFoundError, NotificationNotOwnedError } from './notification.errors.js';
 import type {
@@ -63,7 +64,12 @@ export class NotificationService {
         body,
         isRead: false,
         targetScreen,
-        metadata: metadata ?? null,
+        // Prisma yêu cầu Prisma.JsonNull thay vì null thuần cho nullable Json column.
+        // Cast qua unknown vì NotificationMetadata chứa Record<string,unknown>
+        // — đủ an toàn vì tất cả variant đều là plain JSON object.
+        metadata: metadata != null
+          ? (metadata as unknown as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
       },
     });
   }
