@@ -4,6 +4,27 @@
 
 ---
 
+## v1.10.0 — 2026-07-09
+
+### Exam UX Improvements (Feature 012)
+
+#### Added
+- **Exam Resume**: Khi lỡ thoát app giữa bài thi, mở lại sẽ thấy ngay modal "Bài thi đang dở" trên màn hình chính — chọn Tiếp tục để vào lại với đồng hồ đúng và đáp án cũ được khôi phục, hoặc Huỷ để bỏ bài
+- **Auto-submit khi hết giờ lúc resume**: Nếu quay lại sau khi bài đã hết giờ, hệ thống tự nộp bài với đáp án đã lưu và hiển thị kết quả
+- **Exit Button (✕)**: Nút thoát ở góc trên màn hình làm bài — click → xác nhận 2 bước → huỷ bài có kiểm soát
+- **Trạng thái ABANDONED**: Enum mới phân biệt "người dùng chủ động huỷ" vs "hết giờ" (EXPIRED)
+- **localStorage Draft**: Đáp án được lưu tự động sau mỗi lần chọn, dùng để khôi phục khi resume
+- **2 endpoint mới**: `GET /api/exam/active`, `POST /api/exam/:id/abandon`
+- **12 unit test mới** (tổng 78/78 PASS)
+
+#### Migration cần chạy trên production
+_(không có migration DB mới — chỉ thêm giá trị ABANDONED vào logic, không đổi schema)_
+
+#### Biến môi trường mới
+_(không có)_
+
+---
+
 ## v1.8.1 — 2026-07-07
 
 ### Anti-Cheat Security Fixes (Feature 011)
