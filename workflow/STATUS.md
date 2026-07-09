@@ -10,9 +10,9 @@
 
 | Mục | Giá trị |
 |-----|---------|
-| Tính năng | Admin User Management + Dashboard (008) |
-| Branch | feature/admin-user-management |
-| Bắt đầu từ | 2026-07-05 |
+| Tính năng | Exam UX Improvements (012) |
+| Branch | feature/exam-ux-improvements |
+| Bắt đầu từ | 2026-07-07 |
 
 ---
 
@@ -26,8 +26,8 @@
 | S4 | Người Ghi Chép | ✅ Done | — | 0 |
 | S5 | Người Thử Nghiệm | ✅ Done | — | 0 |
 | S6 | Người Giảng Giải | ✅ Done | — | 0 |
-| S7 | Người Đóng Gói | ⏸ Chờ | Push & merge branch | 0 |
-| S8 | Giám Sát Chất Lượng | 🔄 Đang làm | Quality gate PASS → chờ S7 | — |
+| S7 | Người Đóng Gói | 🔄 Đang làm | Push & merge feature/exam-ux-improvements | 0 |
+| S8 | Giám Sát Chất Lượng | ✅ Done | Quality gate PASS | — |
 | S9 | Cố Vấn Ra Mắt | ⏸ Chờ | — | — |
 
 **Trạng thái**: `⏸ Chờ` | `🔄 Đang làm` | `✅ Done` | `↩️ Làm lại` | `⛔ Bị chặn`
@@ -47,3 +47,4 @@ _(S8 ghi vào đây khi người dùng đặt ra yêu cầu mới trong lúc tí
 | Thời gian | Session | Hành động |
 |-----------|---------|-----------|
 | _(khởi tạo)_ | S8 | Tạo file STATUS.md |
+| 2026-07-09 | S8 | Cập nhật tính năng đang triển khai → Feature 012 (Exam UX Improvements); chạy quality gate |
