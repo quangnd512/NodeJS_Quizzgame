@@ -99,3 +99,20 @@ Học sinh thoát bài chủ động mất 60đ vào thi — giống với EXPIR
 
 **7. remainingSeconds có thể âm — thiết kế chủ ý**
 `GET /api/exam/active` trả `remainingSeconds` âm khi phiên đã hết giờ. Frontend dùng giá trị này để quyết định auto-submit thay vì hỏi "tiếp tục?". Không cần 2 trạng thái riêng ("còn giờ" / "hết giờ") — 1 số nguyên đủ mô tả cả 2.
+
+### Bài học bổ sung từ S5 testing (5 bugs phát hiện)
+
+**8. Đặt check phiên dở ở Page-level là sai chỗ (Bug 1)**
+Ban đầu `getActiveExamSession` được gọi trong `useEffect` của `ExamPage` — nghĩa là chỉ khi user chủ động vào trang thi mới thấy thông báo. Người dùng mong đợi thông báo xuất hiện ngay khi mở app. **Bài học**: với thông tin quan trọng ảnh hưởng đến toàn bộ session (không phải 1 page), đặt check ở App-level (`onAuthStateChanged`) và truyền state xuống qua props.
+
+**9. React StrictMode gây double-invoke — cần guard useRef (Bug 3)**
+`useEffect` với `initialResume` đã có Cancelled Flag, nhưng Cancelled Flag chỉ block sau khi cleanup — StrictMode unmount/remount khiến lần 2 vẫn chạy `handleResume`. Giải pháp: `resumeAttempted = useRef(false)` không reset khi cleanup → block hoàn toàn lần 2. **Bài học**: khi effect chứa logic quan trọng "chỉ chạy 1 lần" (không phải "chạy lại khi deps đổi"), cần `useRef` guard, không chỉ Cancelled Flag.
+
+**10. CSS class color context — tạo class mới thay vì tái sử dụng (Bug 5)**
+`btn-icon-back` có `color: #fff` vì thiết kế cho topbar nền tối (ProfilePage). Exam session topbar dùng nền sáng → chữ trắng vô hình. **Bài học**: không giả định class CSS "generic" là trung lập về màu sắc. Khi dùng class cũ ở context nền mới, kiểm tra trực tiếp trên trình duyệt. Nếu không phù hợp, tạo class mới thay vì override.
+
+**11. Catch block set error state gây UX xấu trong flow phức tạp (Bug 4)**
+Catch trong `handleResume` set `hubError` — hợp lý ở mặt kỹ thuật ("có lỗi → báo user"), nhưng trong context resume-expired, lỗi là "bình thường" (phiên đã hết giờ và đã được xử lý). User đã thấy kết quả → lại thấy thêm banner lỗi là confusing. **Bài học**: không phải mọi exception đều nên hiển thị cho user. Trong flow có nhiều state transition, phân biệt "lỗi thực" (cần báo) vs "expected failure" (xử lý im lặng).
+
+**12. Bảng điểm: balance table vs log table**
+Trong quá trình test, phát hiện cộng điểm vào `point_transactions` (bảng log) thay vì `user_points` (bảng balance). Điểm không thay đổi dù insert thành công. **Bài học**: Khi có 2 bảng liên quan (balance + audit log), luôn xác nhận rõ bảng nào là "nguồn sự thật" trước khi viết code cập nhật. Ở QuizzGame: `user_points.currentPoints` là balance thực, `point_transactions` chỉ là lịch sử.
