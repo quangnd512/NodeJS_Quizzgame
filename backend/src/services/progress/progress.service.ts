@@ -8,6 +8,7 @@
 // ============================================================================
 import { prisma } from '../../lib/prisma.js';
 import { practiceService } from '../practice/practice.service.js';
+import { computeStreaks } from '../../utils/streak.utils.js';
 import type {
   ExamHistoryItem,
   MonthComparison,
@@ -32,61 +33,7 @@ function endOfMonth(year: number, month: number): Date {
   return new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999));
 }
 
-/**
- * Tinh streak tu mang ngay da hoan thanh phien on tap.
- * Tra ve { currentStreak, bestStreak }.
- * Quy tac:
- *   - "ngay" tinh theo UTC date (yyyy-mm-dd)
- *   - Neu hom nay chua co phien thi streak hien tai = chuoi ket thuc hom qua
- *   - Chuoi lien tiep = cac ngay lien ke nhau (khong co ngay trong)
- */
-function computeStreaks(completedAtDates: Date[]): {
-  currentStreak: number;
-  bestStreak: number;
-} {
-  if (completedAtDates.length === 0) return { currentStreak: 0, bestStreak: 0 };
-
-  // Lay danh sach ngay duy nhat (UTC date string), sap xep giam dan
-  const uniqueDays = [
-    ...new Set(completedAtDates.map((d) => d.toISOString().slice(0, 10))),
-  ].sort().reverse(); // ['2025-07-04', '2025-07-03', ...]
-
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const yesterdayStr = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
-
-  // Tinh chuoi hien tai bat dau tu hom nay hoac hom qua
-  let currentStreak = 0;
-  if (uniqueDays[0] === todayStr || uniqueDays[0] === yesterdayStr) {
-    currentStreak = 1;
-    for (let i = 1; i < uniqueDays.length; i++) {
-      const prev = new Date(uniqueDays[i - 1]!);
-      const curr = new Date(uniqueDays[i]!);
-      const diffDays = Math.round((prev.getTime() - curr.getTime()) / 86_400_000);
-      if (diffDays === 1) {
-        currentStreak++;
-      } else {
-        break;
-      }
-    }
-  }
-
-  // Tinh best streak tren toan bo lich su
-  let bestStreak = 1;
-  let tempStreak = 1;
-  for (let i = 1; i < uniqueDays.length; i++) {
-    const prev = new Date(uniqueDays[i - 1]!);
-    const curr = new Date(uniqueDays[i]!);
-    const diffDays = Math.round((prev.getTime() - curr.getTime()) / 86_400_000);
-    if (diffDays === 1) {
-      tempStreak++;
-      if (tempStreak > bestStreak) bestStreak = tempStreak;
-    } else {
-      tempStreak = 1;
-    }
-  }
-
-  return { currentStreak, bestStreak };
-}
+// computeStreaks được import từ utils/streak.utils.ts (tránh circular import)
 
 /** Tinh diem trung binh thi thu trong 1 khoang thoi gian, tra null neu khong co du lieu. */
 function calcExamAvg(scores: (number | null)[]): number | null {

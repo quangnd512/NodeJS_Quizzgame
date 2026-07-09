@@ -12,6 +12,8 @@ import { redis } from '../../lib/redis.js';
 import { OptimisticLockError, OptimisticLockRetryableError } from '../points/points.errors.js';
 import { pointsService } from '../points/points.service.js';
 import { isValidSubjectId } from '../users/users.types.js';
+import { computeStreaks, STREAK_MILESTONES } from '../../utils/streak.utils.js';
+import { notificationService } from '../notification/notification.service.js';
 import {
   PracticeRateLimitError,
   PracticeSessionAlreadyCompletedError,
@@ -381,7 +383,7 @@ export class PracticeService {
   async completeSession(userId: string, sessionId: string): Promise<CompleteSessionResponse> {
     for (let attempt = 1; attempt <= MAX_COMPLETE_RETRY; attempt++) {
       try {
-        return await prisma.$transaction(async (tx) => {
+        const result = await prisma.$transaction(async (tx) => {
           const session = await tx.practiceSession.findUnique({ where: { id: sessionId } });
 
           if (!session) throw new PracticeSessionNotFoundError(sessionId);
@@ -443,6 +445,11 @@ export class PracticeService {
             answers: answerSummaries,
           };
         });
+
+        // Fire-and-forget: kiểm tra streak milestone sau khi transaction thành công
+        void this.checkAndFireStreakMilestone(userId);
+
+        return result;
       } catch (err) {
         // Neu optimistic lock retryable → retry toan bo transaction
         if (err instanceof OptimisticLockRetryableError) {
@@ -459,6 +466,52 @@ export class PracticeService {
 
     // Khong bao gio den day nhung TS can return type ro rang
     throw new OptimisticLockError(userId, MAX_COMPLETE_RETRY);
+  }
+
+  /**
+   * [Fire-and-forget] Kiểm tra xem phiên vừa hoàn thành có tạo streak milestone hay không.
+   * Chỉ thông báo nếu:
+   *   1. Đây là phiên đầu tiên trong ngày hôm nay (tránh gửi thông báo trùng lặp)
+   *   2. Streak đúng bằng một giá trị milestone [7, 14, 30, 60, 100]
+   */
+  private async checkAndFireStreakMilestone(userId: string): Promise<void> {
+    try {
+      const todayStart = new Date();
+      todayStart.setUTCHours(0, 0, 0, 0);
+      const todayEnd = new Date();
+      todayEnd.setUTCHours(23, 59, 59, 999);
+
+      // Chỉ xử lý khi là phiên đầu tiên hôm nay (completedAt not null = thật sự hoàn thành)
+      const todayCompletedCount = await prisma.practiceSession.count({
+        where: {
+          userId,
+          completedAt: { gte: todayStart, lte: todayEnd },
+        },
+      });
+      if (todayCompletedCount !== 1) return;
+
+      // Tính streak từ toàn bộ lịch sử
+      const sessions = await prisma.practiceSession.findMany({
+        where: { userId, completedAt: { not: null } },
+        select: { completedAt: true },
+      });
+      const dates = sessions.map((s) => s.completedAt!);
+      const { currentStreak } = computeStreaks(dates);
+
+      if (!(STREAK_MILESTONES as readonly number[]).includes(currentStreak)) return;
+
+      void notificationService.createNotification({
+        userId,
+        type: 'STREAK_MILESTONE',
+        title: `🔥 Streak ${currentStreak} ngày!`,
+        body: `Tuyệt vời! Bạn đã học liên tiếp ${currentStreak} ngày. Hãy giữ vững nhịp độ này nhé!`,
+        targetScreen: 'progress',
+        metadata: { streakDays: currentStreak },
+      });
+    } catch (err) {
+      // Lỗi thông báo không được làm hỏng flow chính
+      console.error('[PracticeService] checkAndFireStreakMilestone error:', err);
+    }
   }
 
   /**
