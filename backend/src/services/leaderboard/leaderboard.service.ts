@@ -248,6 +248,41 @@ export class LeaderboardService {
       trend,
     };
   }
+
+  /**
+   * Trả về hạng hiện tại của user (theo subject nếu có, tổng hợp nếu không).
+   * Trả null nếu user chưa thi lần nào hoặc không có dữ liệu.
+   * Dùng cho việc phát hiện thay đổi hạng sau khi nộp bài thi.
+   */
+  public async getUserCurrentRank(userId: string, subject?: string): Promise<number | null> {
+    const sc = subjectClause(subject);
+    const rows = await prisma.$queryRaw<[{ current_rank: number }] | []>`
+      WITH all_scores AS (
+        SELECT
+          es."userId",
+          (
+            AVG(es.score) - 0.5 * COALESCE(STDDEV_POP(es.score), 0)
+          ) * (1.0 - 1.0 / (COUNT(es.id) + 1)) AS reputation_score,
+          MAX(es."completedAt") AS last_completed_at
+        FROM exam_sessions es
+        WHERE es.status = 'COMPLETED' AND es.score IS NOT NULL
+        ${sc}
+        GROUP BY es."userId"
+      ),
+      ranked AS (
+        SELECT
+          "userId",
+          ROW_NUMBER() OVER (
+            ORDER BY reputation_score DESC, last_completed_at DESC
+          )::int AS current_rank
+        FROM all_scores
+      )
+      SELECT current_rank
+      FROM ranked
+      WHERE "userId" = ${userId}
+    `;
+    return rows[0] ? Number(rows[0].current_rank) : null;
+  }
 }
 
 export const leaderboardService = new LeaderboardService();

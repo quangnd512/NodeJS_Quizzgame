@@ -833,11 +833,18 @@ export class PracticeService {
    * Cap nhat trang thai bao cao.
    * Sau khi cap nhat: dem PENDING reports cua cau hoi do,
    * neu >= 5 thi tu dong an cau hoi (isActive = false).
+   * Fire-and-forget: gui thong bao REPORT_RESOLVED cho user bao cao.
    */
   async updateReport(
     reportId: string,
     status: ReportStatus,
   ): Promise<{ id: string; status: string; autoHidden: boolean }> {
+    // Lấy trạng thái trước khi update để biết có phải lần đầu resolve không
+    const reportBefore = await prisma.questionReport.findUnique({
+      where: { id: reportId },
+      select: { userId: true, questionId: true, status: true },
+    });
+
     const report = await prisma.questionReport.update({
       where: { id: reportId },
       data: { status },
@@ -845,7 +852,50 @@ export class PracticeService {
 
     const autoHidden = await this.autoHideIfThresholdExceeded(report.questionId);
 
+    // Notify khi admin lần đầu xử lý báo cáo (PENDING → trạng thái khác)
+    if (reportBefore?.status === 'PENDING' && status !== 'PENDING' && reportBefore.userId) {
+      void this.fireReportResolvedNotification(
+        reportBefore.userId,
+        reportId,
+        status,
+        reportBefore.questionId,
+      );
+    }
+
     return { id: report.id, status: report.status, autoHidden };
+  }
+
+  /** [Fire-and-forget] Gửi thông báo REPORT_RESOLVED khi admin xử lý báo cáo. */
+  private async fireReportResolvedNotification(
+    userId: string,
+    reportId: string,
+    status: string,
+    questionId: string,
+  ): Promise<void> {
+    try {
+      const question = await prisma.question.findUnique({
+        where: { id: questionId },
+        select: { question: true },
+      });
+      const qText = question?.question ?? '';
+      const preview = qText
+        ? qText.slice(0, 60) + (qText.length > 60 ? '…' : '')
+        : 'câu hỏi đã báo cáo';
+
+      const isApproved = status === 'FIXED' || status === 'REVIEWED';
+      void notificationService.createNotification({
+        userId,
+        type: 'REPORT_RESOLVED',
+        title: isApproved ? '✅ Báo cáo của bạn đã được xử lý' : '❌ Báo cáo của bạn bị từ chối',
+        body: isApproved
+          ? `Cảm ơn bạn! Báo cáo về "${preview}" đã được duyệt.`
+          : `Báo cáo về "${preview}" không được chấp nhận.`,
+        targetScreen: null,
+        metadata: { reportId, status, questionPreview: preview },
+      });
+    } catch (err) {
+      console.error('[PracticeService] fireReportResolvedNotification error:', err);
+    }
   }
 
   /** Tong hop thong ke bao cao: so luong theo trang thai, top cau bi bao cao nhieu nhat. */
