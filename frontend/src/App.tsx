@@ -70,7 +70,8 @@ export default function App() {
   const [unreadCount, setUnreadCount]   = useState(0);
   const [notifOpen, setNotifOpen]       = useState(false);
   const [toast, setToast]               = useState<NotificationItem | null>(null);
-  const prevUnreadRef                   = useRef(0);
+  // -1 = chưa poll lần nào → lần đầu poll không hiện toast (tránh spam khi mới vào app)
+  const prevUnreadRef                   = useRef(-1);
 
   useEffect(() => {
     // Trang Admin chay doc lap, khong can dang nhap Firebase
@@ -82,7 +83,7 @@ export default function App() {
         setProfile(null);
         setResumeAlert(null);
         setUnreadCount(0);
-        prevUnreadRef.current = 0;
+        prevUnreadRef.current = -1;
         return;
       }
       setScreen('loading');
@@ -118,8 +119,8 @@ export default function App() {
         const { count } = await getUnreadCount(sessionToken);
         setUnreadCount(count);
 
-        // Nếu có thông báo mới (count tăng so với lần poll trước) → hiển thị toast
-        if (count > prevUnreadRef.current && prevUnreadRef.current >= 0) {
+        // Nếu có thông báo mới (count tăng so với lần poll trước, và đây không phải lần poll đầu)
+        if (count > prevUnreadRef.current && prevUnreadRef.current !== -1) {
           const result = await getNotifications(sessionToken, 1, 1);
           const newest = result.notifications[0];
           if (newest && !newest.isRead) {
@@ -136,7 +137,7 @@ export default function App() {
     void poll();
     const id = setInterval(() => void poll(), 30_000);
     return () => clearInterval(id);
-  }, [sessionToken]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionToken]);
 
   function handleApiError(err: unknown) {
     if (err instanceof ApiError && err.status === 401) {
@@ -4789,12 +4790,12 @@ function NotificationPanel({
   onCountChange: (count: number) => void;
 }) {
   const [items, setItems]       = useState<NotificationItem[]>([]);
-  const [loading, setLoading]   = useState(true);
+  const [loading, setLoading]   = useState(true); // bắt đầu ở trạng thái loading
   const [markBusy, setMarkBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    // setLoading(true) không cần gọi lại — useState đã khởi tạo true
     getNotifications(sessionToken, 1, 50)
       .then((res) => {
         if (!cancelled) {

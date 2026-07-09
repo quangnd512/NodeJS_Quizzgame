@@ -646,3 +646,43 @@
 | 12 | POST /api/exam/:id/abandon session đã COMPLETED | status = COMPLETED | 409 | `EXAM_SESSION_ALREADY_COMPLETED` |
 | 13 | POST /api/exam/:id/abandon session đã EXPIRED | status = EXPIRED | 409 | `EXAM_SESSION_ALREADY_COMPLETED` |
 | 14 | POST /api/exam/submit session đã ABANDONED | status = ABANDONED | 409 | `EXAM_SESSION_ABANDONED` |
+
+---
+
+## Test Cases: Feature 013 — Notifications (Thông báo hệ thống)
+
+### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | GET /api/notifications — danh sách thông báo | page=1, limit=20 | 200, { notifications: [...], total: N, unreadCount: N } |
+| 2 | GET /api/notifications/unread-count | token hợp lệ | 200, { count: N } |
+| 3 | PATCH /api/notifications/:id/read | id của thông báo thuộc user | 200, { ok: true }, isRead=true trong DB |
+| 4 | PATCH /api/notifications/read-all | user có 3 thông báo chưa đọc | 200, { updatedCount: 3 }, tất cả isRead=true |
+| 5 | Streak milestone 7 ngày — trigger notification | completeSession sau 7 ngày học liên tiếp | notification STREAK_MILESTONE được tạo với metadata.streakDays=7 |
+| 6 | Streak milestone không trigger lại ngay hôm sau | 2 phiên cùng ngày milestone | chỉ 1 notification được tạo |
+| 7 | RANK_UP — nộp bài thi, hạng tăng | rankBefore=5, rankAfter=3 | notification RANK_UP với metadata.rankBefore=5, rankAfter=3 |
+| 8 | RANK_DOWN — nộp bài thi, hạng giảm | rankBefore=3, rankAfter=7 | notification RANK_DOWN với metadata.rankBefore=3, rankAfter=7 |
+| 9 | REPORT_RESOLVED (approved) — admin duyệt | status PENDING → FIXED | user nhận REPORT_RESOLVED với title chứa "được xử lý" |
+| 10 | REPORT_RESOLVED (rejected) — admin từ chối | status PENDING → DISMISSED | user nhận REPORT_RESOLVED với title chứa "bị từ chối" |
+| 11 | NEW_EXAM_PAPER — admin bật active đề thi | isActive false → true | tất cả user học môn đó nhận notification NEW_EXAM_PAPER (batch createMany) |
+
+### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 12 | Streak milestone — chưa đủ 7 ngày | streak=6 | không tạo notification |
+| 13 | Streak milestone — không phải milestone (streak=8) | streak=8 | không tạo notification |
+| 14 | RANK_UP — lần thi đầu tiên (rankBefore=null) | user chưa có hạng | không notify (chưa có hạng trước để so sánh) |
+| 15 | RANK_DOWN — hạng không thay đổi | rankBefore=rankAfter | không tạo notification |
+| 16 | REPORT_RESOLVED — admin update report vẫn là PENDING | PENDING → PENDING | không tạo notification |
+| 17 | NEW_EXAM_PAPER — không có user nào học môn đó | userIds = [] | không có createMany, không lỗi |
+| 18 | getNotifications limit vượt 50 | limit=999 | tự giới hạn còn 50 |
+| 19 | getNotifications page=2 khi chỉ có 5 items và limit=10 | skip=10 | 200, notifications=[], total=5, unreadCount=N |
+| 20 | Polling toast không hiện khi mới vào app | unreadCount=5 khi mở app | không hiện toast (lần poll đầu tiên) |
+
+### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 21 | PATCH /api/notifications/:id/read — id không tồn tại | id ngẫu nhiên | 404 | `NOTIFICATION_NOT_FOUND` |
+| 22 | PATCH /api/notifications/:id/read — id của user khác | userId khác | 403 | `NOTIFICATION_NOT_OWNED` |
+| 23 | GET /api/notifications — không có token | (no auth header) | 401 | `MISSING_AUTH_TOKEN` |
+| 24 | GET /api/notifications/unread-count — token hết hạn | expired token | 401 | `INVALID_SESSION_TOKEN` |

@@ -71,11 +71,12 @@ notification_types:
     metadata: { rankBefore: number, rankAfter: number, subject: string | null }
 
   REPORT_RESOLVED:
-    trigger: Admin approve hoặc reject báo cáo câu hỏi của user
-    title: "✅ Báo cáo được xử lý" | "❌ Báo cáo bị từ chối"
-    body: "Báo cáo câu '{questionPreview}' đã được {approved|từ chối}"
+    trigger: Admin thay đổi status báo cáo từ PENDING sang status khác (REVIEWED/FIXED/DISMISSED)
+    title: "✅ Báo cáo của bạn đã được xử lý" | "❌ Báo cáo của bạn bị từ chối"
+    body: "Cảm ơn bạn! Báo cáo về '{questionPreview}' đã được duyệt." | "Báo cáo về '{questionPreview}' không được chấp nhận."
     targetScreen: null
-    metadata: { reportId: string, status: APPROVED | REJECTED, questionPreview: string }
+    # Approved = FIXED hoặc REVIEWED; Rejected = DISMISSED
+    metadata: { reportId: string, status: REVIEWED | FIXED | DISMISSED, questionPreview: string }
 
   NEW_EXAM_PAPER:
     trigger: Admin tạo đề thi mới và toggle active = true — gửi cho user đã từng thi môn đó

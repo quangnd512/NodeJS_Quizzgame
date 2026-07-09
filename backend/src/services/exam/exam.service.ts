@@ -420,7 +420,7 @@ export class ExamService {
 
     // Fire-and-forget: thông báo đề thi mới khi admin bật active lần đầu
     if (input.isActive === true && !existing.isActive) {
-      void this.fireNewExamPaperNotifications(paper.id, paper.subject, paper.title);
+      void this.fireNewExamPaperNotifications(paper.subject, paper.title);
     }
 
     return {
@@ -439,7 +439,6 @@ export class ExamService {
    * đã từng ôn tập hoặc thi thử môn đó.
    */
   private async fireNewExamPaperNotifications(
-    examPaperId: string,
     subject: string,
     examPaperTitle: string,
   ): Promise<void> {
@@ -467,19 +466,20 @@ export class ExamService {
 
       if (userIds.length === 0) return;
 
-      // Gửi batch — mỗi user một thông báo, không dùng Promise.all để tránh quá tải
-      for (const userId of userIds) {
-        await notificationService.createNotification({
-          userId,
-          type: 'NEW_EXAM_PAPER',
+      // Dùng createMany để batch insert 1 lần thay vì N lần INSERT riêng lẻ
+      const metadata: Prisma.InputJsonValue = { subject, examPaperTitle };
+      await prisma.notification.createMany({
+        data: userIds.map((uid) => ({
+          userId: uid,
+          type: 'NEW_EXAM_PAPER' as const,
           title: '📝 Đề thi mới đã được thêm!',
           body: `Đề "${examPaperTitle}" vừa được mở. Vào thi thử ngay nhé!`,
+          isRead: false,
           targetScreen: 'exam',
-          metadata: { subject, examPaperTitle },
-        }).catch((err) => {
-          console.warn(`[ExamService] fireNewExamPaperNotifications - skip userId=${userId}:`, (err as Error).message);
-        });
-      }
+          metadata,
+        })),
+        skipDuplicates: true,
+      });
     } catch (err) {
       console.error('[ExamService] fireNewExamPaperNotifications error:', err);
     }

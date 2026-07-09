@@ -771,3 +771,49 @@ Fail-closed ở `checkRateLimit` là quyết định bảo mật đúng. Sentine
 - Unit test: 78/78 PASS (thêm 12 test mới)
 - TypeScript: clean (BE + FE)
 - Lint: PASS (BE + FE)
+
+---
+
+## Review: Feature 013 — Notifications (Thông báo hệ thống)
+
+**Ngày**: 2026-07-09
+**Reviewer**: S3-SoatLoi
+**Branch**: feature/notifications
+**Files thay đổi**: 13 files backend, 3 files frontend
+
+### Tiêu chí 8 điểm
+
+| # | Tiêu chí | Kết quả | Ghi chú |
+|---|----------|---------|---------|
+| 1 | Atomic transaction | ✅ Pass | Tất cả triggers là fire-and-forget, không cần atomic với main flow |
+| 2 | Race condition | ✅ Chấp nhận được | Streak: worst-case 2 notifications nếu 2 session cùng hoàn thành trong cùng giây. Rank: rankBefore stale khi retry; đây là minor edge case |
+| 3 | Error handling | ✅ Pass | Mọi fire-and-forget có try/catch + console.error; routes dùng next(err) |
+| 4 | Input validation | ✅ Pass | page/limit được clamp; notificationId qua Prisma parameterized |
+| 5 | N+1 / Index | ✅ Pass | getNotifications: 3 parallel queries; batch notification dùng createMany (sau khi S3 fix); DB index [userId, isRead, createdAt] ✅ |
+| 6 | TypeScript any | ✅ Pass | Không có any; metadata cast qua unknown có comment giải thích |
+| 7 | Edge cases | ✅ Pass | streak milestone: dedup bằng "first session today"; rank: null rankBefore → skip notify; empty userIds → skip batch |
+| 8 | API contract | ✅ Pass | Endpoints khớp draft; S3 cập nhật REPORT_RESOLVED status từ APPROVED/REJECTED → FIXED/REVIEWED/DISMISSED cho đúng thực tế |
+
+### Lỗi tìm thấy & đã sửa
+
+| # | Mức độ | Mô tả | Sửa thế nào |
+|---|--------|-------|------------|
+| 1 | 🔴 Bug UX | prevUnreadRef khởi tạo = 0 → toast xuất hiện ngay khi mở app nếu đã có thông báo chưa đọc | Khởi tạo = -1 ("chưa poll"), bỏ qua lần poll đầu |
+| 2 | 🟡 Performance | `fireNewExamPaperNotifications` dùng for-loop await → N INSERT riêng lẻ | Thay bằng `prisma.notification.createMany` → 1 bulk INSERT |
+| 3 | 🟡 Lint Error | `setLoading(true)` gọi trực tiếp trong useEffect body (react-hooks/set-state-in-effect) | Khởi tạo `useState(true)` thay vì set trong effect |
+| 4 | 🟡 Lint Warning | Unused eslint-disable comment trong polling useEffect | Xóa comment |
+| 5 | 📄 Docs drift | API draft `REPORT_RESOLVED` dùng `APPROVED/REJECTED` không khớp thực tế `FIXED/REVIEWED/DISMISSED` | Cập nhật docs/api/drafts/notifications.yaml |
+
+### Kết quả test
+- Unit test: 89/89 PASS (không thêm test mới ở S3)
+- TypeScript: clean (BE + FE)
+- Build: PASS (BE + FE)
+- Lint: PASS (FE — lint chỉ chạy được ở frontend)
+- npm audit: 3 high vulnerabilities (form-data, multer, xlsx) — pre-existing, không liên quan Feature 013
+
+### Files S3 đã sửa thêm
+- `frontend/src/App.tsx` — fix prevUnreadRef, fix lint errors
+- `backend/src/services/exam/exam.service.ts` — createMany batch, bỏ param dư
+- `docs/api/drafts/notifications.yaml` — cập nhật status REPORT_RESOLVED
+- `docs/TEST_CASES.md` — thêm 24 test cases Feature 013
+- `docs/CODE_REVIEW_LOG.md` — file này
