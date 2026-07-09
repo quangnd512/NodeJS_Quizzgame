@@ -633,6 +633,53 @@ body {
 }
 .btn-icon-back:hover { background: rgba(255,255,255,.25); }
 
+/* Nút thoát bài thi — dùng trên topbar nền sáng */
+.btn-icon-exit {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  width: 34px; height: 34px;
+  border-radius: var(--radius-sm);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1rem; cursor: pointer; font-family: inherit; flex-shrink: 0;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.btn-icon-exit:hover:not(:disabled) {
+  background: #fef2f2;
+  color: var(--danger);
+  border-color: #fca5a5;
+}
+.btn-icon-exit:disabled { opacity: .45; cursor: not-allowed; }
+
+/* Banner nhắc tiếp tục bài thi đang dở (ExamPage hub) */
+.exam-resume-banner {
+  margin: .75rem 1.25rem 0;
+  padding: .875rem 1rem;
+  background: #fffbeb;
+  border: 1.5px solid #fcd34d;
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: .625rem;
+}
+.exam-resume-msg {
+  margin: 0;
+  font-size: .9rem;
+  color: var(--text);
+  line-height: 1.5;
+}
+.exam-resume-actions {
+  display: flex;
+  gap: .5rem;
+}
+
+/* Nút kích thước nhỏ — dùng trong banner resume và các nơi cần nút nhỏ gọn */
+.btn-sm {
+  padding: .4rem .875rem;
+  font-size: .825rem;
+  border-radius: var(--radius-sm);
+}
+
 .practice-subjects {
   display: flex;
   flex-direction: column;
@@ -1280,6 +1327,49 @@ body {
   box-shadow: 0 20px 60px rgba(0,0,0,.25);
   max-height: 85vh;
   overflow-y: auto;
+}
+
+/* Tiêu đề modal */
+.modal-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 .5rem;
+  text-align: center;
+}
+
+/* Nội dung modal */
+.modal-body {
+  font-size: .9rem;
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 0 0 1.25rem;
+  text-align: center;
+}
+.modal-body strong { color: var(--text); }
+
+/* Hàng nút modal */
+.modal-actions {
+  display: flex;
+  flex-direction: column;
+  gap: .625rem;
+}
+.modal-actions .btn-primary,
+.modal-actions .btn-secondary,
+.modal-actions .btn-danger {
+  width: 100%;
+  justify-content: center;
+}
+
+/* Modal resume — bài thi đang dở */
+.modal-resume {
+  text-align: center;
+  padding: 2rem 1.5rem 1.5rem;
+}
+.modal-resume-icon {
+  font-size: 2.5rem;
+  margin-bottom: .75rem;
+  line-height: 1;
 }
 
 .modal-box-wide {

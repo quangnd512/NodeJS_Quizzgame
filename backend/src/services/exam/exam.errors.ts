@@ -138,6 +138,19 @@ export class ExamSessionAlreadyActiveError extends ExamError {
 }
 
 /**
+ * Phien thi thu da bi huy (ABANDONED) - khong the thao tac them.
+ * HTTP 409.
+ */
+export class ExamSessionAbandonedError extends ExamError {
+  constructor(sessionId: string) {
+    super(
+      `Phien thi thu '${sessionId}' da bi huy - khong the thao tac them.`,
+      'EXAM_SESSION_ABANDONED',
+    );
+  }
+}
+
+/**
  * Du lieu cau hoi (options/correctAnswer) khong khop voi questionType.
  * Dung cho ca API admin tao/sua cau hoi VA khi import Excel (moi dong loi
  * se duoc bat va chuyen thanh ExamImportRowError theo so dong).

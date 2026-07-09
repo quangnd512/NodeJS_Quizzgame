@@ -618,3 +618,31 @@
 | 16 | Redis down → bắt đầu luyện tập | redis.get() throw error | 429 | `PRACTICE_RATE_LIMIT_EXCEEDED` |
 | 17 | completeSession sau khi hết giờ + 60s grace | elapsed > 1080s | 410 | `PRACTICE_SESSION_EXPIRED` |
 | 18 | Bắt đầu phiên mới cùng môn khi phiên IN_PROGRESS khác đang chạy | existingSessionId = 'abc' | 409, message chứa 'abc' | `EXAM_SESSION_ALREADY_ACTIVE` |
+
+## Test Cases: Exam UX Improvements (Feature 012)
+
+### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | GET /api/exam/active khi có phiên IN_PROGRESS | userId có session | 200, session.id, remainingSeconds > 0 |
+| 2 | GET /api/exam/active khi không có phiên nào | userId không có session | 200, session: null |
+| 3 | POST /api/exam/:id/abandon phiên IN_PROGRESS | sessionId hợp lệ, thuộc user | 200, { success: true }, DB status = ABANDONED |
+| 4 | Sau khi ABANDON → POST /api/exam/start môn mới | status = ABANDONED | 201, không bị 409 |
+
+### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 5 | GET /api/exam/active phiên đã hết giờ | startedAt + duration < now | 200, remainingSeconds âm |
+| 6 | GET /api/exam/active khi đề thi đã bị xóa | examPaper = null | 200, title = '' (không crash) |
+| 7 | Resume khi hết giờ (frontend) | remainingSeconds <= 0 | Tự submit với draft answers, hiện kết quả |
+| 8 | Resume khi không có exam_session_data trong localStorage | key = undefined | Tự abandon, thông báo "không thể khôi phục" |
+
+### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 9 | POST /api/exam/:id/abandon session không tồn tại | sessionId ngẫu nhiên | 404 | `EXAM_SESSION_NOT_FOUND` |
+| 10 | POST /api/exam/:id/abandon session của user khác | userId khác | 403 | `EXAM_SESSION_NOT_OWNED` |
+| 11 | POST /api/exam/:id/abandon session đã ABANDONED | status = ABANDONED | 409 | `EXAM_SESSION_ABANDONED` |
+| 12 | POST /api/exam/:id/abandon session đã COMPLETED | status = COMPLETED | 409 | `EXAM_SESSION_ALREADY_COMPLETED` |
+| 13 | POST /api/exam/:id/abandon session đã EXPIRED | status = EXPIRED | 409 | `EXAM_SESSION_ALREADY_COMPLETED` |
+| 14 | POST /api/exam/submit session đã ABANDONED | status = ABANDONED | 409 | `EXAM_SESSION_ABANDONED` |

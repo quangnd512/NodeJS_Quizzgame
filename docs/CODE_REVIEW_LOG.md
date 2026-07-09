@@ -740,3 +740,34 @@ Code sạch, pattern nhất quán với codebase. Error handling tốt. WrongAns
 
 ### Nhận xét chung
 Fail-closed ở `checkRateLimit` là quyết định bảo mật đúng. Sentinel {} là pattern đơn giản và hiệu quả. Race condition Bug 4 nhỏ và chấp nhận được cho use case quiz app. Code sạch, pattern nhất quán.
+
+---
+
+## Review #12 — Exam UX Improvements (Feature 012)
+**Reviewer**: S3-SoatLoi | **Ngày**: 2026-07-07 | **Branch**: feature/exam-ux-improvements
+
+### Lỗi tìm thấy và sửa
+
+| # | Loại | Mô tả | Đã sửa |
+|---|------|-------|--------|
+| 1 | CSS thiếu | `exam-resume-banner`, `exam-resume-msg`, `exam-resume-actions`, `btn-sm` chưa có trong App.css | ✅ Thêm vào App.css |
+| 2 | API draft lệch | Field `title` có trong response nhưng chưa có trong `exam-ux-improvements.yaml` | ✅ Cập nhật draft |
+| 3 | Test thiếu | `getActiveSession` và `abandonSession` chưa có unit test | ✅ Thêm 12 test case |
+
+### Kết quả 7 tiêu chí
+
+| # | Tiêu chí | Kết quả |
+|---|----------|---------|
+| 1 | Atomic transaction | ✅ abandonSession: 1 update đơn, không cần transaction |
+| 2 | Race condition | ✅ Abandon đồng thời → idempotent (ABANDONED→ABANDONED OK) |
+| 3 | Error handling | ✅ Đủ error classes, HTTP status mapping đúng |
+| 4 | Input validation | ✅ sessionId từ req.params → Prisma parameterized query |
+| 5 | N+1 / Index | ✅ 2 query riêng (không phải N+1 loop), chấp nhận được |
+| 6 | TypeScript any | ✅ Không có any |
+| 7 | Edge cases | ✅ Đề bị xóa → title='', session hết giờ → remainingSeconds âm |
+| 8 | API contract | ✅ Method/path/response khớp draft (sau khi cập nhật title) |
+
+### Kết quả test
+- Unit test: 78/78 PASS (thêm 12 test mới)
+- TypeScript: clean (BE + FE)
+- Lint: PASS (BE + FE)

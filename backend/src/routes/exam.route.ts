@@ -37,6 +37,38 @@ const submitExamSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/exam/active — lay phien thi thu dang IN_PROGRESS (neu co)
+// ---------------------------------------------------------------------------
+
+examRouter.get(
+  '/active',
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const result = await examService.getActiveSession(req.currentUser!.id);
+      res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// POST /api/exam/:id/abandon — huy phien thi thu dang IN_PROGRESS
+// ---------------------------------------------------------------------------
+
+examRouter.post(
+  '/:id/abandon',
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      await examService.abandonSession(req.currentUser!.id, req.params['id']!);
+      res.status(200).json({ success: true });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
 // POST /api/exam/start — bat dau phien thi thu moi cho 1 mon hoc
 // ---------------------------------------------------------------------------
 

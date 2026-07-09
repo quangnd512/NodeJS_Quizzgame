@@ -1001,3 +1001,152 @@ useEffect(() => {
 ```
 
 **Khi nào dùng**: Khi cần gọi callback mới nhất từ bên trong một effect/timer có deps là `[]` (chỉ chạy 1 lần).
+
+---
+
+### ABANDONED (ExamSession)
+**Định nghĩa**: Trạng thái thứ 4 của `ExamSession` (bên cạnh `IN_PROGRESS`, `COMPLETED`, `EXPIRED`). Được đặt khi người dùng chủ động bấm nút Thoát và xác nhận huỷ bài thi.
+
+**Khác với EXPIRED**: `EXPIRED` do hệ thống đặt khi nộp bài quá giờ; `ABANDONED` do người dùng chủ động chọn.
+
+**Hậu quả**: Điểm vào thi (60đ) không được hoàn lại. Session không còn tính là `IN_PROGRESS` → user có thể bắt đầu bài thi mới bất kỳ môn nào ngay lập tức.
+
+---
+
+### Exam Resume (Khôi phục bài thi)
+**Định nghĩa**: Tính năng cho phép học sinh quay lại bài thi đang dở sau khi lỡ thoát app. Ngay sau khi đăng nhập (App-level), hệ thống kiểm tra `GET /api/exam/active` — nếu có phiên `IN_PROGRESS`, hiển thị **modal popup** hỏi "Tiếp tục hay Huỷ?" ngay trên màn hình chính (ProfilePage).
+
+**Giới hạn**: Chỉ hoạt động trên cùng thiết bị/trình duyệt vì đáp án draft lưu trong `localStorage`. Đổi thiết bị hoặc clear localStorage → không khôi phục được đáp án đã chọn.
+
+**Lưu ý thiết kế**: Thông báo xuất hiện ngay sau đăng nhập (App-level check), không phải khi vào trang thi — đảm bảo user thấy ngay, không bị bối rối khi thấy hub "bình thường" rồi bị chặn.
+
+---
+
+### Draft Answers (Đáp án nháp)
+**Định nghĩa**: Bản ghi tạm của đáp án học sinh đang chọn trong bài thi, lưu vào `localStorage` với key `exam_draft_{sessionId}`. Được cập nhật sau **mỗi lần** học sinh chọn hoặc thay đổi đáp án.
+
+**Mục đích**: Hỗ trợ tính năng Resume — khi quay lại bài đang dở, đáp án đã chọn được tự động điền lại.
+
+**Xóa khi nào**: Tự động xóa sau khi nộp bài thành công hoặc abandon phiên.
+
+---
+
+### Cancelled Flag Pattern (Mẫu cờ huỷ)
+**Định nghĩa**: Kỹ thuật trong React để ngăn `setState` sau khi component đã unmount. Sử dụng biến cục bộ `let cancelled = false` trong `useEffect`, đặt `cancelled = true` trong cleanup function. Mỗi lần cập nhật state đều kiểm tra `if (cancelled) return` trước.
+
+**Tại sao cần**: Nếu component unmount trong khi một async operation đang chạy (ví dụ: gọi API), và operation hoàn tất sau unmount → `setState` trên component đã unmount → React cảnh báo memory leak.
+
+**Ví dụ**:
+```typescript
+useEffect(() => {
+  let cancelled = false;
+  void getActiveExamSession(token)
+    .then(({ session }) => {
+      if (cancelled) return; // ← guard
+      if (session) setResumeCandidate(session);
+    })
+    .finally(() => { if (!cancelled) setCheckingActive(false); });
+  return () => { cancelled = true }; // ← cleanup
+}, []);
+```
+
+**Dùng ở đâu trong QuizzGame**: `ExamPage.useEffect` khi check active session qua API (trường hợp không có `initialResume` prop).
+
+---
+
+### Lazy Expiration (Hết hạn lười biếng)
+**Định nghĩa**: Chiến lược không dùng background job để quét và đánh dấu session hết hạn. Thay vào đó, session chỉ bị đánh dấu `EXPIRED` khi có một API call thực sự chạm vào nó và server tính toán thấy đã hết giờ.
+
+**Công thức**: `startedAt + durationMinutes * 60s < now → EXPIRED`
+
+**Ưu điểm**:
+- Không cần background worker / cron job
+- Đơn giản hơn, ít bug hơn
+- Phù hợp khi số lượng session đồng thời còn nhỏ
+
+**Nhược điểm**: Session có thể tồn tại ở trạng thái `IN_PROGRESS` trong DB dù đã hết giờ thực tế. Không gây vấn đề vì `remainingSeconds` tính đúng theo thời gian thực.
+
+**Dùng ở đâu trong QuizzGame**: `GET /api/exam/active` và `POST /api/exam/submit` đều tự check và cập nhật trạng thái nếu session đã hết giờ.
+
+---
+
+### resumeAttempted Ref (Guard chống double-invoke)
+**Định nghĩa**: `useRef(false)` được dùng làm guard trong `ExamPage` để đảm bảo `handleResume` chỉ chạy **đúng 1 lần** dù React StrictMode invoke effect 2 lần trong môi trường development.
+
+**Tại sao cần**: React StrictMode (dev mode) cố tình unmount → remount component, khiến `useEffect` chạy 2 lần. Lần 1 `handleResume` thành công (submit → COMPLETED), lần 2 gọi lại → session đã COMPLETED → lỗi → set `hubError` → UX xấu.
+
+**Khác với cancelled flag**: `resumeAttempted` không reset khi cleanup — đây là ý định: nếu effect bị unmount/remount (StrictMode), lần 2 vẫn bị block.
+
+```typescript
+const resumeAttempted = useRef(false);
+
+useEffect(() => {
+  if (initialResume) {
+    if (resumeAttempted.current) return; // block lần 2
+    resumeAttempted.current = true;
+    void handleResume(initialResume);
+    return;
+  }
+  // ... cancelled flag cho case không có initialResume
+}, []);
+```
+
+---
+
+### App-level Session Check (Kiểm tra session ở cấp App)
+**Định nghĩa**: Kỹ thuật đặt lời gọi API `getActiveExamSession` ngay trong `App.onAuthStateChanged` (sau khi lấy được app JWT), thay vì trong `useEffect` của từng page con.
+
+**Lý do dùng trong QuizzGame**:
+- User mong đợi thông báo "bài đang dở" xuất hiện ngay khi vào app, không phải sau khi vào trang thi
+- Tránh gọi API trùng lặp ở nhiều trang
+- State `resumeAlert` được giữ ở App → truyền xuống `ProfilePage` (hiện modal) và `ExamPage` (khởi tạo resume flow) qua props
+
+**Luồng**:
+```
+Firebase auth → App JWT → getMyProfile() → getActiveExamSession()
+                                                    ↓
+                                           có session dở?
+                                                    ↓
+                                    setResumeAlert(session)  ← App state
+                                                    ↓
+                                         ProfilePage nhận prop → hiện modal
+```
+
+---
+
+### React StrictMode Double-Invoke (Chạy đôi trong StrictMode)
+**Định nghĩa**: Hành vi có chủ ý của React trong development mode — component được mount, unmount, rồi mount lại. Kết quả: `useEffect` chạy 2 lần (với cleanup giữa 2 lần).
+
+**Mục đích của React**: Phát hiện side effects không thuần khiết — effect viết đúng phải handle được việc cleanup và re-run.
+
+**Không xảy ra trong production**: StrictMode chỉ hoạt động trong `<React.StrictMode>` wrapper, chỉ có trong dev build.
+
+**Cách xử lý trong QuizzGame**:
+- `Cancelled flag pattern` — ngăn setState sau cleanup
+- `resumeAttempted ref` — ngăn `handleResume` chạy 2 lần (không reset khi cleanup)
+
+---
+
+### ExamSession State Machine (Máy trạng thái phiên thi)
+**Định nghĩa**: Tập hợp các trạng thái hợp lệ của `ExamSession` và các chuyển đổi giữa chúng.
+
+**Các trạng thái**:
+| Trạng thái | Ý nghĩa | Ai đặt |
+|------------|---------|--------|
+| `IN_PROGRESS` | Đang làm bài | `POST /api/exam/start` |
+| `COMPLETED` | Đã nộp bài | `POST /api/exam/submit` |
+| `EXPIRED` | Nộp bài quá giờ (hết giờ, server check khi submit) | `POST /api/exam/submit` |
+| `ABANDONED` | Người dùng chủ động huỷ | `POST /api/exam/:id/abandon` |
+
+**Chuyển đổi hợp lệ** (chỉ từ `IN_PROGRESS`):
+```
+IN_PROGRESS → COMPLETED   (submit trước giờ)
+IN_PROGRESS → EXPIRED     (submit sau giờ)
+IN_PROGRESS → ABANDONED   (user bấm ✕ xác nhận)
+```
+Không có đường về từ COMPLETED/EXPIRED/ABANDONED.
+
+**Tác động tài chính**:
+- `COMPLETED`: +điểm thưởng nếu đủ điều kiện
+- `EXPIRED`: mất 60đ vào thi, không hoàn
+- `ABANDONED`: mất 60đ vào thi, không hoàn

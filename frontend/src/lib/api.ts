@@ -306,6 +306,26 @@ export async function getExamResult(token: string, sessionId: string): Promise<E
   return request(`/api/exam/${sessionId}/result`, token);
 }
 
+/** Thong tin phien thi dang do (GET /api/exam/active). */
+export interface ActiveExamSession {
+  id: string;
+  subject: string;
+  title: string;
+  durationMinutes: number;
+  startedAt: string;
+  remainingSeconds: number;
+}
+
+/** GET /api/exam/active — lay phien thi dang IN_PROGRESS (neu co). */
+export async function getActiveExamSession(token: string): Promise<{ session: ActiveExamSession | null }> {
+  return request('/api/exam/active', token);
+}
+
+/** POST /api/exam/:id/abandon — huy phien thi dang IN_PROGRESS. */
+export async function abandonExam(token: string, sessionId: string): Promise<{ success: boolean }> {
+  return request(`/api/exam/${sessionId}/abandon`, token, { method: 'POST' });
+}
+
 // ─── Admin: Bao cao cau hoi ─────────────────────────────────────────────────
 
 export interface QuestionReportDto {

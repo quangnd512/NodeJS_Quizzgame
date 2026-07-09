@@ -426,7 +426,8 @@ model ExamSession {
   startedAt       DateTime  @default(now())
 
   /// Trang thai: "IN_PROGRESS" (dang lam) | "COMPLETED" (da nop, da cham diem)
-  /// | "EXPIRED" (qua gio nop bai, khong duoc cham diem).
+  /// | "EXPIRED" (qua gio nop bai, khong duoc cham diem)
+  /// | "ABANDONED" (nguoi dung chu dong huy phien qua nut Thoat).
   status          String    @default("IN_PROGRESS")
 
   /// Diem so theo thang 10 (1 chu so thap phan) - null khi chua nop bai/het gio.

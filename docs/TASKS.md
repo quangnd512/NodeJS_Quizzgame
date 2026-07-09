@@ -15,6 +15,7 @@
 | 010 | Ôn Câu Sai – Wrong Answer Review | ✅ Done | feature/wrong-answer-review | 2026-07-05 |
 | 008 | Admin User Management – Quản lý người dùng | ✅ Done | feature/admin-user-management | 2026-07-06 |
 | 011 | Anti-Cheat Security Fixes | ✅ Done | feature/anti-cheat-fixes | 2026-07-07 |
+| 012 | Exam UX Improvements – Resume, Exit Button, ABANDONED status | ✅ Done | feature/exam-ux-improvements | 2026-07-09 |
 | 009 | Notifications – Thông báo hệ thống | ⏳ Chờ S1 lên kế hoạch | — | — |
 
 ---

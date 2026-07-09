@@ -23,8 +23,14 @@ export const EXAM_MIN_SUBMIT_RATIO = 0.3;
 export const EXAM_QUESTION_TYPES = ['MCQ_4', 'TRUE_FALSE_4', 'FILL_BLANK'] as const;
 export type ExamQuestionType = (typeof EXAM_QUESTION_TYPES)[number];
 
-/** Cac trang thai phien thi thu hop le. */
-export const EXAM_SESSION_STATUSES = ['IN_PROGRESS', 'COMPLETED', 'EXPIRED'] as const;
+/**
+ * Cac trang thai phien thi thu hop le.
+ * - IN_PROGRESS: dang lam bai
+ * - COMPLETED: da nop bai, da cham diem
+ * - EXPIRED: qua gio nop bai, khong duoc cham diem
+ * - ABANDONED: nguoi dung chu dong huy phien (nhan nut Thoat va xac nhan)
+ */
+export const EXAM_SESSION_STATUSES = ['IN_PROGRESS', 'COMPLETED', 'EXPIRED', 'ABANDONED'] as const;
 export type ExamSessionStatus = (typeof EXAM_SESSION_STATUSES)[number];
 
 /**
@@ -162,6 +168,23 @@ export interface StartExamResponse {
   durationMinutes: number;
   startedAt: Date;
   questions: ExamQuestionPublicDto[];
+}
+
+/**
+ * Ket qua tra ve cho GET /api/exam/active — phien thi dang IN_PROGRESS (neu co).
+ * remainingSeconds: so giay con lai, co the am neu da het gio nhung chua het grace period.
+ * Frontend dung de hien dialog "Tiep tuc?" va tinh thoi gian hien thi dong ho.
+ */
+export interface ActiveExamSessionResponse {
+  session: {
+    id: string;
+    subject: string;
+    title: string;
+    durationMinutes: number;
+    startedAt: Date;
+    /** So giay con lai = (startedAt + durationMinutes*60s) - now. Co the am. */
+    remainingSeconds: number;
+  } | null;
 }
 
 /** 1 cau tra loi user gui khi nop bai. */

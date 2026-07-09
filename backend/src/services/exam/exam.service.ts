@@ -18,6 +18,7 @@ import {
   ExamPaperNotFoundError,
   ExamQuestionInvalidError,
   ExamQuestionNotFoundError,
+  ExamSessionAbandonedError,
   ExamSessionAlreadyActiveError,
   ExamSessionAlreadyCompletedError,
   ExamSessionNotCompletedError,
@@ -34,6 +35,7 @@ import {
   getExamBonusPoints,
 } from './exam.types.js';
 import type {
+  ActiveExamSessionResponse,
   CreateExamPaperInput,
   CreateExamQuestionInput,
   ExamChapterAnalysis,
@@ -599,6 +601,73 @@ export class ExamService {
   }
 
   /**
+   * Lay phien thi thu dang IN_PROGRESS cua user (neu co).
+   * Tinh remainingSeconds theo thoi gian hien tai (co the am neu het gio).
+   * Dung de frontend hien dialog "Tiep tuc bai thi dang do?".
+   */
+  async getActiveSession(userId: string): Promise<ActiveExamSessionResponse> {
+    const session = await prisma.examSession.findFirst({
+      where: { userId, status: 'IN_PROGRESS' },
+      select: {
+        id: true,
+        subjectId: true,
+        durationMinutes: true,
+        startedAt: true,
+        examPaperId: true,
+      },
+    });
+
+    if (!session) return { session: null };
+
+    // Lay ten de thi de frontend hien trong dialog "Tiep tuc?"
+    // (2 query rieng biet vi ExamSession chua co @relation toi ExamPaper trong schema)
+    const paper = await prisma.examPaper.findUnique({
+      where: { id: session.examPaperId },
+      select: { title: true },
+    });
+
+    const expiryMs = session.startedAt.getTime() + session.durationMinutes * 60_000;
+    // remainingSeconds co the am neu het gio — frontend xu ly auto-submit
+    const remainingSeconds = Math.round((expiryMs - Date.now()) / 1000);
+
+    return {
+      session: {
+        id: session.id,
+        subject: session.subjectId,
+        title: paper?.title ?? '',
+        durationMinutes: session.durationMinutes,
+        startedAt: session.startedAt,
+        remainingSeconds,
+      },
+    };
+  }
+
+  /**
+   * Huy phien thi thu dang IN_PROGRESS (nguoi dung chu dong thoat).
+   * Doi status → ABANDONED. Khong hoan lai diem da tru khi vao thi.
+   * Sau khi ABANDONED, user co the bat dau phien thi thu moi bat ky mon nao.
+   *
+   * @throws ExamSessionNotFoundError neu khong tim thay phien
+   * @throws ExamSessionNotOwnedError neu phien khong thuoc ve user nay
+   * @throws ExamSessionAbandonedError neu phien da bi huy truoc do
+   * @throws ExamSessionAlreadyCompletedError neu phien da hoan thanh
+   */
+  async abandonSession(userId: string, sessionId: string): Promise<void> {
+    const session = await prisma.examSession.findUnique({ where: { id: sessionId } });
+    if (!session) throw new ExamSessionNotFoundError(sessionId);
+    if (session.userId !== userId) throw new ExamSessionNotOwnedError(sessionId);
+    if (session.status === 'ABANDONED') throw new ExamSessionAbandonedError(sessionId);
+    if (session.status === 'COMPLETED' || session.status === 'EXPIRED') {
+      throw new ExamSessionAlreadyCompletedError(sessionId);
+    }
+
+    await prisma.examSession.update({
+      where: { id: sessionId },
+      data: { status: 'ABANDONED', completedAt: new Date() },
+    });
+  }
+
+  /**
    * Nop bai thi thu: cham diem theo 3 dang cau hoi, quy doi ve thang 10,
    * cong diem thuong (neu co) theo bang diem thuong.
    *
@@ -620,6 +689,7 @@ export class ExamService {
     if (session.userId !== userId) throw new ExamSessionNotOwnedError(sessionId);
     if (session.status === 'COMPLETED') throw new ExamSessionAlreadyCompletedError(sessionId);
     if (session.status === 'EXPIRED') throw new ExamExpiredError(sessionId);
+    if (session.status === 'ABANDONED') throw new ExamSessionAbandonedError(sessionId);
 
     // Bug 1a: Ngan nop bai qua som (< 30% thoi gian lam bai).
     const elapsedMs = Date.now() - session.startedAt.getTime();
@@ -762,7 +832,8 @@ export class ExamService {
     const session = await prisma.examSession.findUnique({ where: { id: sessionId } });
     if (!session) throw new ExamSessionNotFoundError(sessionId);
     if (session.userId !== userId) throw new ExamSessionNotOwnedError(sessionId);
-    if (session.status === 'IN_PROGRESS') throw new ExamSessionNotCompletedError(sessionId);
+    if (session.status === 'IN_PROGRESS' || session.status === 'ABANDONED')
+      throw new ExamSessionNotCompletedError(sessionId);
 
     const [questions, answers] = await Promise.all([
       prisma.examQuestion.findMany({
