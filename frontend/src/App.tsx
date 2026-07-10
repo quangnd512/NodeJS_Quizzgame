@@ -30,7 +30,7 @@ import type {
   ProgressSummary, ExamHistoryItem, PaginatedExamHistory,
   WrongAnswerItem, WrongAnswerListResponse, RetryResult,
   DashboardStats, AdminUserListItem, AdminUserDetail,
-  NotificationItem,
+  NotificationItem, NotificationTargetScreen,
 } from './lib/api.js';
 import './App.css';
 
@@ -196,6 +196,11 @@ export default function App() {
           sessionToken={sessionToken}
           onClose={() => setNotifOpen(false)}
           onCountChange={setUnreadCount}
+          onNavigate={(target) => {
+            // Đóng panel TRƯỚC khi chuyển màn hình để tránh panel đè lên màn hình mới
+            setNotifOpen(false);
+            setScreen(target);
+          }}
         />
       )}
 
@@ -4815,11 +4820,13 @@ function NotificationToast({ item, onClose }: { item: NotificationItem; onClose:
 // ─────────────────────────────────────────────────────────────────────────────
 
 function NotificationPanel({
-  sessionToken, onClose, onCountChange,
+  sessionToken, onClose, onCountChange, onNavigate,
 }: {
   sessionToken: string;
   onClose: () => void;
   onCountChange: (count: number) => void;
+  /** Điều hướng sang màn hình tương ứng với targetScreen của thông báo (progress/leaderboard/exam) */
+  onNavigate: (target: Exclude<NotificationTargetScreen, null>) => void;
 }) {
   const [items, setItems]       = useState<NotificationItem[]>([]);
   const [loading, setLoading]   = useState(true); // bắt đầu ở trạng thái loading
@@ -4859,6 +4866,17 @@ function NotificationPanel({
     } catch { /* bỏ qua */ }
   }
 
+  /**
+   * Bấm vào 1 thông báo: LUÔN đánh dấu đã đọc (nếu chưa đọc), SAU ĐÓ điều hướng
+   * sang màn hình tương ứng nếu thông báo có targetScreen (streak/rank → progress|leaderboard,
+   * đề thi mới → exam). Thông báo báo cáo (targetScreen = null) chỉ đánh dấu đã đọc,
+   * không chuyển màn hình — giữ đúng hành vi hiện tại.
+   */
+  function handleItemClick(n: NotificationItem) {
+    if (!n.isRead) void handleMarkOne(n.id);
+    if (n.targetScreen) onNavigate(n.targetScreen);
+  }
+
   const unread = items.filter((n) => !n.isRead).length;
 
   return (
@@ -4885,7 +4903,7 @@ function NotificationPanel({
             <div
               key={n.id}
               className={`notif-item ${notifTypeClass(n.type)}${n.isRead ? '' : ' notif-item--unread'}`}
-              onClick={() => { if (!n.isRead) void handleMarkOne(n.id); }}
+              onClick={() => handleItemClick(n)}
             >
               <div className="notif-item-content">
                 <p className="notif-item-title">{n.title}</p>
