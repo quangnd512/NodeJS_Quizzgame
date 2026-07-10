@@ -125,7 +125,12 @@ export default function App() {
           const newest = result.notifications[0];
           if (newest && !newest.isRead) {
             setToast(newest);
-            setTimeout(() => setToast(null), 4000);
+            // So sanh id truoc khi tat — tranh truong hop 2 thong bao den gan nhau,
+            // timeout cua thong bao CU tat mat thong bao MOI truoc han.
+            // Thoi gian hien thi: 7 giay (tang tu 4 giay de de bat kip hon).
+            setTimeout(() => {
+              setToast((current) => (current?.id === newest.id ? null : current));
+            }, 7000);
           }
         }
         prevUnreadRef.current = count;
@@ -136,7 +141,19 @@ export default function App() {
 
     void poll();
     const id = setInterval(() => void poll(), 30_000);
-    return () => clearInterval(id);
+
+    // Poll ngay khi tab duoc focus lai — tranh phai cho het chu ky 30s hoac
+    // phai reload khi trinh duyet throttle setInterval o tab nen (VD: user
+    // dang thao tac o cua so/tab khac roi quay lai tab app).
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void poll();
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [sessionToken]);
 
   function handleApiError(err: unknown) {
@@ -165,7 +182,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Toast thông báo — hiện 4 giây rồi tự tắt */}
+      {/* Toast thông báo — hiện 7 giây rồi tự tắt */}
       {toast && (
         <NotificationToast
           item={toast}
@@ -4763,12 +4780,27 @@ function AdminUsersPage({ secret, onLogout }: { secret: string; onLogout: () => 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// NotificationToast — hiện trong 4 giây khi có thông báo mới
+// NotificationToast — hiện trong 7 giây khi có thông báo mới
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Class CSS phu theo loai thong bao — dung de lam noi bat rieng tung loai
+ * (dac biet RANK_UP duoc yeu cau noi bat hon han cac loai khac).
+ */
+function notifTypeClass(type: NotificationItem['type']): string {
+  switch (type) {
+    case 'RANK_UP':          return 'notif-type-rank-up';
+    case 'RANK_DOWN':        return 'notif-type-rank-down';
+    case 'STREAK_MILESTONE': return 'notif-type-streak';
+    case 'REPORT_RESOLVED':  return 'notif-type-report';
+    case 'NEW_EXAM_PAPER':   return 'notif-type-exam';
+    default:                 return '';
+  }
+}
 
 function NotificationToast({ item, onClose }: { item: NotificationItem; onClose: () => void }) {
   return (
-    <div className="notif-toast" role="alert" onClick={onClose}>
+    <div className={`notif-toast ${notifTypeClass(item.type)}`} role="alert" onClick={onClose}>
       <div className="notif-toast-content">
         <p className="notif-toast-title">{item.title}</p>
         <p className="notif-toast-body">{item.body}</p>
@@ -4852,7 +4884,7 @@ function NotificationPanel({
           {!loading && items.map((n) => (
             <div
               key={n.id}
-              className={`notif-item${n.isRead ? '' : ' notif-item--unread'}`}
+              className={`notif-item ${notifTypeClass(n.type)}${n.isRead ? '' : ' notif-item--unread'}`}
               onClick={() => { if (!n.isRead) void handleMarkOne(n.id); }}
             >
               <div className="notif-item-content">

@@ -2023,3 +2023,42 @@ body {
   flex-shrink: 0;
   margin-top: .35rem;
 }
+
+/* ─── Nhấn màu riêng theo từng loại thông báo ─────────────────────────── */
+/* RANK_UP nổi bật nhất (theo yêu cầu) — nền vàng gold + viền phát sáng + rung nhẹ khi vừa hiện */
+.notif-toast.notif-type-rank-up {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  color: #1e1305;
+  box-shadow: 0 4px 24px rgba(245, 158, 11, .55);
+  border: 1px solid #fcd34d;
+  animation: toast-in .25s ease, notif-glow-pulse 1.4s ease-in-out 2;
+}
+.notif-toast.notif-type-rank-up .notif-toast-title { color: #1e1305; }
+.notif-toast.notif-type-rank-up .notif-toast-body  { color: #422e05; opacity: .9; }
+
+@keyframes notif-glow-pulse {
+  0%, 100% { box-shadow: 0 4px 24px rgba(245, 158, 11, .55); }
+  50%      { box-shadow: 0 4px 32px rgba(245, 158, 11, .95); }
+}
+
+.notif-toast.notif-type-rank-down    { border-left: 4px solid #94a3b8; }
+.notif-toast.notif-type-streak       { border-left: 4px solid #f97316; }
+.notif-toast.notif-type-report       { border-left: 4px solid #22c55e; }
+.notif-toast.notif-type-exam         { border-left: 4px solid #3b82f6; }
+
+/* Panel: viền trái theo loại + RANK_UP có nền vàng nhạt để nổi bật kể cả đã đọc */
+.notif-item.notif-type-rank-up {
+  border-left: 4px solid #f59e0b;
+  background: #fffbeb;
+}
+.notif-item.notif-type-rank-up:hover { background: #fef3c7; }
+.notif-item.notif-type-rank-up.notif-item--unread {
+  background: #fef3c7;
+}
+.notif-item.notif-type-rank-up.notif-item--unread:hover { background: #fde68a; }
+.notif-item.notif-type-rank-up .notif-item-title { color: #92400e; }
+
+.notif-item.notif-type-rank-down { border-left: 4px solid #94a3b8; }
+.notif-item.notif-type-streak    { border-left: 4px solid #f97316; }
+.notif-item.notif-type-report    { border-left: 4px solid #22c55e; }
+.notif-item.notif-type-exam      { border-left: 4px solid #3b82f6; }
