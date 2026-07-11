@@ -116,3 +116,40 @@ Catch trong `handleResume` set `hubError` — hợp lý ở mặt kỹ thuật (
 
 **12. Bảng điểm: balance table vs log table**
 Trong quá trình test, phát hiện cộng điểm vào `point_transactions` (bảng log) thay vì `user_points` (bảng balance). Điểm không thay đổi dù insert thành công. **Bài học**: Khi có 2 bảng liên quan (balance + audit log), luôn xác nhận rõ bảng nào là "nguồn sự thật" trước khi viết code cập nhật. Ở QuizzGame: `user_points.currentPoints` là balance thực, `point_transactions` chỉ là lịch sử.
+
+---
+
+## Vòng 13: Notifications — Thông báo hệ thống (2026-07-09)
+
+**1. Circular dependency cần phát hiện sớm khi thiết kế dependency graph**
+`progress.service` import `practiceService` → nếu `practiceService` cũng import `progress.service` sẽ tạo vòng. Giải pháp: tách logic dùng chung (`computeStreaks`) vào `utils/` — tầng utility không phụ thuộc vào bất kỳ service nào. **Bài học**: trước khi thêm import mới giữa hai service, kiểm tra xem chiều ngược lại đã tồn tại chưa. Nếu có → cần tầng trung gian (utils, constants, types).
+
+**2. Sentinel value -1 tốt hơn 0 khi 0 là giá trị hợp lệ**
+`prevUnreadRef.current = 0` bị hiểu là "user đã từng có 0 thông báo" → khi poll đầu tiên thấy 5 thông báo, toast xuất hiện ngay (sai UX). Đổi thành `-1` (giá trị không bao giờ là unread count hợp lệ) → poll đầu tiên không trigger toast. **Bài học**: khi dùng số nguyên làm flag trạng thái, chọn sentinel nằm NGOÀI range giá trị hợp lệ. Đừng dùng `0` làm "chưa khởi tạo" nếu `0` là giá trị nghiệp vụ bình thường.
+
+**3. `createMany` thay vì for-loop await cho batch insert**
+Lần đầu implement `fireNewExamPaperNotifications` dùng `for (const userId of userIds) { await createNotification(...) }` — N lần round-trip DB cho N user. S3 review phát hiện và đổi thành `notification.createMany([...])` — 1 round-trip. **Bài học**: bất kỳ khi nào cần insert nhiều bản ghi cùng loại, dùng `createMany` ngay từ đầu. Chỉ dùng for-loop await khi mỗi bản ghi cần xử lý riêng (VD: cần kết quả của bản ghi này để xây bản ghi tiếp theo).
+
+**4. Prisma JsonNull ≠ TypeScript null cho cột nullable JSON**
+Khi truyền `metadata: null` cho cột `Json?` trong Prisma, TypeScript báo lỗi vì `null` không gán được vào `InputJsonValue | NullableJsonNullValueInput`. Phải dùng `Prisma.JsonNull`. **Bài học**: cột `Json?` của Prisma có 3 giá trị khác nhau về mặt typing: `InputJsonValue` (có data), `Prisma.JsonNull` (DB NULL), `undefined` (không truyền field). Luôn dùng `Prisma.JsonNull` khi muốn đặt cột JSON thành NULL.
+
+**5. Express route ordering: static path trước parametric path**
+`GET /api/notifications/unread-count` và `PATCH /api/notifications/read-all` phải đăng ký TRƯỚC `PATCH /api/notifications/:id/read`. Nếu ngược lại, `"unread-count"` và `"read-all"` bị parse là `:id = "unread-count"` → route sai được match, không tìm thấy notification → 404. **Bài học**: trong Express Router, luôn đăng ký route tĩnh (literal string) TRƯỚC route có parameter (`:param`). Đây là nguồn gây bug khó debug vì không có lỗi build hay runtime — chỉ phát hiện khi test thủ công.
+
+**6. ⚠️ `openapi.yaml`: không bao giờ được append path mới SAU key `components:` đã mở**
+Khi cập nhật `docs/api/openapi.yaml`, phát hiện lỗi cấu trúc YAML nghiêm trọng đã tồn tại từ các tính năng trước (Question Bank, Leaderboard, Progress, Wrong Answers): các session ghi tài liệu trước đó đã dán thêm endpoint mới **sau** dòng `components:` (thay vì trước nó, bên trong `paths:`), khiến các path đó bị parser YAML coi là **key con của `components`** chứ không phải path thật — hoàn toàn vô hình với mọi tool đọc OpenAPI (Swagger UI, Redoc, codegen). Bản nháp Feature 013 ban đầu cũng mắc lại lỗi này, cộng thêm việc tạo **`components:` trùng lặp ở cuối file** (YAML duplicate key — parser chỉ giữ bản cuối, xoá sạch 48 schema đã định nghĩa trước đó như `ErrorResponse`). Đã sửa cho phần Notifications: patch 4 path mới vào đúng trong `paths:` (trước `components:`), gộp `NotificationItem` vào đúng `components.schemas` duy nhất.
+**Bài học**: `openapi.yaml` chỉ có **một** `paths:` và **một** `components:` ở toàn văn bản. Mọi endpoint mới phải chèn vào TRƯỚC dòng `components:` đầu tiên (bên trong khối `paths:`), mọi schema mới chèn vào TRONG `components.schemas:` đã có sẵn — không tạo thêm section trùng tên. Nên chạy `python3 -c "import yaml; yaml.safe_load(open('docs/api/openapi.yaml'))"` rồi đếm `len(data['paths'])` và `list(data['components'].keys())` sau mỗi lần sửa để phát hiện sớm.
+**Nợ kỹ thuật còn tồn đọng (chưa sửa trong lần này, ngoài phạm vi Feature 013)**: các path của Question Bank, Leaderboard, `/api/users/me/avatar`, Progress, Wrong Answers vẫn đang nằm sai vị trí (là key con của `components`) — cần một lượt dọn dẹp riêng để di chuyển toàn bộ về đúng `paths:`.
+
+### Bài học bổ sung từ S5 testing (Feature 013 — 2026-07-10)
+
+89/89 unit test PASS và code review (S3) không phát hiện 2 bug dưới đây — cả hai chỉ lộ ra khi test thủ công kịch bản "2 sự kiện xảy ra gần nhau", điều mà unit test theo từng hàm riêng lẻ không mô phỏng được.
+
+**7. Toast thứ 2 bị toast thứ 1 tắt nhầm — race condition giữa `setTimeout` và state mới**
+Kịch bản: thông báo A đến → hiện toast A → hẹn giờ tắt sau 7 giây (lúc đó vẫn còn là 4 giây trước khi S5 tăng lên). Trước khi hết giờ, thông báo B đến → toast đổi sang B (`setToast(newest)`), nhưng `setTimeout` của A vẫn đang chạy nền. Khi nó chạy tới, nó gọi thẳng `setToast(null)` — tắt nhầm toast B dù B chưa đủ thời gian hiển thị. **Bài học**: khi 1 `setTimeout` được đặt lịch để "dọn dẹp" 1 state, và state đó có thể bị ghi đè bởi 1 lần gọi khác trước khi timeout chạy, PHẢI kiểm tra "state hiện tại có còn đúng là cái tôi định dọn không" bên trong callback (so sánh theo `id` hoặc timestamp) — không được tắt/xoá state một cách vô điều kiện. Đây là dạng tổng quát của "stale closure" nhưng xảy ra ở tầng state React chứ không phải biến closure.
+
+**8. Thời lượng UX ước tính ban đầu không đủ trong thực tế — cần vòng test thủ công để phát hiện**
+Toast 4 giây (giá trị ban đầu S2 chọn) là hợp lý về lý thuyết, nhưng khi test thủ công với kịch bản 2 thông báo đến gần nhau, người dùng thực tế thấy 4 giây "trôi quá nhanh để đọc kịp". Tăng lên 7 giây. **Bài học**: các con số UX thuần cảm tính (thời gian hiển thị, độ trễ animation...) nên coi là "nháp" cho tới khi có người thật tương tác thử — không có công thức tính đúng ngay từ thiết kế.
+
+**9. `setInterval` bị trình duyệt throttle ở tab nền — cần lắng nghe `visibilitychange` bổ sung**
+Polling 30 giây qua `setInterval` hoạt động đúng khi tab đang active, nhưng khi user chuyển sang tab/cửa sổ khác một lúc rồi quay lại, `setInterval` có thể đã bị trình duyệt tạm hoãn để tiết kiệm tài nguyên → badge/toast "trễ" hơn 30 giây thực tế, cảm giác như phải F5 mới cập nhật. **Bài học**: bất kỳ polling nào chạy nền qua `setInterval` trong ứng dụng web nên có thêm 1 listener `visibilitychange` gọi lại ngay khi tab active trở lại — đây không phải bug logic mà là đặc tính có chủ đích của trình duyệt (tiết kiệm CPU/pin cho tab ẩn), nên phải chủ động bù trừ ở tầng code.

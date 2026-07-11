@@ -1400,3 +1400,65 @@ mỗi request — nếu DB đã set `isBlocked=true`, request tiếp theo sẽ n
 Thông thường không cần làm gì thêm; nếu cần ngắt ngay lập tức, thay đổi
 `JWT_SECRET` trong `.env` và restart backend (sẽ vô hiệu hoá TẤT CẢ session token,
 kể cả của admin và các user khác — dùng biện pháp này cẩn thận).
+
+---
+
+## 13. Thông báo hệ thống — Feature 013
+
+Hệ thống gửi thông báo tự động đến học sinh khi xảy ra các sự kiện quan trọng. Admin **không gửi thông báo thủ công** — mọi thông báo đều được kích hoạt bởi hành động cụ thể.
+
+### 13.1 Bảng điều khiển thông báo (admin không có)
+
+Hiện tại không có giao diện admin để xem/xóa thông báo. Để kiểm tra thủ công:
+
+```sql
+-- Xem 20 thông báo gần nhất của 1 user
+SELECT id, type, title, "isRead", "createdAt"
+FROM notifications
+WHERE "userId" = '<userId>'
+ORDER BY "createdAt" DESC
+LIMIT 20;
+
+-- Đếm thông báo chưa đọc theo loại
+SELECT type, COUNT(*) FROM notifications WHERE "isRead" = false GROUP BY type;
+```
+
+### 13.2 Các loại thông báo và điều kiện kích hoạt
+
+| Loại | Kích hoạt khi | Trigger nằm ở |
+|------|--------------|---------------|
+| `STREAK_MILESTONE` | Học sinh hoàn thành phiên ôn luyện đầu tiên trong ngày đạt mốc 7/14/30/60/100 ngày liên tiếp | `practice.service.completeSession()` |
+| `RANK_UP` | Hạng leaderboard tăng sau khi nộp bài thi | `exam.service.submitExam()` |
+| `RANK_DOWN` | Hạng leaderboard giảm sau khi nộp bài thi | `exam.service.submitExam()` |
+| `REPORT_RESOLVED` | Admin chuyển trạng thái báo cáo câu hỏi từ PENDING sang bất kỳ trạng thái nào khác | `practice.service.updateReport()` |
+| `NEW_EXAM_PAPER` | Admin bật active cho đề thi (`isActive: false → true`) | `exam.service.updateExamPaper()` |
+
+### 13.3 Hành động admin ảnh hưởng đến thông báo
+
+**Duyệt báo cáo câu hỏi:**
+- Khi admin xử lý báo cáo câu hỏi (chuyển từ PENDING sang REVIEWED / FIXED / DISMISSED), học sinh gửi báo cáo sẽ tự động nhận thông báo `REPORT_RESOLVED`
+- Thông báo gửi kèm trích đoạn câu hỏi và trạng thái mới
+- Không có cách tắt thông báo này cho từng báo cáo riêng lẻ
+
+**Bật active đề thi mới:**
+- Khi admin chuyển đề thi từ `isActive: false` → `true`, tất cả học sinh đã từng học môn đó sẽ nhận thông báo `NEW_EXAM_PAPER`
+- Thông báo được gửi theo batch (1 INSERT duy nhất cho N user)
+- **Lưu ý**: Nếu tắt rồi bật lại đề thi, thông báo sẽ gửi lại lần nữa
+
+### 13.4 Khắc phục sự cố — Thông báo
+
+**Thông báo không xuất hiện sau khi duyệt báo cáo**
+→ Kiểm tra trạng thái báo cáo trước khi duyệt có phải `PENDING` không — nếu báo cáo đã ở trạng thái khác PENDING, trigger không chạy. Xem DB:
+```sql
+SELECT status FROM question_reports WHERE id = '<reportId>';
+```
+
+**Đề thi mới bật active nhưng học sinh không nhận thông báo**
+→ Kiểm tra xem đề thi có thực sự chuyển từ `false → true` không (không phải từ `true → true`). Batch notification chỉ gửi khi `isActive` thay đổi từ false sang true. Xem log backend để xác nhận `fireNewExamPaperNotifications` đã được gọi.
+
+**Muốn xóa thông báo thủ công**
+```sql
+DELETE FROM notifications WHERE id = '<notificationId>';
+-- Hoặc xóa toàn bộ của 1 user
+DELETE FROM notifications WHERE "userId" = '<userId>';
+```

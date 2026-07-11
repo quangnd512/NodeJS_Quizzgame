@@ -1193,3 +1193,59 @@ A: Không. Đáp án nháp chỉ lưu trên thiết bị bạn đang dùng. Trê
 **Q: Bài thi hết giờ khi tôi đang không dùng điện thoại, điểm tính thế nào?**
 
 A: Hệ thống sẽ tự nộp bài với những câu bạn đã làm. Câu bỏ trắng tính là sai, không lộ đáp án đúng.
+
+---
+
+## Thông báo hệ thống (Feature 013)
+
+### Icon chuông 🔔
+
+Ở màn hình trang chủ (sau khi đăng nhập), bạn sẽ thấy icon chuông **🔔** ở góc trên bên phải màn hình.
+
+- **Badge đỏ** trên chuông: số thông báo chưa đọc
+- **Bấm vào chuông**: mở danh sách tất cả thông báo
+- Thông báo mới nhất hiện trên cùng
+
+### Các loại thông báo
+
+| Thông báo | Khi nào xuất hiện |
+|-----------|------------------|
+| 🔥 **Streak milestone** | Bạn học đủ 7 / 14 / 30 / 60 / 100 ngày liên tiếp |
+| 🏆 **Lên hạng** | Thứ hạng leaderboard của bạn tăng sau khi nộp bài thi |
+| 📉 **Xuống hạng** | Thứ hạng leaderboard của bạn giảm sau khi nộp bài thi |
+| ✅ **Báo cáo được xử lý** | Admin đã duyệt báo cáo câu hỏi của bạn |
+| 📝 **Đề thi mới** | Có đề thi mới cho môn bạn đang học |
+
+### Đánh dấu đã đọc
+
+- Bấm vào từng thông báo → đánh dấu đã đọc (chấm xanh biến mất)
+- Bấm "Đánh dấu tất cả đã đọc" → toàn bộ thông báo đều đọc (không điều hướng)
+
+### Bấm vào thông báo để chuyển trang
+
+Ngoài việc đánh dấu đã đọc, bấm vào một thông báo (trong panel 🔔) còn tự động chuyển bạn sang màn hình liên quan, tùy loại thông báo:
+
+| Thông báo | Sau khi bấm |
+|-----------|-------------|
+| 🔥 **Streak milestone** | Đánh dấu đã đọc + chuyển sang **Trang Tiến độ học tập** |
+| 🏆 **Lên hạng** / 📉 **Xuống hạng** | Đánh dấu đã đọc + chuyển sang **Trang Bảng xếp hạng** |
+| 📝 **Đề thi mới** | Đánh dấu đã đọc + chuyển sang **Trang Thi thử** |
+| ✅ **Báo cáo được xử lý** | Chỉ đánh dấu đã đọc, **không chuyển trang** (bạn ở lại màn hình hiện tại) |
+
+### Toast popup
+
+Khi ứng dụng đang mở và có thông báo mới, một popup nhỏ sẽ xuất hiện ở phía trên màn hình trong khoảng 7 giây. Bấm vào popup để đóng nhanh.
+
+### Câu hỏi thường gặp
+
+**Q: Tôi có thể tắt thông báo không?**
+
+A: Hiện tại chưa hỗ trợ tắt riêng từng loại thông báo. Tất cả thông báo đều hiện trong chuông.
+
+**Q: Streak 7 ngày mà không thấy thông báo?**
+
+A: Thông báo streak chỉ gửi khi bạn hoàn thành phiên ôn tập đầu tiên trong ngày đạt mốc. Nếu bạn đã học hôm đó rồi hoàn thành thêm phiên nữa, thông báo không gửi lại.
+
+**Q: Thông báo bao lâu thì xuất hiện sau khi sự kiện xảy ra?**
+
+A: Tối đa **30 giây** (chu kỳ polling). Trong thực tế thường dưới 30 giây.

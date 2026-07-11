@@ -666,6 +666,17 @@
 | 10 | REPORT_RESOLVED (rejected) — admin từ chối | status PENDING → DISMISSED | user nhận REPORT_RESOLVED với title chứa "bị từ chối" |
 | 11 | NEW_EXAM_PAPER — admin bật active đề thi | isActive false → true | tất cả user học môn đó nhận notification NEW_EXAM_PAPER (batch createMany) |
 
+### Điều hướng khi bấm thông báo (Click-to-Navigate — Frontend, commit 293b40d)
+> Bổ sung sau vòng làm lại theo yêu cầu S8 (2026-07-11) — trước đó chưa có test-case nào
+> cho hành vi bấm vào thông báo trong panel, dù backend đã trả đúng `targetScreen`.
+
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| N1 | Bấm thông báo STREAK_MILESTONE (targetScreen=progress) | thông báo chưa đọc | đánh dấu đã đọc NGAY + panel đóng + app chuyển sang màn hình Tiến độ (ProgressPage) |
+| N2 | Bấm thông báo RANK_UP/RANK_DOWN (targetScreen=leaderboard) | thông báo chưa đọc | đánh dấu đã đọc + chuyển sang màn hình Bảng xếp hạng (LeaderboardPage) |
+| N3 | Bấm thông báo NEW_EXAM_PAPER (targetScreen=exam) | thông báo chưa đọc | đánh dấu đã đọc + chuyển sang màn hình Thi thử (ExamPage — danh sách chọn môn bình thường) |
+| N4 | Bấm thông báo REPORT_RESOLVED (targetScreen=null) | thông báo chưa đọc | CHỈ đánh dấu đã đọc — KHÔNG chuyển màn hình, panel vẫn mở nguyên tại chỗ |
+
 ### Edge Cases
 | # | Mô tả | Input | Expected Output |
 |---|-------|-------|-----------------|

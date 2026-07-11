@@ -1408,6 +1408,129 @@ paths:
                 error: EXAM_QUESTION_NOT_FOUND
                 message: "Khong tim thay cau hoi '...'."
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Notifications — Feature 013
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  /api/notifications:
+    get:
+      summary: Danh sách thông báo của user hiện tại
+      description: Trả thông báo mới nhất trước, phân trang. Bao gồm cả tổng số và số chưa đọc.
+      tags: [Notifications]
+      security:
+        - SessionToken: []
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+          description: Trang (bắt đầu từ 1)
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20, maximum: 50 }
+          description: Số bản ghi mỗi trang (tối đa 50)
+      responses:
+        '200':
+          description: Danh sách thông báo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  notifications:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/NotificationItem'
+                  total:       { type: integer, description: Tổng số thông báo của user }
+                  unreadCount: { type: integer, description: Số thông báo chưa đọc }
+              example:
+                notifications:
+                  - id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                    type: "STREAK_MILESTONE"
+                    title: "🔥 Streak 7 ngày!"
+                    body: "Tuyệt vời! Bạn đã học liên tiếp 7 ngày. Hãy giữ vững nhịp độ này nhé!"
+                    isRead: false
+                    targetScreen: "progress"
+                    metadata: { streakDays: 7 }
+                    createdAt: "2026-07-09T10:00:00.000Z"
+                total: 5
+                unreadCount: 2
+        '401':
+          description: Thiếu hoặc sai session token
+
+  /api/notifications/unread-count:
+    get:
+      summary: Đếm số thông báo chưa đọc
+      description: Endpoint nhẹ dùng cho polling badge chuông mỗi 30 giây.
+      tags: [Notifications]
+      security:
+        - SessionToken: []
+      responses:
+        '200':
+          description: Số thông báo chưa đọc
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+              example: { count: 3 }
+        '401':
+          description: Thiếu hoặc sai session token
+
+  /api/notifications/read-all:
+    patch:
+      summary: Đánh dấu tất cả thông báo đã đọc
+      description: Cập nhật isRead=true cho toàn bộ thông báo chưa đọc của user.
+      tags: [Notifications]
+      security:
+        - SessionToken: []
+      responses:
+        '200':
+          description: Số thông báo được cập nhật
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updatedCount: { type: integer }
+              example: { updatedCount: 5 }
+        '401':
+          description: Thiếu hoặc sai session token
+
+  /api/notifications/{id}/read:
+    patch:
+      summary: Đánh dấu 1 thông báo đã đọc
+      tags: [Notifications]
+      security:
+        - SessionToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+          description: ID của thông báo
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+        '401':
+          description: Thiếu hoặc sai session token
+        '403':
+          description: Thông báo không thuộc về user hiện tại (NOTIFICATION_NOT_OWNED)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Không tìm thấy thông báo với id (NOTIFICATION_NOT_FOUND)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
 components:
   securitySchemes:
     SessionToken:
@@ -2054,6 +2177,32 @@ components:
           type: integer
           description: Điểm tích lũy hiện tại
 
+    NotificationItem:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        type:
+          type: string
+          enum: [STREAK_MILESTONE, RANK_UP, RANK_DOWN, REPORT_RESOLVED, NEW_EXAM_PAPER]
+        title:        { type: string, description: Tiêu đề ngắn hiện trong bell panel và toast }
+        body:         { type: string, description: Nội dung đầy đủ }
+        isRead:       { type: boolean }
+        targetScreen:
+          type: string
+          nullable: true
+          enum: [progress, leaderboard, exam, null]
+          description: Màn hình đích khi user tap vào thông báo
+        metadata:
+          type: object
+          nullable: true
+          description: |
+            Dữ liệu chi tiết theo từng loại:
+            - STREAK_MILESTONE: { streakDays: number }
+            - RANK_UP/RANK_DOWN: { rankBefore: number, rankAfter: number, subject: string }
+            - REPORT_RESOLVED: { reportId: string, status: string, questionPreview: string }
+            - NEW_EXAM_PAPER: { subject: string, examPaperTitle: string }
+        createdAt:    { type: string, format: date-time }
+
 # ─────────────────────── Question Bank paths ─────────────────────────
   /api/admin/question-bank:
     get:
@@ -2691,3 +2840,4 @@ components:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+
