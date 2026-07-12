@@ -27,14 +27,23 @@ case "$SESSION" in
     ;;
 esac
 
-CMD="cd \"$PROJECT_DIR\" && ./workflow/start.sh $SESSION"
+# Ghi lệnh ra file tạm để tránh lỗi escape trong osascript
+# (cần đủ 6 ký tự X trở lên để mktemp random hoá đúng trên macOS/BSD,
+#  nếu không sẽ tạo file tên cố định và va chạm "File exists" ở lần chạy sau)
+TMPSCRIPT=$(mktemp /tmp/claude_session_XXXXXX.sh) || { echo "❌ mktemp thất bại"; exit 1; }
+cat > "$TMPSCRIPT" << EOF
+#!/bin/bash
+cd '$PROJECT_DIR'
+exec ./workflow/start.sh $SESSION
+EOF
+chmod +x "$TMPSCRIPT"
 
 # Thử mở tab mới trong Terminal.app (macOS)
 if [[ "$OSTYPE" == "darwin"* ]]; then
   osascript \
     -e 'tell application "Terminal"' \
     -e '  activate' \
-    -e "  do script \"$CMD\"" \
+    -e "  do script \"$TMPSCRIPT\"" \
     -e 'end tell'
   echo "✅ Đã mở tab mới cho $LABEL"
 else

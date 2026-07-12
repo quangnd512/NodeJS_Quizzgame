@@ -1150,3 +1150,149 @@ Không có đường về từ COMPLETED/EXPIRED/ABANDONED.
 - `COMPLETED`: +điểm thưởng nếu đủ điều kiện
 - `EXPIRED`: mất 60đ vào thi, không hoàn
 - `ABANDONED`: mất 60đ vào thi, không hoàn
+
+---
+
+## Thuật ngữ Feature 013 — Notifications
+
+### Fire-and-Forget Pattern (Gọi-và-bỏ-qua)
+
+**Định nghĩa**: Gọi một hàm async mà không `await` kết quả — để hàm đó chạy song song mà không block luồng chính.
+
+**Cú pháp trong QuizzGame**:
+```typescript
+void notificationService.createNotification({ ... }); // không await
+```
+
+**Khi nào dùng**: Khi action phụ (như gửi thông báo) không được làm hỏng hoặc làm chậm action chính (nộp bài, hoàn thành luyện tập).
+
+**Rủi ro cần quản lý**: Lỗi trong fire-and-forget không được propagate tự động → phải wrap trong `try/catch` bên trong hàm được gọi.
+
+---
+
+### Streak Milestone (Mốc chuỗi ngày)
+
+**Định nghĩa**: Các mốc số ngày học liên tiếp đặc biệt tại đó hệ thống gửi thông báo khích lệ.
+
+**Giá trị trong QuizzGame**: `[7, 14, 30, 60, 100]` ngày
+
+**Cơ chế dedup**: Chỉ gửi thông báo khi đây là phiên học đầu tiên trong ngày VÀ streak đúng bằng mốc. Tránh gửi nhiều thông báo nếu user học nhiều phiên trong ngày milestone.
+
+---
+
+### Polling Badge (Vòng lặp kiểm tra huy hiệu)
+
+**Định nghĩa**: Kỹ thuật frontend tự động gọi API theo chu kỳ cố định để kiểm tra trạng thái mới mà không cần WebSocket.
+
+**Triển khai trong QuizzGame**: `setInterval` gọi `GET /api/notifications/unread-count` mỗi **30 giây** khi user đã đăng nhập.
+
+**Ưu điểm**: Đơn giản, không cần cơ sở hạ tầng bổ sung.
+**Nhược điểm**: Có độ trễ tối đa 30 giây; tạo load nhẹ liên tục lên server.
+
+---
+
+### Prisma.JsonNull (Null JSON trong Prisma)
+
+**Định nghĩa**: Giá trị đặc biệt của Prisma Client dùng để đặt một trường `Json?` thành `null` trong DB — phân biệt với `undefined` (không truyền field).
+
+**Lý do cần**: TypeScript `null` không gán được cho kiểu `InputJsonValue | NullableJsonNullValueInput` của Prisma.
+
+**Cách dùng**:
+```typescript
+await prisma.notification.create({
+  data: {
+    metadata: metadata != null
+      ? (metadata as unknown as Prisma.InputJsonValue)
+      : Prisma.JsonNull,  // ← phải dùng Prisma.JsonNull, không phải null
+  }
+});
+```
+
+---
+
+### Sentinel Value (Giá trị lính canh)
+
+**Định nghĩa**: Giá trị đặc biệt được chọn để biểu thị trạng thái "chưa khởi tạo" hoặc "ngoài phạm vi bình thường" — phân biệt với giá trị hợp lệ.
+
+**Ví dụ trong QuizzGame (Feature 013)**:
+- `prevUnreadRef.current = -1` → "chưa poll lần nào" (sentinel); `0` là giá trị hợp lệ khi user không có thông báo
+- Tránh hiện toast ngay khi mở app dù đã có thông báo cũ
+
+**Ví dụ trước đó (Feature 6)**: `selectedAnswer = {}` → câu chưa trả lời
+
+---
+
+### Express Route Ordering (Thứ tự đăng ký route)
+
+**Định nghĩa**: Express khớp route theo đúng thứ tự đăng ký trong code — route nào khớp trước (kể cả khớp "nhầm") sẽ được dùng trước, framework không tự sắp xếp lại theo độ cụ thể.
+
+**Quy tắc**: Route tĩnh (literal string, VD `/unread-count`) phải đăng ký TRƯỚC route có tham số (VD `/:id/read`). Nếu ngược lại, `:id` sẽ "nuốt" luôn chuỗi `"unread-count"` làm giá trị tham số.
+
+**Trong dự án này** (`backend/src/routes/notification.route.ts`):
+```
+router.get('/unread-count', ...)   // literal — đăng ký TRƯỚC
+router.patch('/read-all', ...)     // literal — đăng ký TRƯỚC
+router.get('/', ...)
+router.patch('/:id/read', ...)     // có tham số — đăng ký SAU CÙNG
+```
+
+**Vì sao nguy hiểm**: Không có lỗi biên dịch, server vẫn chạy bình thường — chỉ trả sai kết quả (404/lỗi logic) khi gọi đúng endpoint bị che khuất. Chỉ phát hiện được qua test thủ công đúng route đó.
+
+---
+
+### skipDuplicates (Bỏ qua bản ghi trùng khi batch insert)
+
+**Định nghĩa**: Tùy chọn của Prisma `createMany({ skipDuplicates: true })` — khi insert hàng loạt, nếu 1 bản ghi vi phạm unique constraint thì bỏ qua bản ghi đó thay vì ném lỗi làm hỏng cả batch.
+
+**Trong dự án này**: `fireNewExamPaperNotifications` dùng `createMany` để gửi thông báo NEW_EXAM_PAPER cho hàng trăm user cùng lúc (1 round-trip DB thay vì N lần INSERT tuần tự). `skipDuplicates` là lớp phòng thủ thứ 2 — phòng trường hợp hàm bị gọi trùng gần như đồng thời (VD: race giữa 2 request admin) dù `new Set()` đã khử trùng lặp trong 1 lần chạy.
+
+**Bài học đi kèm**: for-loop `await` tuần tự cho batch insert là anti-pattern phổ biến — luôn cân nhắc `createMany`/`bulk insert` khi cần tạo nhiều bản ghi cùng loại.
+
+---
+
+### Streak "Còn sống" đến hết ngày (Grace Period 1 ngày)
+
+**Định nghĩa**: Quy tắc `computeStreaks()` chấp nhận cả "hôm nay" LẪN "hôm qua" làm điểm bắt đầu hợp lệ của chuỗi hiện tại — không chỉ riêng "hôm nay".
+
+**Vì sao cần**: Nếu chỉ chấp nhận "hôm nay", streak sẽ hiển thị `0` ngay từ 00:00 dù user còn nguyên cả ngày để giữ chuỗi (họ có thể học lúc 23h). Chấp nhận thêm "hôm qua" nghĩa là streak chỉ thật sự "đứt" khi user bỏ lỡ TRỌN VẸN 1 ngày, không phải ngay khi đồng hồ sang ngày mới.
+
+**Cách tính** (`backend/src/utils/streak.utils.ts`):
+```
+uniqueDays[0] === today     → bắt đầu đếm streak
+uniqueDays[0] === yesterday → vẫn bắt đầu đếm streak (grace period)
+uniqueDays[0] < yesterday   → currentStreak = 0 (đã đứt)
+```
+
+---
+
+### Toast ID Guard (Chống toast cũ tắt nhầm toast mới)
+
+**Định nghĩa**: Kỹ thuật so sánh `id` bên trong callback `setTimeout` trước khi tắt toast, thay vì tắt thẳng — tránh race condition khi 2 thông báo đến gần nhau.
+
+**Bug đã xảy ra** (phát hiện bởi S5 khi test thủ công): thông báo A hiện toast, hẹn giờ tắt sau 7 giây. Trước khi hết 7 giây, thông báo B đến → toast đổi sang hiện B. Nhưng timeout của A vẫn đang chờ chạy — khi nó chạy, nó gọi `setToast(null)` và tắt nhầm toast B dù B chưa đủ 7 giây.
+
+**Cách sửa** (`frontend/src/App.tsx`):
+```ts
+setTimeout(() => {
+  // Chỉ tắt nếu toast đang hiển thị BÂY GIỜ đúng là toast mà timeout này thuộc về
+  setToast((current) => (current?.id === newest.id ? null : current));
+}, 7000);
+```
+
+**Giới hạn cần nhớ**: cách sửa này chỉ đúng vì tại mọi thời điểm chỉ có DUY NHẤT 1 toast hiển thị. Nếu sau này thêm toast queue (hiện nhiều toast cùng lúc), logic so sánh id đơn giản này cần viết lại.
+
+---
+
+### Poll-on-focus (Poll ngay khi tab được focus lại)
+
+**Định nghĩa**: Lắng nghe sự kiện `visibilitychange` của DOM để gọi lại API polling ngay khi user quay lại tab, thay vì đợi hết chu kỳ `setInterval`.
+
+**Vì sao cần**: Trình duyệt thường throttle/tạm dừng `setInterval` ở tab chạy nền để tiết kiệm pin/CPU. Nếu user rời tab QuizzGame lâu (VD: xem terminal) rồi quay lại, có thể phải đợi thêm nhiều giây mới thấy badge/toast cập nhật — cảm giác như phải reload trang mới thấy thông báo mới.
+
+**Trong dự án này** (`frontend/src/App.tsx`, thêm sau khi S5 test thủ công và người dùng yêu cầu):
+```ts
+const handleVisibilityChange = () => {
+  if (document.visibilityState === 'visible') void poll();
+};
+document.addEventListener('visibilitychange', handleVisibilityChange);
+```

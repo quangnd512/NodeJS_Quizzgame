@@ -5,6 +5,35 @@
 
 ---
 
+## [Unreleased] — Notifications — Thông báo hệ thống (Feature 013)
+
+**Branch:** `feature/notifications`
+**Ngày:** 2026-07-09
+
+### Added
+
+- **Bảng DB `notifications`** với enum `NotificationType` (5 loại: STREAK_MILESTONE, RANK_UP, RANK_DOWN, REPORT_RESOLVED, NEW_EXAM_PAPER)
+- **`NotificationService`** — 5 methods: createNotification, getNotifications, getUnreadCount, markAsRead, markAllAsRead
+- **4 API endpoints**: `GET /api/notifications`, `GET /api/notifications/unread-count`, `PATCH /api/notifications/:id/read`, `PATCH /api/notifications/read-all`
+- **Streak milestone trigger** trong `practice.completeSession()` — notify khi đạt [7, 14, 30, 60, 100] ngày liên tiếp (chỉ lần đầu trong ngày)
+- **Rank change trigger** trong `exam.submitExam()` — query rank trước và sau khi nộp bài, notify nếu hạng thay đổi
+- **Report resolved trigger** trong `practice.updateReport()` — notify khi admin chuyển trạng thái từ PENDING
+- **New exam paper trigger** trong `exam.updateExamPaper()` — batch notify tất cả user học môn đó khi đề thi được bật active
+- **Bell icon 🔔** trong ProfilePage header với badge đỏ hiện số thông báo chưa đọc
+- **NotificationPanel** (drawer slide-in) với chức năng đánh dấu đọc từng/tất cả thông báo, và điều hướng sang màn hình tương ứng theo `targetScreen` (progress/leaderboard/exam) khi bấm vào một thông báo
+- **NotificationToast** — toast pop-up 7 giây khi có thông báo mới
+- **Polling 30 giây** trong App component — gọi `/unread-count`, cập nhật badge và trigger toast
+- **`src/utils/streak.utils.ts`** — tách `computeStreaks()` và `STREAK_MILESTONES` ra shared utility (tránh circular dependency)
+- **`leaderboardService.getUserCurrentRank()`** — slim query chỉ lấy hạng hiện tại (không kèm trend)
+
+### Changed
+
+- `progress.service.ts` — import `computeStreaks` từ utils thay vì define lại cùng logic
+- `exam.service.ts` — thêm rank-before query trước vòng retry transaction
+- `practice.service.ts` — `updateReport()` thêm pre-query để lấy userId và status trước khi update
+
+---
+
 ## [Unreleased] — Anti-Cheat Security Fixes (Feature 011)
 
 **Branch:** `feature/anti-cheat-fixes`

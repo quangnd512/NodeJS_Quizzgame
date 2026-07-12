@@ -27,6 +27,8 @@ import {
   ExamSubmitTooEarlyError,
 } from './exam.errors.js';
 import { wrongAnswerService } from '../wrongAnswer/wrongAnswer.service.js';
+import { notificationService } from '../notification/notification.service.js';
+import { leaderboardService } from '../leaderboard/leaderboard.service.js';
 import {
   EXAM_ENTRY_FEE,
   EXAM_GRACE_SECONDS,
@@ -416,6 +418,11 @@ export class ExamService {
       where: { examPaperId, isActive: true },
     });
 
+    // Fire-and-forget: thông báo đề thi mới khi admin bật active lần đầu
+    if (input.isActive === true && !existing.isActive) {
+      void this.fireNewExamPaperNotifications(paper.subject, paper.title);
+    }
+
     return {
       id: paper.id,
       subject: paper.subject,
@@ -425,6 +432,57 @@ export class ExamService {
       questionCount,
       createdAt: paper.createdAt,
     };
+  }
+
+  /**
+   * [Fire-and-forget] Gửi thông báo NEW_EXAM_PAPER cho tất cả user
+   * đã từng ôn tập hoặc thi thử môn đó.
+   */
+  private async fireNewExamPaperNotifications(
+    subject: string,
+    examPaperTitle: string,
+  ): Promise<void> {
+    try {
+      // Lấy danh sách userId duy nhất đã học môn này (practice hoặc exam session)
+      const [practiceUsers, examUsers] = await Promise.all([
+        prisma.practiceSession.findMany({
+          where: { subjectId: subject, completedAt: { not: null } },
+          select: { userId: true },
+          distinct: ['userId'],
+        }),
+        prisma.examSession.findMany({
+          where: { subjectId: subject },
+          select: { userId: true },
+          distinct: ['userId'],
+        }),
+      ]);
+
+      const userIds = [
+        ...new Set([
+          ...practiceUsers.map((u) => u.userId),
+          ...examUsers.map((u) => u.userId),
+        ]),
+      ];
+
+      if (userIds.length === 0) return;
+
+      // Dùng createMany để batch insert 1 lần thay vì N lần INSERT riêng lẻ
+      const metadata: Prisma.InputJsonValue = { subject, examPaperTitle };
+      await prisma.notification.createMany({
+        data: userIds.map((uid) => ({
+          userId: uid,
+          type: 'NEW_EXAM_PAPER' as const,
+          title: '📝 Đề thi mới đã được thêm!',
+          body: `Đề "${examPaperTitle}" vừa được mở. Vào thi thử ngay nhé!`,
+          isRead: false,
+          targetScreen: 'exam',
+          metadata,
+        })),
+        skipDuplicates: true,
+      });
+    } catch (err) {
+      console.error('[ExamService] fireNewExamPaperNotifications error:', err);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -712,6 +770,9 @@ export class ExamService {
 
     const answerMap = new Map(answers.map((a) => [a.examQuestionId, a.selectedAnswer]));
 
+    // Query rank TRƯỚC khi nộp bài — dùng để phát hiện thay đổi hạng sau khi submit
+    const rankBefore = await leaderboardService.getUserCurrentRank(userId, session.subjectId).catch(() => null);
+
     // ID các câu sai — được set sau khi transaction commit thành công để upsert
     // không bị gọi nhiều lần khi transaction retry do optimistic lock conflict.
     let committedWrongIds: string[] = [];
@@ -807,6 +868,9 @@ export class ExamService {
           );
         }
 
+        // Fire-and-forget: phát hiện thay đổi hạng sau khi nộp bài
+        void this.checkAndFireRankChangeNotification(userId, session.subjectId, rankBefore);
+
         return { sessionId: txResult.sessionId, score: txResult.score, pointsAwarded: txResult.pointsAwarded };
       } catch (err) {
         if (err instanceof OptimisticLockRetryableError) {
@@ -819,6 +883,44 @@ export class ExamService {
     }
 
     throw new OptimisticLockError(userId, MAX_EXAM_RETRY);
+  }
+
+  /**
+   * [Fire-and-forget] Kiểm tra thay đổi hạng sau khi nộp bài.
+   * Query rank AFTER submit, so sánh với rankBefore — notify nếu khác.
+   */
+  private async checkAndFireRankChangeNotification(
+    userId: string,
+    subjectId: string,
+    rankBefore: number | null,
+  ): Promise<void> {
+    try {
+      const rankAfter = await leaderboardService.getUserCurrentRank(userId, subjectId);
+      if (rankAfter === null) return; // Chưa đủ dữ liệu để xếp hạng
+
+      const changed =
+        rankBefore === null // Vừa vào bảng xếp hạng lần đầu
+          ? false           // Không cần notify vì chưa có hạng trước
+          : rankAfter !== rankBefore;
+
+      if (!changed) return;
+
+      const isUp = rankBefore !== null && rankAfter < rankBefore;
+      void notificationService.createNotification({
+        userId,
+        type: isUp ? 'RANK_UP' : 'RANK_DOWN',
+        title: isUp
+          ? `🏆 Bạn lên hạng ${rankAfter}!`
+          : `📉 Bạn xuống hạng ${rankAfter}`,
+        body: isUp
+          ? `Từ hạng ${rankBefore} → hạng ${rankAfter}. Tuyệt vời, hãy giữ vững!`
+          : `Từ hạng ${rankBefore} → hạng ${rankAfter}. Cố gắng ôn luyện để lấy lại nhé!`,
+        targetScreen: 'leaderboard',
+        metadata: { rankBefore: rankBefore!, rankAfter, subject: subjectId },
+      });
+    } catch (err) {
+      console.error('[ExamService] checkAndFireRankChangeNotification error:', err);
+    }
   }
 
   /**

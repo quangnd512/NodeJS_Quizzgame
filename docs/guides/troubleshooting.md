@@ -140,3 +140,65 @@ redis-cli del "ratelimit:practice:<user_id>"
 - Đây là giới hạn đã biết của tính năng (draft lưu client-side).
 - Học sinh cần chọn lại đáp án. Đồng hồ vẫn chạy đúng — chỉ đáp án nháp bị mất.
 - Để tránh: không xóa cache trình duyệt trong khi đang có bài thi dở.
+
+---
+
+## Lỗi liên quan đến tính năng Notifications — Thông báo hệ thống (Feature 013)
+
+### 10. Badge chuông không cập nhật số thông báo mới
+
+**Triệu chứng**: Có sự kiện mới (lên hạng, streak milestone...) nhưng số đỏ trên icon chuông 🔔 không đổi.
+
+**Nguyên nhân**: Frontend polling `GET /api/notifications/unread-count` mỗi 30 giây — có độ trễ tối đa 30s theo thiết kế (xem `FEATURE_LOG.md` mục "Polling 30 giây thay vì WebSocket").
+
+**Giải pháp**:
+- Đợi tối đa 30 giây rồi kiểm tra lại.
+- Nếu quá 1 phút vẫn không cập nhật: kiểm tra tab trình duyệt có đang ở background/inactive không (một số trình duyệt throttle `setInterval` khi tab không active).
+- Reload trang để buộc gọi lại API ngay lập tức.
+
+### 11. Không nhận thông báo Streak Milestone dù đã đủ 7 ngày liên tiếp
+
+**Triệu chứng**: Học sinh chắc chắn đã học 7 ngày liên tiếp nhưng không thấy thông báo 🔥.
+
+**Nguyên nhân phổ biến nhất**: Đây không phải phiên ôn tập **đầu tiên** hoàn thành trong ngày — cơ chế dedup chỉ gửi thông báo khi `count sessions hôm nay === 1`. Nếu học sinh học nhiều phiên rồi mới đạt mốc, notification không bắn (đã bắn ở phiên đầu ngày với streak cũ hơn, chưa chạm mốc).
+
+**Giải pháp**:
+- Kiểm tra DB xem streak thực tế đã đúng mốc `[7,14,30,60,100]` chưa:
+```sql
+SELECT "completedAt" FROM practice_sessions
+WHERE "userId" = '<userId>' AND "completedAt" IS NOT NULL
+ORDER BY "completedAt" DESC LIMIT 30;
+```
+- Đây là hành vi *đúng theo thiết kế* — không phải bug. Giải thích cho học sinh: mốc chỉ thông báo 1 lần/ngày, vào phiên đầu tiên đạt mốc.
+
+### 12. Toast thông báo hiện lại ngay khi vừa mở app (spam)
+
+**Triệu chứng**: Mở lại app sau một thời gian, toast thông báo cũ hiện lên ngay lập tức dù đã đọc từ trước.
+
+**Nguyên nhân**: Đây là bug đã được S3 sửa trong review (dùng sentinel `prevUnreadRef.current = -1` thay vì `0`). Nếu vẫn gặp, có thể do build cũ chưa deploy fix.
+
+**Giải pháp**:
+- Xác nhận đang chạy code từ commit `41a1ef5` trở về sau (branch `feature/notifications`).
+- Nếu vẫn lỗi sau khi deploy đúng bản: kiểm tra `frontend/src/App.tsx` xem `prevUnreadRef` có khởi tạo đúng `-1` không.
+
+### 13. Bấm PATCH đánh dấu đã đọc trả về 404
+
+**Triệu chứng**: Gọi `PATCH /api/notifications/:id/read` hoặc thao tác trên panel báo lỗi, notification không được đánh dấu đã đọc.
+
+**Nguyên nhân**: Nhiều khả năng nhất là **route ordering** — nếu code bị sửa lại và `/:id/read` được đăng ký TRƯỚC `/unread-count` hoặc `/read-all`, Express sẽ match nhầm các path tĩnh này vào `:id`. Khả năng khác: `id` không thuộc về user hiện tại (`403 NOTIFICATION_NOT_OWNED`) hoặc notification không tồn tại (`404 NOTIFICATION_NOT_FOUND`).
+
+**Giải pháp**:
+- Kiểm tra thứ tự khai báo route trong `backend/src/routes/notification.route.ts`: `/unread-count` và `/read-all` phải đứng TRƯỚC `/:id/read`.
+- Xác nhận `id` truyền vào đúng là UUID của notification, không phải chuỗi khác.
+- Xem response body để phân biệt 404 (không tồn tại) và 403 (không phải chủ sở hữu).
+
+### 14. Học sinh không nhận thông báo "Đề thi mới" dù admin đã bật active
+
+**Triệu chứng**: Admin bật `isActive` cho đề thi nhưng học sinh trong môn đó không thấy thông báo 📝.
+
+**Nguyên nhân**: Batch trigger `fireNewExamPaperNotifications` chỉ chạy khi `isActive` chuyển từ `false → true`. Nếu đề thi tạo mới đã `isActive: true` ngay từ đầu, hoặc chuyển `true → true`, trigger không chạy. Ngoài ra, chỉ học sinh **đã từng có session (luyện tập hoặc thi thử) ở môn đó** mới nhận được — học sinh chưa từng học môn này sẽ không nằm trong danh sách nhận.
+
+**Giải pháp**:
+- Xem mục 13.3 trong `admin-guide.md` để kiểm tra điều kiện trigger.
+- Xác nhận học sinh đã từng luyện tập/thi môn đó ít nhất 1 lần trước khi đề mới được bật.
+- Không có cách gửi lại thủ công — nếu cần, admin tắt rồi bật lại `isActive` để trigger chạy lại (sẽ gửi lại cho TẤT CẢ user đủ điều kiện, không chỉ user mới).

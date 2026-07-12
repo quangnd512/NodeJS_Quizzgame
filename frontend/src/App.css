@@ -1822,3 +1822,243 @@ body {
   opacity: .5;
   cursor: not-allowed;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Notifications — Bell icon + badge, Toast, Panel
+───────────────────────────────────────────────────────────────────────────── */
+
+/* Header actions wrapper (bell + logout) */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  margin-left: auto;
+}
+
+/* Bell button — relative để badge có thể absolute */
+.btn-icon-bell {
+  position: relative;
+}
+
+/* Badge đỏ trên chuông */
+.bell-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: #e53e3e;
+  color: #fff;
+  font-size: .6rem;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+/* Toast thông báo (góc trên bên phải) */
+.notif-toast {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  left: 1rem;
+  max-width: 360px;
+  margin: 0 auto;
+  background: #1e293b;
+  color: #f8fafc;
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 4px 20px rgba(0,0,0,.35);
+  padding: .875rem 1rem;
+  display: flex;
+  align-items: flex-start;
+  gap: .75rem;
+  z-index: 2000;
+  cursor: pointer;
+  animation: toast-in .25s ease;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.notif-toast-content { flex: 1; }
+.notif-toast-title {
+  font-weight: 700;
+  font-size: .9rem;
+  margin: 0 0 .2rem;
+}
+.notif-toast-body {
+  font-size: .8rem;
+  margin: 0;
+  opacity: .85;
+}
+
+/* Overlay + Panel */
+.notif-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+  z-index: 1500;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.notif-panel {
+  background: var(--bg-card, #fff);
+  max-height: 80dvh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 0 0 var(--radius-lg, 12px) var(--radius-lg, 12px);
+  box-shadow: 0 8px 30px rgba(0,0,0,.25);
+  overflow: hidden;
+  animation: panel-slide .2s ease;
+}
+
+@keyframes panel-slide {
+  from { transform: translateY(-100%); }
+  to   { transform: translateY(0); }
+}
+
+.notif-panel-header {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  padding: 1rem 1rem .75rem;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  background: linear-gradient(160deg, var(--indigo-600) 0%, var(--indigo-700) 100%);
+  color: #fff;
+}
+
+.notif-panel-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+}
+
+.notif-panel-badge {
+  background: #e53e3e;
+  color: #fff;
+  font-size: .7rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.notif-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+
+.notif-panel-body {
+  overflow-y: auto;
+  flex: 1;
+}
+
+.notif-empty {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--text-muted, #64748b);
+  font-size: .9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+}
+
+/* Mỗi item thông báo */
+.notif-item {
+  display: flex;
+  align-items: flex-start;
+  gap: .75rem;
+  padding: .875rem 1rem;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  cursor: pointer;
+  transition: background .12s;
+}
+
+.notif-item:hover { background: var(--bg-hover, #f8fafc); }
+
+.notif-item--unread {
+  background: #eff6ff;
+}
+.notif-item--unread:hover { background: #dbeafe; }
+
+.notif-item-content { flex: 1; }
+
+.notif-item-title {
+  font-weight: 600;
+  font-size: .875rem;
+  margin: 0 0 .2rem;
+  color: var(--text-primary, #1e293b);
+}
+
+.notif-item-body {
+  font-size: .8rem;
+  margin: 0 0 .3rem;
+  color: var(--text-secondary, #475569);
+}
+
+.notif-item-time {
+  font-size: .7rem;
+  margin: 0;
+  color: var(--text-muted, #94a3b8);
+}
+
+/* Chấm tròn xanh — chưa đọc */
+.notif-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--indigo-500, #6366f1);
+  flex-shrink: 0;
+  margin-top: .35rem;
+}
+
+/* ─── Nhấn màu riêng theo từng loại thông báo ─────────────────────────── */
+/* RANK_UP nổi bật nhất (theo yêu cầu) — nền vàng gold + viền phát sáng + rung nhẹ khi vừa hiện */
+.notif-toast.notif-type-rank-up {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  color: #1e1305;
+  box-shadow: 0 4px 24px rgba(245, 158, 11, .55);
+  border: 1px solid #fcd34d;
+  animation: toast-in .25s ease, notif-glow-pulse 1.4s ease-in-out 2;
+}
+.notif-toast.notif-type-rank-up .notif-toast-title { color: #1e1305; }
+.notif-toast.notif-type-rank-up .notif-toast-body  { color: #422e05; opacity: .9; }
+
+@keyframes notif-glow-pulse {
+  0%, 100% { box-shadow: 0 4px 24px rgba(245, 158, 11, .55); }
+  50%      { box-shadow: 0 4px 32px rgba(245, 158, 11, .95); }
+}
+
+.notif-toast.notif-type-rank-down    { border-left: 4px solid #94a3b8; }
+.notif-toast.notif-type-streak       { border-left: 4px solid #f97316; }
+.notif-toast.notif-type-report       { border-left: 4px solid #22c55e; }
+.notif-toast.notif-type-exam         { border-left: 4px solid #3b82f6; }
+
+/* Panel: viền trái theo loại + RANK_UP có nền vàng nhạt để nổi bật kể cả đã đọc */
+.notif-item.notif-type-rank-up {
+  border-left: 4px solid #f59e0b;
+  background: #fffbeb;
+}
+.notif-item.notif-type-rank-up:hover { background: #fef3c7; }
+.notif-item.notif-type-rank-up.notif-item--unread {
+  background: #fef3c7;
+}
+.notif-item.notif-type-rank-up.notif-item--unread:hover { background: #fde68a; }
+.notif-item.notif-type-rank-up .notif-item-title { color: #92400e; }
+
+.notif-item.notif-type-rank-down { border-left: 4px solid #94a3b8; }
+.notif-item.notif-type-streak    { border-left: 4px solid #f97316; }
+.notif-item.notif-type-report    { border-left: 4px solid #22c55e; }
+.notif-item.notif-type-exam      { border-left: 4px solid #3b82f6; }

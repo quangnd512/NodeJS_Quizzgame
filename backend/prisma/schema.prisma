@@ -76,7 +76,8 @@ model User {
   /// STUDENT: hoc sinh binh thuong. ADMIN: co quyen quan tri he thong.
   role        String   @default("STUDENT")
 
-  wrongAnswers WrongAnswer[]
+  wrongAnswers  WrongAnswer[]
+  notifications Notification[]
 
   /// Index ho tro filter nhanh theo trang thai khoa va vai tro trong admin panel.
   @@index([isBlocked])
@@ -509,4 +510,58 @@ model WrongAnswer {
   /// Toc do query chinh: lay cau sai chua het han cua 1 user (WHERE userId=? AND expiresAt>NOW()).
   @@index([userId, expiresAt])
   @@map("wrong_answers")
+}
+
+// ============================================================================
+// MODULE THONG BAO (Notifications)
+// ============================================================================
+
+/// Loai thong bao — xac dinh nguon tao va muc tieu dieu huong.
+enum NotificationType {
+  /// Dat moc streak hoc lien tuc (7/14/30/60/100 ngay).
+  STREAK_MILESTONE
+  /// Thu hang leaderboard tang sau khi nop bai thi.
+  RANK_UP
+  /// Thu hang leaderboard giam sau khi nop bai thi.
+  RANK_DOWN
+  /// Admin da xu ly bao cao cau hoi cua hoc sinh (duyet hoac tu choi).
+  REPORT_RESOLVED
+  /// De thi moi duoc kich hoat (active) cho mon hoc ma hoc sinh da tung thi.
+  NEW_EXAM_PAPER
+}
+
+/// Bang luu thong bao cho tung nguoi dung.
+/// Moi su kien quan trong (streak, hang, bao cao, de moi) tao 1 ban ghi o day.
+/// Frontend polling moi 30s de lay so luong chua doc va hien toast/badge.
+model Notification {
+  id           String           @id @default(uuid())
+
+  /// ID nguoi dung nhan thong bao.
+  userId       String
+
+  /// Loai thong bao — xac dinh icon, mau sac va muc tieu dieu huong.
+  type         NotificationType
+
+  /// Tieu de ngan (hien tren badge/toast).
+  title        String
+
+  /// Noi dung day du cua thong bao.
+  body         String
+
+  /// Da doc chua — false khi moi tao, true khi user bam doc.
+  isRead       Boolean          @default(false)
+
+  /// Man hinh dich khi bam vao thong bao: "progress" | "leaderboard" | "exam" | null.
+  targetScreen String?
+
+  /// Du lieu bo sung dang JSON (streakDays, rankBefore/After, subjectName...).
+  metadata     Json?
+
+  createdAt    DateTime         @default(now())
+
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Query chinh: danh sach thong bao cua user theo thu tu moi nhat, loc chua doc.
+  @@index([userId, isRead, createdAt])
+  @@map("notifications")
 }

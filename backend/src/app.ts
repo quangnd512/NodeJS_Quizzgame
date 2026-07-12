@@ -14,6 +14,7 @@ import { leaderboardRouter } from './routes/leaderboard.route.js';
 import { progressRouter } from './routes/progress.route.js';
 import { wrongAnswerRouter } from './routes/wrongAnswer.route.js';
 import { adminUsersRouter } from './routes/admin-users.route.js';
+import { notificationRouter } from './routes/notification.route.js';
 import type { ZodIssue } from 'zod';
 
 /**
@@ -87,6 +88,9 @@ const ERROR_CODE_TO_HTTP_STATUS: Readonly<Record<string, number>> = {
   EXAM_SESSION_ABANDONED: 409,
   // Ôn câu sai
   WRONG_ANSWER_NOT_FOUND: 404,
+  // Notifications
+  NOTIFICATION_NOT_FOUND: 404,
+  NOTIFICATION_NOT_OWNED: 403,
 };
 
 /** Kiem tra 1 gia tri loi co phai la "custom error" co truong `code` (string) hay khong. */
@@ -136,6 +140,7 @@ export function createApp(): Application {
   app.use('/api/progress', progressRouter);
   app.use('/api/wrong-answers', wrongAnswerRouter);
   app.use('/api/admin', adminUsersRouter);
+  app.use('/api/notifications', notificationRouter);
 
   // Route kiem tra suc khoe server
   app.get('/api/health', (_req: Request, res: Response) => {

@@ -1,0 +1,86 @@
+# API Draft: Notifications — Thông báo hệ thống
+# Feature 013 | Branch: feature/notifications
+
+endpoints:
+
+  - method: GET
+    path: /api/notifications
+    auth: required (Bearer token)
+    description: Danh sách thông báo của user hiện tại, mới nhất trước
+    query:
+      page: number (default 1)
+      limit: number (default 20, max 50)
+    response_200:
+      notifications:
+        - id: string (UUID)
+          type: STREAK_MILESTONE | RANK_UP | RANK_DOWN | REPORT_RESOLVED | NEW_EXAM_PAPER
+          title: string
+          body: string
+          isRead: boolean
+          targetScreen: progress | leaderboard | exam | null
+          metadata: object (streakDays? | rankBefore? rankAfter? | subjectName? | examPaperTitle?)
+          createdAt: string (ISO 8601)
+      total: number
+      unreadCount: number
+    errors: [401]
+
+  - method: GET
+    path: /api/notifications/unread-count
+    auth: required (Bearer token)
+    description: Đếm số thông báo chưa đọc (dùng cho badge chuông)
+    response_200:
+      count: number
+    errors: [401]
+
+  - method: PATCH
+    path: /api/notifications/:id/read
+    auth: required (Bearer token)
+    description: Đánh dấu 1 thông báo đã đọc
+    response_200:
+      ok: true
+    errors: [401, 403, 404]
+
+  - method: PATCH
+    path: /api/notifications/read-all
+    auth: required (Bearer token)
+    description: Đánh dấu tất cả thông báo của user là đã đọc
+    response_200:
+      updatedCount: number
+    errors: [401]
+
+notification_types:
+  STREAK_MILESTONE:
+    trigger: Hoàn thành phiên luyện tập hoặc thi thử — streak chạm mốc 7/14/30/60/100 ngày
+    title: "🔥 Streak {N} ngày!"
+    body: "Bạn đã học liên tiếp {N} ngày. Giữ vững nhé!"
+    targetScreen: progress
+    metadata: { streakDays: number }
+
+  RANK_UP:
+    trigger: Sau khi nộp bài thi — thứ hạng leaderboard tăng
+    title: "🏆 Lên hạng!"
+    body: "Bạn vừa lên hạng #{rankAfter} (trước: #{rankBefore})"
+    targetScreen: leaderboard
+    metadata: { rankBefore: number, rankAfter: number, subject: string | null }
+
+  RANK_DOWN:
+    trigger: Sau khi nộp bài thi — thứ hạng leaderboard giảm
+    title: "📉 Tụt hạng"
+    body: "Bạn xuống hạng #{rankAfter} (trước: #{rankBefore}). Cố lên!"
+    targetScreen: leaderboard
+    metadata: { rankBefore: number, rankAfter: number, subject: string | null }
+
+  REPORT_RESOLVED:
+    trigger: Admin thay đổi status báo cáo từ PENDING sang status khác (REVIEWED/FIXED/DISMISSED)
+    title: "✅ Báo cáo của bạn đã được xử lý" | "❌ Báo cáo của bạn bị từ chối"
+    body: "Cảm ơn bạn! Báo cáo về '{questionPreview}' đã được duyệt." | "Báo cáo về '{questionPreview}' không được chấp nhận."
+    targetScreen: null
+    # Approved = FIXED hoặc REVIEWED; Rejected = DISMISSED
+    metadata: { reportId: string, status: REVIEWED | FIXED | DISMISSED, questionPreview: string }
+
+  NEW_EXAM_PAPER:
+    trigger: Admin tạo đề thi mới và toggle active = true — gửi cho user đã từng thi môn đó
+    title: "📝 Đề thi mới: {subjectName}"
+    body: "Đề '{paperTitle}' vừa được thêm vào môn {subjectName}"
+    targetScreen: exam
+    metadata: { subject: string, examPaperTitle: string }

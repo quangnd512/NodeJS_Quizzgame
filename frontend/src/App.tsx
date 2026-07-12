@@ -18,6 +18,7 @@ import {
   getWrongAnswers, retryWrongAnswer,
   adminGetDashboard, adminListUsers, adminGetUserDetail,
   adminBlockUser, adminResetPassword, adminSetUserRole, adminDeleteUser,
+  getUnreadCount, getNotifications, markNotificationAsRead, markAllNotificationsAsRead,
 } from './lib/api.js';
 import type {
   UserProfile, StartSessionResult, AnswerResult, CompleteResult,
@@ -29,6 +30,7 @@ import type {
   ProgressSummary, ExamHistoryItem, PaginatedExamHistory,
   WrongAnswerItem, WrongAnswerListResponse, RetryResult,
   DashboardStats, AdminUserListItem, AdminUserDetail,
+  NotificationItem, NotificationTargetScreen,
 } from './lib/api.js';
 import './App.css';
 
@@ -64,6 +66,12 @@ export default function App() {
   const [globalError, setGlobalError]   = useState('');
   // Bài thi đang dở — kiểm tra ngay sau khi đăng nhập để hiển thị ngay trên ProfilePage
   const [resumeAlert, setResumeAlert]   = useState<ActiveExamSessionInfo | null>(null);
+  // Thông báo
+  const [unreadCount, setUnreadCount]   = useState(0);
+  const [notifOpen, setNotifOpen]       = useState(false);
+  const [toast, setToast]               = useState<NotificationItem | null>(null);
+  // -1 = chưa poll lần nào → lần đầu poll không hiện toast (tránh spam khi mới vào app)
+  const prevUnreadRef                   = useRef(-1);
 
   useEffect(() => {
     // Trang Admin chay doc lap, khong can dang nhap Firebase
@@ -74,6 +82,8 @@ export default function App() {
         setSessionToken('');
         setProfile(null);
         setResumeAlert(null);
+        setUnreadCount(0);
+        prevUnreadRef.current = -1;
         return;
       }
       setScreen('loading');
@@ -100,6 +110,52 @@ export default function App() {
     return unsub;
   }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Polling thông báo mỗi 30 giây — chỉ chạy khi đã đăng nhập
+  useEffect(() => {
+    if (!sessionToken) return;
+
+    const poll = async () => {
+      try {
+        const { count } = await getUnreadCount(sessionToken);
+        setUnreadCount(count);
+
+        // Nếu có thông báo mới (count tăng so với lần poll trước, và đây không phải lần poll đầu)
+        if (count > prevUnreadRef.current && prevUnreadRef.current !== -1) {
+          const result = await getNotifications(sessionToken, 1, 1);
+          const newest = result.notifications[0];
+          if (newest && !newest.isRead) {
+            setToast(newest);
+            // So sanh id truoc khi tat — tranh truong hop 2 thong bao den gan nhau,
+            // timeout cua thong bao CU tat mat thong bao MOI truoc han.
+            // Thoi gian hien thi: 7 giay (tang tu 4 giay de de bat kip hon).
+            setTimeout(() => {
+              setToast((current) => (current?.id === newest.id ? null : current));
+            }, 7000);
+          }
+        }
+        prevUnreadRef.current = count;
+      } catch {
+        // Lỗi polling không ảnh hưởng app — bỏ qua
+      }
+    };
+
+    void poll();
+    const id = setInterval(() => void poll(), 30_000);
+
+    // Poll ngay khi tab duoc focus lai — tranh phai cho het chu ky 30s hoac
+    // phai reload khi trinh duyet throttle setInterval o tab nen (VD: user
+    // dang thao tac o cua so/tab khac roi quay lai tab app).
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void poll();
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [sessionToken]);
+
   function handleApiError(err: unknown) {
     if (err instanceof ApiError && err.status === 401) {
       void signOut(firebaseAuth);
@@ -124,6 +180,28 @@ export default function App() {
           <span>⚠️ {globalError}</span>
           <span className="toast-close">✕</span>
         </div>
+      )}
+
+      {/* Toast thông báo — hiện 7 giây rồi tự tắt */}
+      {toast && (
+        <NotificationToast
+          item={toast}
+          onClose={() => setToast(null)}
+        />
+      )}
+
+      {/* Panel thông báo — slide-in từ trên xuống */}
+      {notifOpen && (
+        <NotificationPanel
+          sessionToken={sessionToken}
+          onClose={() => setNotifOpen(false)}
+          onCountChange={setUnreadCount}
+          onNavigate={(target) => {
+            // Đóng panel TRƯỚC khi chuyển màn hình để tránh panel đè lên màn hình mới
+            setNotifOpen(false);
+            setScreen(target);
+          }}
+        />
       )}
 
       {screen === 'admin'      && <AdminPage />}
@@ -158,6 +236,8 @@ export default function App() {
             localStorage.removeItem(`exam_session_data_${resumeAlert.id}`);
             setResumeAlert(null);
           }}
+          unreadCount={unreadCount}
+          onNotifClick={() => setNotifOpen(true)}
         />
       )}
       {screen === 'practice' && profile && (
@@ -336,7 +416,7 @@ function OnboardingPage({
 
 function ProfilePage({
   profile, sessionToken, onProfileUpdate, onChangeSubjects, onPractice, onExam, onLeaderboard, onProgress, onWrongAnswers, onError, onLogout,
-  resumeAlert, onResumeExam, onAbandonResume,
+  resumeAlert, onResumeExam, onAbandonResume, unreadCount, onNotifClick,
 }: {
   profile: UserProfile;
   sessionToken: string;
@@ -352,6 +432,8 @@ function ProfilePage({
   resumeAlert?: ActiveExamSessionInfo | null;
   onResumeExam?: () => void;
   onAbandonResume?: () => void;
+  unreadCount?: number;
+  onNotifClick?: () => void;
 }) {
   const [editMode, setEditMode]         = useState(false);
   const [busy, setBusy]                 = useState(false);
@@ -480,7 +562,21 @@ function ProfilePage({
           <h2 className="profile-name">{profile.displayName ?? '(Chưa đặt tên)'}</h2>
           <p className="profile-email">{profile.email}</p>
         </div>
-        <button className="btn-icon" onClick={onLogout} title="Đăng xuất">↩</button>
+        <div className="header-actions">
+          {/* Bell icon thông báo */}
+          <button
+            className="btn-icon btn-icon-bell"
+            onClick={onNotifClick}
+            title="Thông báo"
+            aria-label={unreadCount ? `${unreadCount} thông báo chưa đọc` : 'Thông báo'}
+          >
+            🔔
+            {!!unreadCount && unreadCount > 0 && (
+              <span className="bell-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
+            )}
+          </button>
+          <button className="btn-icon" onClick={onLogout} title="Đăng xuất">↩</button>
+        </div>
       </div>
 
       {/* Avatar actions (preview / xóa) */}
@@ -4686,4 +4782,152 @@ function AdminUsersPage({ secret, onLogout }: { secret: string; onLogout: () => 
       )}
     </div>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NotificationToast — hiện trong 7 giây khi có thông báo mới
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Class CSS phu theo loai thong bao — dung de lam noi bat rieng tung loai
+ * (dac biet RANK_UP duoc yeu cau noi bat hon han cac loai khac).
+ */
+function notifTypeClass(type: NotificationItem['type']): string {
+  switch (type) {
+    case 'RANK_UP':          return 'notif-type-rank-up';
+    case 'RANK_DOWN':        return 'notif-type-rank-down';
+    case 'STREAK_MILESTONE': return 'notif-type-streak';
+    case 'REPORT_RESOLVED':  return 'notif-type-report';
+    case 'NEW_EXAM_PAPER':   return 'notif-type-exam';
+    default:                 return '';
+  }
+}
+
+function NotificationToast({ item, onClose }: { item: NotificationItem; onClose: () => void }) {
+  return (
+    <div className={`notif-toast ${notifTypeClass(item.type)}`} role="alert" onClick={onClose}>
+      <div className="notif-toast-content">
+        <p className="notif-toast-title">{item.title}</p>
+        <p className="notif-toast-body">{item.body}</p>
+      </div>
+      <button className="toast-close" aria-label="Đóng" onClick={(e) => { e.stopPropagation(); onClose(); }}>✕</button>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NotificationPanel — drawer slide-in danh sách thông báo
+// ─────────────────────────────────────────────────────────────────────────────
+
+function NotificationPanel({
+  sessionToken, onClose, onCountChange, onNavigate,
+}: {
+  sessionToken: string;
+  onClose: () => void;
+  onCountChange: (count: number) => void;
+  /** Điều hướng sang màn hình tương ứng với targetScreen của thông báo (progress/leaderboard/exam) */
+  onNavigate: (target: Exclude<NotificationTargetScreen, null>) => void;
+}) {
+  const [items, setItems]       = useState<NotificationItem[]>([]);
+  const [loading, setLoading]   = useState(true); // bắt đầu ở trạng thái loading
+  const [markBusy, setMarkBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    // setLoading(true) không cần gọi lại — useState đã khởi tạo true
+    getNotifications(sessionToken, 1, 50)
+      .then((res) => {
+        if (!cancelled) {
+          setItems(res.notifications);
+          onCountChange(res.unreadCount);
+        }
+      })
+      .catch(() => { /* bỏ qua */ })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [sessionToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleMarkAll() {
+    setMarkBusy(true);
+    try {
+      await markAllNotificationsAsRead(sessionToken);
+      setItems((prev) => prev.map((n) => ({ ...n, isRead: true })));
+      onCountChange(0);
+    } catch { /* bỏ qua */ }
+    finally { setMarkBusy(false); }
+  }
+
+  async function handleMarkOne(id: string) {
+    try {
+      await markNotificationAsRead(sessionToken, id);
+      setItems((prev) => prev.map((n) => n.id === id ? { ...n, isRead: true } : n));
+      const remaining = items.filter((n) => !n.isRead && n.id !== id).length;
+      onCountChange(remaining);
+    } catch { /* bỏ qua */ }
+  }
+
+  /**
+   * Bấm vào 1 thông báo: LUÔN đánh dấu đã đọc (nếu chưa đọc), SAU ĐÓ điều hướng
+   * sang màn hình tương ứng nếu thông báo có targetScreen (streak/rank → progress|leaderboard,
+   * đề thi mới → exam). Thông báo báo cáo (targetScreen = null) chỉ đánh dấu đã đọc,
+   * không chuyển màn hình — giữ đúng hành vi hiện tại.
+   */
+  function handleItemClick(n: NotificationItem) {
+    if (!n.isRead) void handleMarkOne(n.id);
+    if (n.targetScreen) onNavigate(n.targetScreen);
+  }
+
+  const unread = items.filter((n) => !n.isRead).length;
+
+  return (
+    <div className="notif-overlay" onClick={onClose}>
+      <div className="notif-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="notif-panel-header">
+          <h3>🔔 Thông báo {unread > 0 && <span className="notif-panel-badge">{unread}</span>}</h3>
+          <div className="notif-panel-actions">
+            {unread > 0 && (
+              <button className="btn-link" onClick={() => void handleMarkAll()} disabled={markBusy}>
+                {markBusy ? 'Đang xử lý…' : 'Đánh dấu tất cả đã đọc'}
+              </button>
+            )}
+            <button className="btn-icon" onClick={onClose} aria-label="Đóng">✕</button>
+          </div>
+        </div>
+
+        <div className="notif-panel-body">
+          {loading && <div className="notif-empty"><Spinner /> Đang tải…</div>}
+          {!loading && items.length === 0 && (
+            <div className="notif-empty">Chưa có thông báo nào.</div>
+          )}
+          {!loading && items.map((n) => (
+            <div
+              key={n.id}
+              className={`notif-item ${notifTypeClass(n.type)}${n.isRead ? '' : ' notif-item--unread'}`}
+              onClick={() => handleItemClick(n)}
+            >
+              <div className="notif-item-content">
+                <p className="notif-item-title">{n.title}</p>
+                <p className="notif-item-body">{n.body}</p>
+                <p className="notif-item-time">{formatNotifTime(n.createdAt)}</p>
+              </div>
+              {!n.isRead && <span className="notif-dot" aria-hidden="true" />}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Format thời gian thông báo: "Vừa xong" / "X phút trước" / "X giờ trước" / ngày */
+function formatNotifTime(isoString: string): string {
+  const diff = Date.now() - new Date(isoString).getTime();
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1)  return 'Vừa xong';
+  if (minutes < 60) return `${minutes} phút trước`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24)   return `${hours} giờ trước`;
+  const days = Math.floor(hours / 24);
+  if (days < 7)     return `${days} ngày trước`;
+  return new Date(isoString).toLocaleDateString('vi-VN');
 }

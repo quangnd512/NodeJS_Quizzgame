@@ -1058,3 +1058,73 @@ export async function adminDeleteUser(
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Notifications — Thông báo hệ thống
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type NotificationType =
+  | 'STREAK_MILESTONE'
+  | 'RANK_UP'
+  | 'RANK_DOWN'
+  | 'REPORT_RESOLVED'
+  | 'NEW_EXAM_PAPER';
+
+export type NotificationTargetScreen = 'progress' | 'leaderboard' | 'exam' | null;
+
+export interface NotificationItem {
+  id: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  isRead: boolean;
+  targetScreen: NotificationTargetScreen;
+  metadata: Record<string, unknown> | null;
+  createdAt: string; // ISO 8601
+}
+
+export interface NotificationListResponse {
+  notifications: NotificationItem[];
+  total: number;
+  unreadCount: number;
+}
+
+/** GET /api/notifications?page=N&limit=N — danh sách thông báo phân trang */
+export async function getNotifications(
+  sessionToken: string,
+  page = 1,
+  limit = 20,
+): Promise<NotificationListResponse> {
+  return request<NotificationListResponse>(
+    `/api/notifications?page=${page}&limit=${limit}`,
+    sessionToken,
+  );
+}
+
+/** GET /api/notifications/unread-count — đếm thông báo chưa đọc (dùng cho polling) */
+export async function getUnreadCount(sessionToken: string): Promise<{ count: number }> {
+  return request<{ count: number }>('/api/notifications/unread-count', sessionToken);
+}
+
+/** PATCH /api/notifications/:id/read — đánh dấu 1 thông báo đã đọc */
+export async function markNotificationAsRead(
+  sessionToken: string,
+  notificationId: string,
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    `/api/notifications/${notificationId}/read`,
+    sessionToken,
+    { method: 'PATCH' },
+  );
+}
+
+/** PATCH /api/notifications/read-all — đánh dấu tất cả đã đọc */
+export async function markAllNotificationsAsRead(
+  sessionToken: string,
+): Promise<{ updatedCount: number }> {
+  return request<{ updatedCount: number }>(
+    '/api/notifications/read-all',
+    sessionToken,
+    { method: 'PATCH' },
+  );
+}
+
