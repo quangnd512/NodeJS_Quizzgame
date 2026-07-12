@@ -5,10 +5,10 @@
 
 ---
 
-## [Unreleased] — Notifications — Thông báo hệ thống (Feature 013)
+## [v1.11.0] — Notifications — Thông báo hệ thống (Feature 013)
 
-**Branch:** `feature/notifications`
-**Ngày:** 2026-07-09
+**Branch:** `feature/notifications` (đã merge vào `master`)
+**Ngày:** 2026-07-13
 
 ### Added
 
