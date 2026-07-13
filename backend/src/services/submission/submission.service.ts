@@ -150,7 +150,14 @@ export class SubmissionService {
     return toDto(row);
   }
 
-  /** Sửa 1 câu hỏi gửi — chỉ khi còn PENDING, chỉ chủ sở hữu. */
+  /**
+   * Sửa 1 câu hỏi gửi — chỉ khi còn PENDING, chỉ chủ sở hữu.
+   * Dùng `updateMany` với điều kiện `status: 'PENDING'` (thay vì `update` theo id
+   * đơn thuần) để tránh race condition: nếu admin duyệt/từ chối submission này
+   * đúng lúc học sinh đang sửa (giữa lúc kiểm tra status ở trên và lúc ghi DB),
+   * điều kiện sẽ không khớp nữa (count=0) và ta báo lỗi thay vì âm thầm sửa đè
+   * lên 1 submission đã có QuestionBank/thông báo được tạo ra từ nó.
+   */
   async updateSubmission(
     userId: string,
     id: string,
@@ -159,8 +166,8 @@ export class SubmissionService {
     const existing = await this.findOwnedOrThrow(userId, id);
     if (existing.status !== 'PENDING') throw new SubmissionNotPendingError();
 
-    const row = await prisma.studentQuestionSubmission.update({
-      where: { id },
+    const claimed = await prisma.studentQuestionSubmission.updateMany({
+      where: { id, userId, status: 'PENDING' },
       data: {
         ...(input.subject !== undefined && { subject: input.subject }),
         ...(input.chapter !== undefined && { chapter: input.chapter }),
@@ -169,15 +176,25 @@ export class SubmissionService {
         ...(input.correctOptionIndex !== undefined && { correctOptionIndex: input.correctOptionIndex }),
       },
     });
+    if (claimed.count === 0) throw new SubmissionNotPendingError();
+
+    const row = await prisma.studentQuestionSubmission.findUniqueOrThrow({ where: { id } });
     return toDto(row);
   }
 
-  /** Xoá 1 câu hỏi gửi — chỉ khi còn PENDING, chỉ chủ sở hữu. */
+  /**
+   * Xoá 1 câu hỏi gửi — chỉ khi còn PENDING, chỉ chủ sở hữu.
+   * Dùng `deleteMany` có điều kiện `status: 'PENDING'` cùng lý do race condition
+   * như `updateSubmission` ở trên (tránh xoá "hụt" 1 submission admin vừa duyệt).
+   */
   async deleteSubmission(userId: string, id: string): Promise<void> {
     const existing = await this.findOwnedOrThrow(userId, id);
     if (existing.status !== 'PENDING') throw new SubmissionNotPendingError();
 
-    await prisma.studentQuestionSubmission.delete({ where: { id } });
+    const deleted = await prisma.studentQuestionSubmission.deleteMany({
+      where: { id, userId, status: 'PENDING' },
+    });
+    if (deleted.count === 0) throw new SubmissionNotPendingError();
   }
 
   // ==========================================================================
@@ -223,9 +240,14 @@ export class SubmissionService {
 
   /**
    * Duyệt 1 câu hỏi gửi:
-   *   1. Tạo bản ghi QuestionBank (type=MCQ_4, isActive=true) từ nội dung submission
-   *   2. Cập nhật submission → APPROVED + gắn questionBankId (atomic cùng bước 1)
-   *   3. [Fire-and-forget] Cộng 30 điểm cho học sinh + gửi thông báo SUBMISSION_APPROVED
+   *   1. "Claim" submission bằng conditional update (status: PENDING -> APPROVED)
+   *      NGAY ĐẦU transaction — nếu 2 admin cùng duyệt 1 submission gần như đồng
+   *      thời, chỉ transaction nào khớp điều kiện `status: 'PENDING'` trước mới
+   *      thành công; transaction còn lại nhận count=0 và dừng ngay, tránh tạo
+   *      2 bản ghi QuestionBank trùng lặp + cộng điểm/thông báo 2 lần cho 1 câu.
+   *   2. Tạo bản ghi QuestionBank (type=MCQ_4, isActive=true) từ nội dung submission
+   *   3. Gắn questionBankId vào submission (vẫn trong cùng transaction ở bước 1)
+   *   4. [Fire-and-forget] Cộng 30 điểm cho học sinh + gửi thông báo SUBMISSION_APPROVED
    */
   async approveSubmission(id: string): Promise<ApproveSubmissionResult> {
     const existing = await prisma.studentQuestionSubmission.findUnique({ where: { id } });
@@ -233,6 +255,12 @@ export class SubmissionService {
     if (existing.status !== 'PENDING') throw new SubmissionNotPendingError();
 
     const { questionBankId } = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.studentQuestionSubmission.updateMany({
+        where: { id, status: 'PENDING' },
+        data: { status: 'APPROVED' },
+      });
+      if (claimed.count === 0) throw new SubmissionNotPendingError();
+
       const bankEntry = await tx.questionBank.create({
         data: {
           subject: existing.subject,
@@ -249,7 +277,7 @@ export class SubmissionService {
 
       await tx.studentQuestionSubmission.update({
         where: { id },
-        data: { status: 'APPROVED', questionBankId: bankEntry.id },
+        data: { questionBankId: bankEntry.id },
       });
 
       return { questionBankId: bankEntry.id };
@@ -264,6 +292,9 @@ export class SubmissionService {
 
   /**
    * Từ chối 1 câu hỏi gửi — bắt buộc kèm ghi chú lý do.
+   * Dùng `updateMany` điều kiện `status: 'PENDING'` để chống race condition
+   * tương tự `approveSubmission` (2 admin cùng xử lý 1 submission gần như đồng
+   * thời — vd 1 người duyệt, 1 người từ chối cùng lúc).
    * [Fire-and-forget] gửi thông báo SUBMISSION_REJECTED kèm lý do trong `body`.
    */
   async rejectSubmission(id: string, note: string): Promise<RejectSubmissionResult> {
@@ -273,10 +304,11 @@ export class SubmissionService {
     if (!existing) throw new SubmissionNotFoundError(id);
     if (existing.status !== 'PENDING') throw new SubmissionNotPendingError();
 
-    await prisma.studentQuestionSubmission.update({
-      where: { id },
+    const claimed = await prisma.studentQuestionSubmission.updateMany({
+      where: { id, status: 'PENDING' },
       data: { status: 'REJECTED', adminNote: note },
     });
+    if (claimed.count === 0) throw new SubmissionNotPendingError();
 
     void this.fireRejectedNotification(existing.userId, id, note);
 

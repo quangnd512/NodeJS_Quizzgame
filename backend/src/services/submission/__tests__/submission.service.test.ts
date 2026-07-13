@@ -10,8 +10,11 @@ vi.mock('../../../lib/prisma.js', () => ({
       findMany: vi.fn(),
       count: vi.fn(),
       findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       delete: vi.fn(),
+      deleteMany: vi.fn(),
     },
     questionBank: {
       findMany: vi.fn(),
@@ -47,8 +50,11 @@ const mock = prisma as unknown as {
     findMany: ReturnType<typeof vi.fn>;
     count: ReturnType<typeof vi.fn>;
     findUnique: ReturnType<typeof vi.fn>;
+    findUniqueOrThrow: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
+    updateMany: ReturnType<typeof vi.fn>;
     delete: ReturnType<typeof vi.fn>;
+    deleteMany: ReturnType<typeof vi.fn>;
   };
   questionBank: {
     findMany: ReturnType<typeof vi.fn>;
@@ -103,6 +109,20 @@ describe('SubmissionService', () => {
       expect(mock.studentQuestionSubmission.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ userId: 'user-1', status: 'PENDING' }) }),
       );
+    });
+
+    it('⚠️ edge case: vẫn tạo được khi count=4 (ngay dưới ngưỡng 5/ngày)', async () => {
+      mock.studentQuestionSubmission.count.mockResolvedValue(4);
+      mock.studentQuestionSubmission.create.mockResolvedValue(MOCK_SUBMISSION);
+
+      await expect(
+        service.createSubmission('user-1', {
+          subject: 'TOAN',
+          questionText: '2 + 2 bằng mấy?',
+          options: ['3', '4', '5', '6'],
+          correctOptionIndex: 1,
+        }),
+      ).resolves.toBeDefined();
     });
 
     it('❌ throw SubmissionRateLimitError khi đã gửi đủ 5 câu hôm nay', async () => {
@@ -166,15 +186,34 @@ describe('SubmissionService', () => {
       await expect(
         service.updateSubmission('user-1', 'sub-1', { questionText: 'Sửa lại' }),
       ).rejects.toThrow(SubmissionNotPendingError);
-      expect(mock.studentQuestionSubmission.update).not.toHaveBeenCalled();
+      expect(mock.studentQuestionSubmission.updateMany).not.toHaveBeenCalled();
     });
 
     it('✅ cập nhật thành công khi còn PENDING', async () => {
       mock.studentQuestionSubmission.findUnique.mockResolvedValue(MOCK_SUBMISSION);
-      mock.studentQuestionSubmission.update.mockResolvedValue({ ...MOCK_SUBMISSION, questionText: 'Sửa lại' });
+      mock.studentQuestionSubmission.updateMany.mockResolvedValue({ count: 1 });
+      mock.studentQuestionSubmission.findUniqueOrThrow.mockResolvedValue({
+        ...MOCK_SUBMISSION,
+        questionText: 'Sửa lại',
+      });
 
       const result = await service.updateSubmission('user-1', 'sub-1', { questionText: 'Sửa lại' });
       expect(result.questionText).toBe('Sửa lại');
+      expect(mock.studentQuestionSubmission.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'sub-1', userId: 'user-1', status: 'PENDING' } }),
+      );
+    });
+
+    it('❌ race condition: throw SubmissionNotPendingError khi admin vừa duyệt/từ chối ngay trước khi ghi (updateMany count=0)', async () => {
+      // Check ban đầu thấy PENDING, nhưng giữa lúc đó có request khác (vd approve)
+      // đã đổi status trước — updateMany có điều kiện status:'PENDING' sẽ không khớp nữa.
+      mock.studentQuestionSubmission.findUnique.mockResolvedValue(MOCK_SUBMISSION);
+      mock.studentQuestionSubmission.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.updateSubmission('user-1', 'sub-1', { questionText: 'Sửa lại' }),
+      ).rejects.toThrow(SubmissionNotPendingError);
+      expect(mock.studentQuestionSubmission.findUniqueOrThrow).not.toHaveBeenCalled();
     });
   });
 
@@ -186,9 +225,18 @@ describe('SubmissionService', () => {
 
     it('✅ xoá thành công khi còn PENDING', async () => {
       mock.studentQuestionSubmission.findUnique.mockResolvedValue(MOCK_SUBMISSION);
-      mock.studentQuestionSubmission.delete.mockResolvedValue({});
+      mock.studentQuestionSubmission.deleteMany.mockResolvedValue({ count: 1 });
       await service.deleteSubmission('user-1', 'sub-1');
-      expect(mock.studentQuestionSubmission.delete).toHaveBeenCalledWith({ where: { id: 'sub-1' } });
+      expect(mock.studentQuestionSubmission.deleteMany).toHaveBeenCalledWith({
+        where: { id: 'sub-1', userId: 'user-1', status: 'PENDING' },
+      });
+    });
+
+    it('❌ race condition: throw SubmissionNotPendingError khi deleteMany count=0 (đã bị xử lý trước đó)', async () => {
+      mock.studentQuestionSubmission.findUnique.mockResolvedValue(MOCK_SUBMISSION);
+      mock.studentQuestionSubmission.deleteMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.deleteSubmission('user-1', 'sub-1')).rejects.toThrow(SubmissionNotPendingError);
     });
   });
 
@@ -240,13 +288,20 @@ describe('SubmissionService', () => {
       mock.studentQuestionSubmission.findUnique.mockResolvedValue(MOCK_SUBMISSION);
       const txMock = {
         questionBank: { create: vi.fn().mockResolvedValue({ id: 'bank-99' }) },
-        studentQuestionSubmission: { update: vi.fn().mockResolvedValue({}) },
+        studentQuestionSubmission: {
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          update: vi.fn().mockResolvedValue({}),
+        },
       };
       mock.$transaction.mockImplementation(async (cb: (tx: typeof txMock) => unknown) => cb(txMock));
 
       const result = await service.approveSubmission('sub-1');
 
       expect(result).toEqual({ id: 'sub-1', status: 'APPROVED', questionBankId: 'bank-99' });
+      expect(txMock.studentQuestionSubmission.updateMany).toHaveBeenCalledWith({
+        where: { id: 'sub-1', status: 'PENDING' },
+        data: { status: 'APPROVED' },
+      });
       expect(txMock.questionBank.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ subject: 'TOAN', questionType: 'MCQ_4', isActive: true }),
@@ -254,7 +309,7 @@ describe('SubmissionService', () => {
       );
       expect(txMock.studentQuestionSubmission.update).toHaveBeenCalledWith({
         where: { id: 'sub-1' },
-        data: { status: 'APPROVED', questionBankId: 'bank-99' },
+        data: { questionBankId: 'bank-99' },
       });
 
       // Fire-and-forget — chờ microtask queue flush trước khi assert.
@@ -265,6 +320,22 @@ describe('SubmissionService', () => {
       expect(notifMock.createNotification).toHaveBeenCalledWith(
         expect.objectContaining({ userId: 'user-1', type: 'SUBMISSION_APPROVED' }),
       );
+    });
+
+    it('❌ race condition: throw SubmissionNotPendingError khi 2 admin cùng duyệt 1 submission gần như đồng thời (updateMany trong tx count=0)', async () => {
+      mock.studentQuestionSubmission.findUnique.mockResolvedValue(MOCK_SUBMISSION);
+      const txMock = {
+        questionBank: { create: vi.fn() },
+        studentQuestionSubmission: {
+          updateMany: vi.fn().mockResolvedValue({ count: 0 }), // request khác đã "claim" trước
+          update: vi.fn(),
+        },
+      };
+      mock.$transaction.mockImplementation(async (cb: (tx: typeof txMock) => unknown) => cb(txMock));
+
+      await expect(service.approveSubmission('sub-1')).rejects.toThrow(SubmissionNotPendingError);
+      // Không được tạo QuestionBank entry trùng lặp khi thua cuộc đua claim.
+      expect(txMock.questionBank.create).not.toHaveBeenCalled();
     });
   });
 
@@ -285,13 +356,13 @@ describe('SubmissionService', () => {
 
     it('✅ cập nhật REJECTED + gửi thông báo kèm lý do', async () => {
       mock.studentQuestionSubmission.findUnique.mockResolvedValue(MOCK_SUBMISSION);
-      mock.studentQuestionSubmission.update.mockResolvedValue({});
+      mock.studentQuestionSubmission.updateMany.mockResolvedValue({ count: 1 });
 
       const result = await service.rejectSubmission('sub-1', 'Trùng câu hỏi đã có');
 
       expect(result).toEqual({ id: 'sub-1', status: 'REJECTED' });
-      expect(mock.studentQuestionSubmission.update).toHaveBeenCalledWith({
-        where: { id: 'sub-1' },
+      expect(mock.studentQuestionSubmission.updateMany).toHaveBeenCalledWith({
+        where: { id: 'sub-1', status: 'PENDING' },
         data: { status: 'REJECTED', adminNote: 'Trùng câu hỏi đã có' },
       });
 
@@ -299,6 +370,16 @@ describe('SubmissionService', () => {
       expect(notifMock.createNotification).toHaveBeenCalledWith(
         expect.objectContaining({ userId: 'user-1', type: 'SUBMISSION_REJECTED', body: 'Trùng câu hỏi đã có' }),
       );
+    });
+
+    it('❌ race condition: throw SubmissionNotPendingError khi updateMany count=0 (đã bị duyệt/từ chối trước đó)', async () => {
+      mock.studentQuestionSubmission.findUnique.mockResolvedValue(MOCK_SUBMISSION);
+      mock.studentQuestionSubmission.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.rejectSubmission('sub-1', 'Trùng câu hỏi đã có')).rejects.toThrow(
+        SubmissionNotPendingError,
+      );
+      expect(notifMock.createNotification).not.toHaveBeenCalled();
     });
   });
 });

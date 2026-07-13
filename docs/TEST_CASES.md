@@ -697,3 +697,56 @@
 | 22 | PATCH /api/notifications/:id/read — id của user khác | userId khác | 403 | `NOTIFICATION_NOT_OWNED` |
 | 23 | GET /api/notifications — không có token | (no auth header) | 401 | `MISSING_AUTH_TOKEN` |
 | 24 | GET /api/notifications/unread-count — token hết hạn | expired token | 401 | `INVALID_SESSION_TOKEN` |
+
+---
+
+## Test Cases: Quản lý câu hỏi (Học sinh đóng góp câu hỏi + Report Redesign)
+
+> Feature 014 — gộp "Bài học sinh gửi" (Submissions) + "Thiết kế lại luồng xử lý báo cáo
+> câu hỏi" (Report Redesign). Branch `feature/question-management-hub`.
+> Bổ sung ở vòng S3 (2026-07-13): 5 test case race-condition (approve/reject/update/xoá
+> submission) + 5 test case usage-points CAS (question-bank.service) + 10 test case
+> text-similarity.utils (trước đó chỉ được test gián tiếp qua duplicateWarning).
+
+### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | POST /api/submissions — học sinh gửi câu hỏi mới | subject, questionText, 4 options, correctOptionIndex | 201, `{ id, status: "PENDING", createdAt }` |
+| 2 | GET /api/submissions — xem danh sách câu đã gửi | status=PENDING, page=1 | 200, `{ items, total }` |
+| 3 | PUT /api/submissions/:id — sửa câu đang PENDING | questionText mới | 200, SubmissionDto đã cập nhật |
+| 4 | DELETE /api/submissions/:id — xoá câu đang PENDING | id hợp lệ | 200, `{ message }` |
+| 5 | POST /api/admin/submissions/:id/approve | id PENDING | 200, `{ id, status: "APPROVED", questionBankId }`; tạo QuestionBank entry + +30đ + thông báo SUBMISSION_APPROVED |
+| 6 | POST /api/admin/submissions/:id/reject | id PENDING, note | 200, `{ id, status: "REJECTED" }`; thông báo SUBMISSION_REJECTED kèm note |
+| 7 | addFromBank thêm câu bắt nguồn từ submission đã duyệt vào đề thi | questionBankId gắn với 1 submission APPROVED, usagePointsEarned=0 | usageCount+1, usagePointsEarned+5, +5đ, thông báo SUBMISSION_USED |
+| 8 | GET /api/admin/questions/reports — JOIN đầy đủ nội dung câu hỏi | status=PENDING | 200, mỗi item kèm `question: {...}` đầy đủ (không chỉ questionId) |
+| 9 | PATCH /api/admin/questions/reports/:id/resolve — FIXED kèm questionUpdate | status=FIXED, questionUpdate.question mới | snapshot lưu vào question_edit_history TRƯỚC khi ghi đè; Question được cập nhật |
+| 10 | PATCH .../resolve — DISMISSED không kèm questionUpdate | status=DISMISSED | không tạo snapshot, không đổi Question |
+
+### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 11 | Rate limit — biên dưới ngưỡng | đã gửi 4/5 câu hôm nay | vẫn tạo được (câu thứ 5) |
+| 12 | Rate limit — đúng ngưỡng | đã gửi 5/5 câu hôm nay | 400 `SUBMISSION_RATE_LIMIT_EXCEEDED`, không tạo |
+| 13 | Duplicate warning — câu gửi trùng ~ giống câu trong kho (đã chuẩn hoá dấu) | similarity ≥ 0.6 | `duplicateWarning` khác null, kèm questionBankId + similarity |
+| 14 | Duplicate warning — không câu nào đủ giống | similarity < 0.6 | `duplicateWarning: null` |
+| 15 | Usage points — gần trần 100đ (đã có 97đ) | thêm câu vào đề thi lần nữa | chỉ cộng đúng phần còn thiếu (3đ), không vượt 100đ |
+| 16 | Usage points — đã đạt trần 100đ | usagePointsEarned=100 | không cộng thêm điểm, không gửi thông báo, không tăng usageCount |
+| 17 | Report resolve — câu đang bị auto-hide (isActive=false), status=FIXED | không có questionUpdate | Question.isActive được set lại true (`reactivated: true`) |
+| 18 | Report resolve — câu đang bị auto-hide, status=DISMISSED | — | KHÔNG reactivate (chỉ FIXED mới reactivate) |
+| 19 | Report resolve — batch-resolve nhiều report PENDING cùng 1 câu hỏi | 2 report PENDING khác cùng questionId | cả 2 chuyển status theo, mỗi user báo cáo nhận 1 thông báo REPORT_RESOLVED riêng |
+| 20 | listReports — bỏ qua report có questionId không còn tồn tại | Question đã bị xoá (hiếm) | báo cáo đó bị loại khỏi kết quả, không làm sập request |
+| 21 | text-similarity — chuỗi rỗng | so với chuỗi bất kỳ | similarity = 0 (không chia cho 0) |
+
+### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 22 | GET /api/submissions/:id — không tồn tại | id ngẫu nhiên | 404 | `SUBMISSION_NOT_FOUND` |
+| 23 | GET /api/submissions/:id — không phải chủ sở hữu | userId khác | 403 | `SUBMISSION_NOT_OWNED` |
+| 24 | PUT/DELETE /api/submissions/:id — đã APPROVED/REJECTED | status ≠ PENDING | 409 | `SUBMISSION_NOT_PENDING` |
+| 25 | POST .../reject — thiếu note | note rỗng | 400 | `SUBMISSION_REJECT_NOTE_REQUIRED` |
+| 26 | **Race condition**: PUT/DELETE submission đúng lúc admin vừa duyệt/từ chối xong (giữa lúc check status và lúc ghi DB) | `updateMany`/`deleteMany` điều kiện `status:'PENDING'` trả count=0 | 409 `SUBMISSION_NOT_PENDING` — KHÔNG âm thầm sửa/xoá 1 submission đã có QuestionBank/thông báo gắn với nó |
+| 27 | **Race condition**: 2 admin cùng approve 1 submission gần như đồng thời | request thứ 2 "thua cuộc đua claim" (`updateMany` trong transaction trả count=0) | 409 `SUBMISSION_NOT_PENDING` — KHÔNG tạo 2 bản ghi QuestionBank trùng lặp, KHÔNG cộng điểm 2 lần |
+| 28 | **Race condition**: 2 admin approve/reject cùng 1 submission gần như đồng thời (1 người duyệt, 1 người từ chối) | tương tự trên | request thua cuộc đua nhận 409, không ghi đè trạng thái đã chốt |
+| 29 | **Race condition (CAS)**: 2 lần addFromBank cho cùng 1 câu hỏi xảy ra gần như đồng thời | lần ghi đầu bị xung đột (`usagePointsEarned` đã đổi) | tự động đọc lại giá trị mới nhất và thử lại (tối đa 5 lần) — không bị "lost update" làm sai điểm/trần usage |
+| 30 | PATCH .../resolve — status không hợp lệ (gửi REVIEWED) | status="REVIEWED" | 400 (Zod: chỉ chấp nhận FIXED\|DISMISSED) |
+| 31 | PATCH .../resolve — reportId không tồn tại | id ngẫu nhiên | 404 | `QUESTION_REPORT_NOT_FOUND` |
