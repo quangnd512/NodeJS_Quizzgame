@@ -88,6 +88,13 @@ export class ReportAlreadySubmittedError extends PracticeError {
   }
 }
 
+/** Khong tim thay bao cao cau hoi theo ID (dung cho endpoint resolve). */
+export class QuestionReportNotFoundError extends PracticeError {
+  constructor(reportId: string) {
+    super(`Khong tim thay bao cao '${reportId}'.`, 'QUESTION_REPORT_NOT_FOUND');
+  }
+}
+
 /** User chua lam cau hoi nay (khong the xem giai thich). */
 export class QuestionNotAttemptedError extends PracticeError {
   constructor(questionId: string) {

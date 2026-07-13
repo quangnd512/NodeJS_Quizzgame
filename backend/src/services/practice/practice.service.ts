@@ -24,6 +24,7 @@ import {
   QuestionNotAttemptedForReportError,
   QuestionNotFoundError,
   QuestionNotInSessionError,
+  QuestionReportNotFoundError,
   ReportAlreadySubmittedError,
   SubjectHasNoQuestionsError,
   SubjectNotRegisteredError,
@@ -34,6 +35,7 @@ import type {
   CompleteSessionResponse,
   CreateQuestionInput,
   HistoryItem,
+  ListReportsParams,
   PaginatedHistory,
   PracticeStats,
   QuestionFullDto,
@@ -41,6 +43,9 @@ import type {
   QuestionReportDto,
   QuestionReportSummary,
   ReportStatus,
+  ResolvableReportStatus,
+  ResolveReportQuestionUpdate,
+  ResolveReportResult,
   SessionDetailResponse,
   StartSessionResponse,
   UpdateQuestionInput,
@@ -803,20 +808,31 @@ export class PracticeService {
     return { items: items.map(toFullDto), total, page, limit };
   }
 
-  /** Lay danh sach bao cao cau hoi, phan trang. */
-  async listReports(params: {
-    status?: string;
-    page?: number;
-    limit?: number;
-  }): Promise<{ items: QuestionReportDto[]; total: number }> {
+  /**
+   * Lay danh sach bao cao cau hoi, phan trang, kem JOIN day du noi dung cau hoi
+   * (khong chi tra ve questionId thô) — loc duoc theo status/subject/reason.
+   */
+  async listReports(params: ListReportsParams): Promise<{ items: QuestionReportDto[]; total: number }> {
     const page = Math.max(1, params.page ?? 1);
     const limit = Math.min(100, params.limit ?? 20);
 
     const where: Prisma.QuestionReportWhereInput = {
       ...(params.status !== undefined && { status: params.status }),
+      ...(params.reason !== undefined && { reason: params.reason }),
     };
 
-    const [items, total] = await Promise.all([
+    // Loc theo subject: QuestionReport khong co cot subject truc tiep (khong co
+    // Prisma relation chinh thuc toi Question) -> tim truoc cac questionId khop
+    // subject, roi loc report theo questionId trong tap do.
+    if (params.subject !== undefined) {
+      const matchingQuestions = await prisma.question.findMany({
+        where: { subject: params.subject },
+        select: { id: true },
+      });
+      where.questionId = { in: matchingQuestions.map((q) => q.id) };
+    }
+
+    const [reports, total] = await Promise.all([
       prisma.questionReport.findMany({
         where,
         orderBy: { createdAt: 'desc' },
@@ -826,7 +842,58 @@ export class PracticeService {
       prisma.questionReport.count({ where }),
     ]);
 
+    const items = await this.joinReportsWithQuestions(reports);
     return { items, total };
+  }
+
+  /**
+   * "JOIN" thu cong danh sach bao cao voi noi dung cau hoi tuong ung (khong co
+   * Prisma relation chinh thuc giua QuestionReport <-> Question trong schema).
+   * Bao cao nao co questionId khong con ton tai (truong hop hiem, Question hien
+   * tai khong bao gio hard-delete) se bi bo qua khoi ket qua thay vi lam sap he thong.
+   */
+  private async joinReportsWithQuestions(
+    reports: Array<{
+      id: string;
+      questionId: string;
+      userId: string;
+      reason: string;
+      description: string | null;
+      status: string;
+      createdAt: Date;
+    }>,
+  ): Promise<QuestionReportDto[]> {
+    if (reports.length === 0) return [];
+
+    const questionIds = [...new Set(reports.map((r) => r.questionId))];
+    const questions = await prisma.question.findMany({ where: { id: { in: questionIds } } });
+    const questionMap = new Map(questions.map((q) => [q.id, q]));
+
+    const items: QuestionReportDto[] = [];
+    for (const r of reports) {
+      const q = questionMap.get(r.questionId);
+      if (!q) continue; // cau hoi khong con ton tai — bo qua, khong lam sap request
+      items.push({
+        id: r.id,
+        questionId: r.questionId,
+        userId: r.userId,
+        reason: r.reason,
+        description: r.description,
+        status: r.status,
+        createdAt: r.createdAt,
+        question: {
+          subject: q.subject,
+          chapter: q.chapter,
+          difficulty: q.difficulty,
+          question: q.question,
+          options: q.options as string[],
+          correctAnswer: q.correctAnswer,
+          explanation: q.explanation,
+          isActive: q.isActive,
+        },
+      });
+    }
+    return items;
   }
 
   /**
@@ -865,6 +932,107 @@ export class PracticeService {
     return { id: report.id, status: report.status, autoHidden };
   }
 
+  /**
+   * Endpoint gộp xử lý báo cáo (thay thế `updateReport` cho luồng admin mới):
+   *   1. Nếu có `questionUpdate`: lưu SNAPSHOT nội dung câu hỏi hiện tại vào
+   *      `question_edit_history` TRƯỚC khi ghi đè, rồi cập nhật Question.
+   *   2. Cập nhật report hiện tại → status (chỉ FIXED|DISMISSED — validate ở route qua Zod).
+   *   3. Batch: mọi report PENDING KHÁC cùng questionId cũng chuyển sang status
+   *      này luôn (1 lần sửa đóng hết mọi báo cáo trùng câu) — chạy trong CÙNG
+   *      transaction để tránh race condition nếu 2 báo cáo được xử lý gần như
+   *      đồng thời.
+   *   4. Nếu status=FIXED và Question đang bị auto-hide (isActive=false) →
+   *      set lại isActive=true (không cần đợi báo cáo nào khác).
+   *   5. [Fire-and-forget] Gửi thông báo REPORT_RESOLVED cho TỪNG người đã báo
+   *      cáo (báo cáo chính + mọi báo cáo batch khác), mỗi người 1 thông báo riêng.
+   */
+  async resolveReport(
+    reportId: string,
+    status: ResolvableReportStatus,
+    questionUpdate?: ResolveReportQuestionUpdate,
+  ): Promise<ResolveReportResult> {
+    const report = await prisma.questionReport.findUnique({ where: { id: reportId } });
+    if (!report) throw new QuestionReportNotFoundError(reportId);
+
+    const { batchResolvedCount, reactivated, othersToNotify } = await prisma.$transaction(async (tx) => {
+      const currentQuestion = await tx.question.findUnique({ where: { id: report.questionId } });
+      if (!currentQuestion) throw new QuestionNotFoundError(report.questionId);
+
+      if (questionUpdate) {
+        // Snapshot TOÀN BỘ field hiện tại của Question — lưu TRƯỚC khi ghi đè.
+        await tx.questionEditHistory.create({
+          data: {
+            questionId: currentQuestion.id,
+            reportId,
+            beforeData: {
+              subject: currentQuestion.subject,
+              chapter: currentQuestion.chapter,
+              difficulty: currentQuestion.difficulty,
+              question: currentQuestion.question,
+              options: currentQuestion.options,
+              correctAnswer: currentQuestion.correctAnswer,
+              explanation: currentQuestion.explanation,
+              examYear: currentQuestion.examYear,
+              examCode: currentQuestion.examCode,
+              isActive: currentQuestion.isActive,
+            } as Prisma.InputJsonValue,
+          },
+        });
+      }
+
+      // Chỉ re-activate khi FIXED và câu đang bị ẩn (auto-hide do vượt ngưỡng báo cáo).
+      const shouldReactivate = status === 'FIXED' && currentQuestion.isActive === false;
+
+      if (questionUpdate || shouldReactivate) {
+        await tx.question.update({
+          where: { id: currentQuestion.id },
+          data: {
+            ...(questionUpdate?.subject !== undefined && { subject: questionUpdate.subject }),
+            ...(questionUpdate?.chapter !== undefined && { chapter: questionUpdate.chapter }),
+            ...(questionUpdate?.difficulty !== undefined && { difficulty: questionUpdate.difficulty }),
+            ...(questionUpdate?.question !== undefined && { question: questionUpdate.question }),
+            ...(questionUpdate?.options !== undefined && {
+              options: questionUpdate.options as Prisma.InputJsonValue,
+            }),
+            ...(questionUpdate?.correctAnswer !== undefined && { correctAnswer: questionUpdate.correctAnswer }),
+            ...(questionUpdate?.explanation !== undefined && { explanation: questionUpdate.explanation }),
+            ...(shouldReactivate && { isActive: true }),
+          },
+        });
+      }
+
+      await tx.questionReport.update({ where: { id: reportId }, data: { status } });
+
+      // Batch: mọi report PENDING khác cùng câu hỏi này cũng đóng theo — 1 lần sửa
+      // đóng hết mọi báo cáo trùng lặp, tránh admin phải xử lý thủ công từng cái.
+      const others = await tx.questionReport.findMany({
+        where: { questionId: report.questionId, status: 'PENDING', id: { not: reportId } },
+        select: { id: true, userId: true },
+      });
+      if (others.length > 0) {
+        await tx.questionReport.updateMany({
+          where: { id: { in: others.map((o) => o.id) } },
+          data: { status },
+        });
+      }
+
+      return { batchResolvedCount: others.length, reactivated: shouldReactivate, othersToNotify: others };
+    });
+
+    // [Fire-and-forget] Notify từng người báo cáo riêng — báo cáo chính + các báo cáo
+    // batch khác — giữ nguyên hành vi "mỗi user 1 thông báo" của hàm có sẵn.
+    if (report.userId) {
+      void this.fireReportResolvedNotification(report.userId, reportId, status, report.questionId);
+    }
+    for (const other of othersToNotify) {
+      if (other.userId) {
+        void this.fireReportResolvedNotification(other.userId, other.id, status, report.questionId);
+      }
+    }
+
+    return { id: reportId, status, batchResolvedCount, reactivated };
+  }
+
   /** [Fire-and-forget] Gửi thông báo REPORT_RESOLVED khi admin xử lý báo cáo. */
   private async fireReportResolvedNotification(
     userId: string,
@@ -898,10 +1066,17 @@ export class PracticeService {
     }
   }
 
-  /** Tong hop thong ke bao cao: so luong theo trang thai, top cau bi bao cao nhieu nhat. */
+  /**
+   * Tong hop thong ke bao cao — tach ro 2 so lieu de tranh nham lan:
+   *   - pendingReports:   tong so DONG bao cao dang PENDING
+   *   - pendingQuestions: so CAU HOI KHAC NHAU dang co it nhat 1 bao cao PENDING
+   *     (dung groupBy thay vi COUNT DISTINCT truc tiep — Prisma khong ho tro
+   *     count-distinct tren 1 truong don le qua API chuan).
+   */
   async getReportsSummary(): Promise<QuestionReportSummary> {
-    const [statusGroups, topReported] = await Promise.all([
+    const [statusGroups, pendingQuestionGroups, topReported] = await Promise.all([
       prisma.questionReport.groupBy({ by: ['status'], _count: { id: true } }),
+      prisma.questionReport.groupBy({ by: ['questionId'], where: { status: 'PENDING' } }),
       prisma.questionReport.groupBy({
         by: ['questionId'],
         _count: { id: true },
@@ -923,8 +1098,8 @@ export class PracticeService {
     }
 
     return {
-      pending: counts.PENDING,
-      reviewed: counts.REVIEWED,
+      pendingReports: counts.PENDING,
+      pendingQuestions: pendingQuestionGroups.length,
       fixed: counts.FIXED,
       dismissed: counts.DISMISSED,
       topReportedQuestions: topReported.map((r) => ({

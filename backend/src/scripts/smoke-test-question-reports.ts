@@ -117,7 +117,7 @@ async function main(): Promise<void> {
 
   console.log('\n--- 6. getReportsSummary: tong hop dung so luong va top cau bi bao cao ---');
   const summary = await practiceService.getReportsSummary();
-  assert(summary.pending >= AUTO_HIDE_REPORT_THRESHOLD + 1, `Tong so PENDING phai >= ${AUTO_HIDE_REPORT_THRESHOLD + 1} (thuc te: ${summary.pending})`);
+  assert(summary.pendingReports >= AUTO_HIDE_REPORT_THRESHOLD + 1, `Tong so PENDING phai >= ${AUTO_HIDE_REPORT_THRESHOLD + 1} (thuc te: ${summary.pendingReports})`);
   const topB = summary.topReportedQuestions.find((r) => r.questionId === questionB);
   assert(!!topB && topB.count === AUTO_HIDE_REPORT_THRESHOLD, `Cau hoi B phai co ${AUTO_HIDE_REPORT_THRESHOLD} bao cao trong topReportedQuestions (thuc te: ${topB?.count})`);
 

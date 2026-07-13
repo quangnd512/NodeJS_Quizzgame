@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { verifyAdminSecret } from '../middleware/admin.middleware.js';
 import { validateBody } from '../middleware/validate.middleware.js';
 import { practiceService } from '../services/practice/practice.service.js';
-import { REPORT_STATUSES } from '../services/practice/practice.types.js';
+import { RESOLVABLE_REPORT_STATUSES } from '../services/practice/practice.types.js';
 import { SUBJECT_CATALOG } from '../services/users/users.types.js';
 
 export const adminRouter = Router();
@@ -37,8 +37,20 @@ const bulkSchema = z.object({
   questions: z.array(questionSchema).min(1).max(500),
 });
 
-const reportStatusSchema = z.object({
-  status: z.enum(REPORT_STATUSES),
+const resolveReportQuestionUpdateSchema = z.object({
+  subject: z.enum(validSubjectIds).optional(),
+  chapter: z.string().max(200).nullable().optional(),
+  difficulty: z.number().int().min(1).max(3).optional(),
+  question: z.string().min(5).max(2000).optional(),
+  options: z.tuple([z.string().min(1), z.string().min(1), z.string().min(1), z.string().min(1)]).optional(),
+  correctAnswer: z.number().int().min(0).max(3).optional(),
+  explanation: z.string().max(2000).nullable().optional(),
+});
+
+const resolveReportSchema = z.object({
+  // Chi chap nhan FIXED|DISMISSED — KHONG cho phep ghi lai REVIEWED qua endpoint nay.
+  status: z.enum(RESOLVABLE_REPORT_STATUSES),
+  questionUpdate: resolveReportQuestionUpdateSchema.optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -145,7 +157,7 @@ adminRouter.get(
 );
 
 // ---------------------------------------------------------------------------
-// GET /api/admin/questions/reports — danh sach bao cao
+// GET /api/admin/questions/reports?status=&subject=&reason=&page=&limit=
 // ---------------------------------------------------------------------------
 
 adminRouter.get(
@@ -153,11 +165,15 @@ adminRouter.get(
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const status = typeof req.query['status'] === 'string' ? req.query['status'] : undefined;
+      const subject = typeof req.query['subject'] === 'string' ? req.query['subject'] : undefined;
+      const reason = typeof req.query['reason'] === 'string' ? req.query['reason'] : undefined;
       const page = parseInt(String(req.query['page'] ?? '1'), 10);
       const limit = parseInt(String(req.query['limit'] ?? '20'), 10);
 
       const result = await practiceService.listReports({
         status,
+        subject,
+        reason,
         page: isNaN(page) ? 1 : page,
         limit: isNaN(limit) ? 20 : limit,
       });
@@ -185,16 +201,19 @@ adminRouter.get(
 );
 
 // ---------------------------------------------------------------------------
-// PATCH /api/admin/questions/reports/:id — cap nhat trang thai bao cao
+// PATCH /api/admin/questions/reports/:id/resolve — xu ly bao cao (gop, thay
+// the endpoint PATCH cu). Chi nhan FIXED|DISMISSED; ho tro sua noi dung cau
+// hoi ngay tai cho (questionUpdate); tu dong dong het cac bao cao PENDING
+// khac cung cau hoi trong cung 1 lan.
 // ---------------------------------------------------------------------------
 
 adminRouter.patch(
-  '/questions/reports/:id',
-  validateBody(reportStatusSchema),
+  '/questions/reports/:id/resolve',
+  validateBody(resolveReportSchema),
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const { status } = req.body as z.infer<typeof reportStatusSchema>;
-      const result = await practiceService.updateReport(req.params['id']!, status);
+      const { status, questionUpdate } = req.body as z.infer<typeof resolveReportSchema>;
+      const result = await practiceService.resolveReport(req.params['id']!, status, questionUpdate);
       res.status(200).json(result);
     } catch (err) {
       next(err);
