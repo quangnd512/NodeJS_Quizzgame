@@ -78,6 +78,7 @@ model User {
 
   wrongAnswers  WrongAnswer[]
   notifications Notification[]
+  submissions   StudentQuestionSubmission[]
 
   /// Index ho tro filter nhanh theo trang thai khoa va vai tro trong admin panel.
   @@index([isBlocked])
@@ -253,6 +254,30 @@ model QuestionReport {
   @@map("question_reports")
 }
 
+/// Ban ghi luu SNAPSHOT noi dung cau hoi TRUOC khi admin sua (qua trang xu ly bao cao).
+/// Dung de audit/khoi phuc neu can - moi lan sua tao 1 ban ghi moi (khong ghi de).
+model QuestionEditHistory {
+  id          String   @id @default(uuid())
+
+  /// ID cau hoi (bang questions) bi sua.
+  questionId  String
+
+  /// ID bao cao dan den lan sua nay (tuy chon - null neu sua khong qua luong bao cao,
+  /// de ngo cho truong hop admin sua truc tiep tu noi khac trong tuong lai).
+  reportId    String?
+
+  /// Toan bo du lieu cau hoi TRUOC khi sua, dang JSON (snapshot toan bo cac field
+  /// cua model Question tai thoi diem sua: subject, chapter, difficulty, question,
+  /// options, correctAnswer, explanation, examYear, examCode, isActive).
+  beforeData  Json
+
+  createdAt   DateTime @default(now())
+
+  /// Truy van lich su sua theo tung cau hoi, moi nhat truoc.
+  @@index([questionId, createdAt])
+  @@map("question_edit_history")
+}
+
 // ============================================================================
 // NGAN HANG CAU HOI (Question Bank)
 // ============================================================================
@@ -310,8 +335,74 @@ model QuestionBank {
   /// Cac ExamQuestion tham chieu den cau hoi nay.
   examQuestions ExamQuestion[]
 
+  /// Cac StudentQuestionSubmission da duoc duyet va tao ra ban ghi nay.
+  /// Thong thuong chi co 1 submission tro toi 1 ban ghi QuestionBank, nhung
+  /// khong ep @unique o day de tranh rang buoc thua — logic nghiep vu (approve)
+  /// dam bao quan he 1-1 tren thuc te.
+  submissions   StudentQuestionSubmission[]
+
   @@index([subject, difficulty, isActive])
   @@map("question_bank")
+}
+
+// ============================================================================
+// MODULE QUAN LY CAU HOI — HOC SINH DONG GOP (Student Question Submissions)
+// ============================================================================
+
+/// Bang luu cau hoi trac nghiem do HOC SINH tu gui len de dong gop vao kho.
+/// Luong: hoc sinh gui (PENDING) -> admin duyet (APPROVED, tao QuestionBank entry
+/// + thuong 30 diem) hoac tu choi (REJECTED, kem ly do). Khi cau da duoc duyet va
+/// dung trong 1 de thi that, hoc sinh nhan them 5 diem/lan (toi da 100 diem/cau).
+model StudentQuestionSubmission {
+  id                 String   @id @default(uuid())
+
+  /// ID hoc sinh gui cau hoi.
+  userId             String
+
+  /// Ma mon hoc (khop SUBJECT_CATALOG).
+  subject            String
+
+  /// Ten chuong/chu de (tuy chon).
+  chapter            String?
+
+  /// Noi dung cau hoi hoc sinh nhap.
+  questionText       String
+
+  /// 4 lua chon dap an dang JSON mang 4 phan tu string.
+  options            Json
+
+  /// Chi so dap an dung (0-3) do hoc sinh chon.
+  correctOptionIndex Int
+
+  /// Trang thai xu ly: PENDING (cho duyet) | APPROVED (da duyet) | REJECTED (tu choi).
+  status             String   @default("PENDING")
+
+  /// Ghi chu cua admin — bat buoc khi tu choi (ly do), tuy chon khi duyet.
+  adminNote          String?
+
+  /// ID ban ghi QuestionBank duoc tao ra sau khi duyet (null khi con PENDING/REJECTED).
+  questionBankId     String?
+
+  /// Lien ket voi ban ghi QuestionBank tuong ung (chi co gia tri sau khi duyet).
+  questionBank       QuestionBank? @relation(fields: [questionBankId], references: [id])
+
+  /// So lan cau hoi (sau khi duyet) da duoc them vao 1 de thi that.
+  usageCount         Int      @default(0)
+
+  /// Tong diem thuong "usage" hoc sinh da nhan tu cau hoi nay (toi da 100).
+  usagePointsEarned  Int      @default(0)
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Truy van chinh: danh sach cau da gui cua 1 hoc sinh theo trang thai, moi nhat truoc;
+  /// dong thoi dung de dem rate limit 5 cau/ngay (WHERE userId=? AND createdAt >= startOfDay).
+  @@index([userId, status, createdAt])
+  /// Tra cuu nguoc tu QuestionBank -> submission goc (dung trong usage points trigger).
+  @@index([questionBankId])
+  @@map("student_question_submissions")
 }
 
 // ============================================================================
@@ -528,6 +619,12 @@ enum NotificationType {
   REPORT_RESOLVED
   /// De thi moi duoc kich hoat (active) cho mon hoc ma hoc sinh da tung thi.
   NEW_EXAM_PAPER
+  /// Cau hoi hoc sinh gui duoc admin duyet (vao ngan hang + thuong diem).
+  SUBMISSION_APPROVED
+  /// Cau hoi hoc sinh gui bi admin tu choi (kem ly do).
+  SUBMISSION_REJECTED
+  /// Cau hoi hoc sinh gui duoc dung trong 1 de thi (thuong them diem usage).
+  SUBMISSION_USED
 }
 
 /// Bang luu thong bao cho tung nguoi dung.
