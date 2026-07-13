@@ -8,6 +8,10 @@ import { isValidSubjectId } from '../users/users.types.js';
 import { validateQuestionShape } from './exam.service.js';
 import { ExamPaperNotFoundError } from './exam.errors.js';
 import { QuestionBankNotFoundError, QuestionBankDeleteBlockedError } from './question-bank.errors.js';
+import { pointsService } from '../points/points.service.js';
+import { PointReason } from '../points/points.types.js';
+import { notificationService } from '../notification/notification.service.js';
+import { SUBMISSION_USAGE_POINTS_CAP, SUBMISSION_USAGE_POINTS_PER_USE } from '../submission/submission.types.js';
 import type {
   AddFromBankInput,
   AddFromBankResult,
@@ -279,7 +283,7 @@ export class QuestionBankService {
 
     // Boc toan bo luong "kiem tra trung + insert" trong 1 transaction de dam bao
     // atomic: neu createMany that bai giua chung, khong co cau nao duoc them mot phan.
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       // Lay cac cau hoi trong kho theo IDs duoc yeu cau
       const bankQuestions = await tx.questionBank.findMany({
         where: { id: { in: input.questionBankIds }, isActive: true },
@@ -319,8 +323,68 @@ export class QuestionBankService {
 
       const skipped = input.questionBankIds.length - toInsert.length;
 
-      return { added: toInsert.length, skipped };
+      return { added: toInsert.length, skipped, insertedBankIds: toInsert.map((q) => q.id) };
     });
+
+    // [Fire-and-forget] Cau nao trong so vua them bat nguon tu 1 StudentQuestionSubmission
+    // da duyet thi cong them diem "usage" cho hoc sinh — khong block response admin.
+    if (result.insertedBankIds.length > 0) {
+      void this.fireUsagePointsTrigger(result.insertedBankIds);
+    }
+
+    return { added: result.added, skipped: result.skipped };
+  }
+
+  /**
+   * [Fire-and-forget] Sau khi 1+ cau hoi tu kho duoc them vao de thi: voi moi cau
+   * (theo questionBankId) neu bat nguon tu 1 StudentQuestionSubmission da APPROVED
+   * va chua dat toi da 100 diem usage, cong them min(5, 100 - da_nhan) diem cho
+   * hoc sinh, tang usageCount, va gui thong bao SUBMISSION_USED.
+   */
+  private async fireUsagePointsTrigger(bankIds: string[]): Promise<void> {
+    try {
+      const submissions = await prisma.studentQuestionSubmission.findMany({
+        where: { questionBankId: { in: bankIds }, status: 'APPROVED' },
+      });
+
+      for (const sub of submissions) {
+        const pointsToAdd = Math.min(
+          SUBMISSION_USAGE_POINTS_PER_USE,
+          SUBMISSION_USAGE_POINTS_CAP - sub.usagePointsEarned,
+        );
+        if (pointsToAdd <= 0) continue; // da dat toi da 100 diem usage — khong cong them
+
+        const newTotal = sub.usagePointsEarned + pointsToAdd;
+        await prisma.studentQuestionSubmission.update({
+          where: { id: sub.id },
+          data: { usageCount: { increment: 1 }, usagePointsEarned: newTotal },
+        });
+
+        try {
+          await pointsService.addPoints(sub.userId, pointsToAdd, PointReason.SUBMISSION_USED, {
+            submissionId: sub.id,
+            questionBankId: sub.questionBankId,
+          });
+        } catch (err) {
+          console.error('[QuestionBankService] fireUsagePointsTrigger addPoints error:', err);
+        }
+
+        try {
+          await notificationService.createNotification({
+            userId: sub.userId,
+            type: 'SUBMISSION_USED',
+            title: '📝 Câu hỏi của bạn được dùng trong đề thi!',
+            body: `Câu hỏi bạn đóng góp vừa được thêm vào 1 đề thi. Bạn nhận được +${pointsToAdd} điểm.`,
+            targetScreen: null,
+            metadata: { submissionId: sub.id, pointsAwarded: pointsToAdd, totalUsagePoints: newTotal },
+          });
+        } catch (err) {
+          console.error('[QuestionBankService] fireUsagePointsTrigger notify error:', err);
+        }
+      }
+    } catch (err) {
+      console.error('[QuestionBankService] fireUsagePointsTrigger error:', err);
+    }
   }
 
   // -------------------------------------------------------------------------
