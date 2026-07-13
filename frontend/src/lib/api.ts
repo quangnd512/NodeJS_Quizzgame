@@ -328,6 +328,18 @@ export async function abandonExam(token: string, sessionId: string): Promise<{ s
 
 // ─── Admin: Bao cao cau hoi ─────────────────────────────────────────────────
 
+/** Noi dung day du cau hoi kem theo 1 bao cao (JOIN tu bang questions). */
+export interface QuestionReportQuestionDto {
+  subject: string;
+  chapter: string | null;
+  difficulty: number;
+  question: string;
+  options: string[];
+  correctAnswer: number;
+  explanation: string | null;
+  isActive: boolean;
+}
+
 export interface QuestionReportDto {
   id: string;
   questionId: string;
@@ -336,17 +348,40 @@ export interface QuestionReportDto {
   description: string | null;
   status: string;
   createdAt: string;
+  question: QuestionReportQuestionDto;
 }
 
+/** Tach ro 2 so lieu: pendingReports (so DONG bao cao) vs pendingQuestions (so CAU HOI khac nhau). */
 export interface ReportsSummary {
-  pending: number;
-  reviewed: number;
+  pendingReports: number;
+  pendingQuestions: number;
   fixed: number;
   dismissed: number;
   topReportedQuestions: { questionId: string; count: number }[];
 }
 
 export type ReportStatus = 'PENDING' | 'REVIEWED' | 'FIXED' | 'DISMISSED';
+
+/** Trang thai duoc phep ghi qua endpoint resolve moi — CHI FIXED|DISMISSED. */
+export type ResolvableReportStatus = 'FIXED' | 'DISMISSED';
+
+/** Du lieu sua noi dung cau hoi kem theo luc resolve bao cao (tuy chon). */
+export interface ResolveReportQuestionUpdate {
+  subject?: string;
+  chapter?: string | null;
+  difficulty?: number;
+  question?: string;
+  options?: [string, string, string, string];
+  correctAnswer?: number;
+  explanation?: string | null;
+}
+
+export interface ResolveReportResult {
+  id: string;
+  status: ResolvableReportStatus;
+  batchResolvedCount: number;
+  reactivated: boolean;
+}
 
 /** Goi API admin voi header X-Admin-Secret (khong dung session token). */
 async function adminRequest<T>(path: string, secret: string, options: RequestInit = {}): Promise<T> {
@@ -372,34 +407,145 @@ async function adminRequest<T>(path: string, secret: string, options: RequestIni
   return body;
 }
 
-/** GET /api/admin/questions/reports?status=&page=&limit= */
+/** GET /api/admin/questions/reports?status=&subject=&reason=&page=&limit= */
 export async function adminListReports(
   secret: string,
-  params: { status?: string; page?: number; limit?: number } = {},
+  params: { status?: string; subject?: string; reason?: string; page?: number; limit?: number } = {},
 ): Promise<{ items: QuestionReportDto[]; total: number }> {
   const query = new URLSearchParams();
   if (params.status) query.set('status', params.status);
+  if (params.subject) query.set('subject', params.subject);
+  if (params.reason) query.set('reason', params.reason);
   if (params.page) query.set('page', String(params.page));
   if (params.limit) query.set('limit', String(params.limit));
   const qs = query.toString();
   return adminRequest(`/api/admin/questions/reports${qs ? `?${qs}` : ''}`, secret);
 }
 
-/** PATCH /api/admin/questions/reports/:id */
-export async function adminUpdateReportStatus(
+/** PATCH /api/admin/questions/reports/:id/resolve — thay the PATCH cu (chi FIXED|DISMISSED). */
+export async function adminResolveReport(
   secret: string,
   reportId: string,
-  status: ReportStatus,
-): Promise<{ id: string; status: string; autoHidden: boolean }> {
-  return adminRequest(`/api/admin/questions/reports/${reportId}`, secret, {
+  status: ResolvableReportStatus,
+  questionUpdate?: ResolveReportQuestionUpdate,
+): Promise<ResolveReportResult> {
+  return adminRequest(`/api/admin/questions/reports/${reportId}/resolve`, secret, {
     method: 'PATCH',
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, ...(questionUpdate ? { questionUpdate } : {}) }),
   });
 }
 
 /** GET /api/admin/questions/reports/summary */
 export async function adminGetReportsSummary(secret: string): Promise<ReportsSummary> {
   return adminRequest('/api/admin/questions/reports/summary', secret);
+}
+
+// ─── Hoc sinh dong gop cau hoi (Submissions) ────────────────────────────────
+
+export type SubmissionStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+export interface SubmissionDto {
+  id: string;
+  userId: string;
+  subject: string;
+  chapter: string | null;
+  questionText: string;
+  options: [string, string, string, string];
+  correctOptionIndex: number;
+  status: SubmissionStatus;
+  adminNote: string | null;
+  questionBankId: string | null;
+  usageCount: number;
+  usagePointsEarned: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateSubmissionInput {
+  subject: string;
+  chapter?: string;
+  questionText: string;
+  options: [string, string, string, string];
+  correctOptionIndex: number;
+}
+
+export type UpdateSubmissionInput = Partial<CreateSubmissionInput>;
+
+/** POST /api/submissions */
+export async function createSubmission(
+  sessionToken: string,
+  input: CreateSubmissionInput,
+): Promise<{ id: string; status: SubmissionStatus; createdAt: string }> {
+  return request('/api/submissions', sessionToken, { method: 'POST', body: JSON.stringify(input) });
+}
+
+/** GET /api/submissions?status=&page=&limit= */
+export async function getMySubmissions(
+  sessionToken: string,
+  params: { status?: string; page?: number; limit?: number } = {},
+): Promise<{ items: SubmissionDto[]; total: number }> {
+  const query = new URLSearchParams();
+  if (params.status) query.set('status', params.status);
+  if (params.page) query.set('page', String(params.page));
+  if (params.limit) query.set('limit', String(params.limit));
+  const qs = query.toString();
+  return request(`/api/submissions${qs ? `?${qs}` : ''}`, sessionToken);
+}
+
+/** PUT /api/submissions/:id */
+export async function updateSubmission(
+  sessionToken: string,
+  id: string,
+  input: UpdateSubmissionInput,
+): Promise<SubmissionDto> {
+  return request(`/api/submissions/${id}`, sessionToken, { method: 'PUT', body: JSON.stringify(input) });
+}
+
+/** DELETE /api/submissions/:id */
+export async function deleteSubmission(sessionToken: string, id: string): Promise<{ message: string }> {
+  return request(`/api/submissions/${id}`, sessionToken, { method: 'DELETE' });
+}
+
+// ─── Admin: Duyet cau hoi hoc sinh gui ──────────────────────────────────────
+
+export interface DuplicateWarning {
+  questionBankId: string;
+  similarity: number;
+}
+
+export type AdminSubmissionListItem = SubmissionDto & { duplicateWarning: DuplicateWarning | null };
+
+/** GET /api/admin/submissions?status=&page=&limit= */
+export async function adminListSubmissions(
+  secret: string,
+  params: { status?: string; page?: number; limit?: number } = {},
+): Promise<{ items: AdminSubmissionListItem[]; total: number }> {
+  const query = new URLSearchParams();
+  if (params.status) query.set('status', params.status);
+  if (params.page) query.set('page', String(params.page));
+  if (params.limit) query.set('limit', String(params.limit));
+  const qs = query.toString();
+  return adminRequest(`/api/admin/submissions${qs ? `?${qs}` : ''}`, secret);
+}
+
+/** POST /api/admin/submissions/:id/approve */
+export async function adminApproveSubmission(
+  secret: string,
+  id: string,
+): Promise<{ id: string; status: 'APPROVED'; questionBankId: string }> {
+  return adminRequest(`/api/admin/submissions/${id}/approve`, secret, { method: 'POST' });
+}
+
+/** POST /api/admin/submissions/:id/reject */
+export async function adminRejectSubmission(
+  secret: string,
+  id: string,
+  note: string,
+): Promise<{ id: string; status: 'REJECTED' }> {
+  return adminRequest(`/api/admin/submissions/${id}/reject`, secret, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  });
 }
 
 // ─── Admin: Quan ly de thi thu ───────────────────────────────────────────────

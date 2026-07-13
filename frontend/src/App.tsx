@@ -6,7 +6,7 @@ import {
   startPracticeSession, answerQuestion, completeSession, reportQuestion,
   getPracticeHistory, getPracticeStats,
   startExam, submitExam, getExamResult, getActiveExamSession, abandonExam,
-  adminListReports, adminUpdateReportStatus, adminGetReportsSummary,
+  adminListReports, adminResolveReport, adminGetReportsSummary,
   adminListExamPapers, adminGetExamPaperDetail, adminCreateExamPaper, adminUpdateExamPaper,
   adminUpdateExamQuestion, adminDeleteExamQuestion, adminRestoreExamQuestion, adminImportExamQuestions,
   adminAutoFillFromBank,
@@ -19,10 +19,12 @@ import {
   adminGetDashboard, adminListUsers, adminGetUserDetail,
   adminBlockUser, adminResetPassword, adminSetUserRole, adminDeleteUser,
   getUnreadCount, getNotifications, markNotificationAsRead, markAllNotificationsAsRead,
+  createSubmission, getMySubmissions, updateSubmission, deleteSubmission,
+  adminListSubmissions, adminApproveSubmission, adminRejectSubmission,
 } from './lib/api.js';
 import type {
   UserProfile, StartSessionResult, AnswerResult, CompleteResult,
-  HistoryItem, SubjectStat, QuestionReportDto, ReportsSummary, ReportStatus,
+  HistoryItem, SubjectStat, QuestionReportDto, ReportsSummary, ResolveReportQuestionUpdate,
   StartExamResult, SubmitExamResult, ExamResult, ExamAnswerValue, ExamQuestionType, ExamQuestionPublic, ActiveExamSession as ActiveExamSessionInfo,
   ExamPaperSummary, ExamPaperDetail, ExamImportResultDto,
   QuestionBankItem, QuestionBankUsage,
@@ -31,6 +33,7 @@ import type {
   WrongAnswerItem, WrongAnswerListResponse, RetryResult,
   DashboardStats, AdminUserListItem, AdminUserDetail,
   NotificationItem, NotificationTargetScreen,
+  SubmissionDto, SubmissionStatus, AdminSubmissionListItem,
 } from './lib/api.js';
 import './App.css';
 
@@ -48,7 +51,7 @@ const SUBJECTS = [
   { id: 'GDCD', name: 'Giáo dục công dân', emoji: '⚖️' },
 ];
 
-type Screen = 'loading' | 'login' | 'onboarding' | 'profile' | 'practice' | 'exam' | 'admin' | 'leaderboard' | 'progress' | 'wrongAnswers';
+type Screen = 'loading' | 'login' | 'onboarding' | 'profile' | 'practice' | 'exam' | 'admin' | 'leaderboard' | 'progress' | 'wrongAnswers' | 'submissions';
 
 function getInitials(name: string | null, email: string | null): string {
   const src = name ?? email ?? '?';
@@ -225,6 +228,7 @@ export default function App() {
           onLeaderboard={() => setScreen('leaderboard')}
           onProgress={() => setScreen('progress')}
           onWrongAnswers={() => setScreen('wrongAnswers')}
+          onSubmissions={() => setScreen('submissions')}
           onError={handleApiError}
           onLogout={() => void signOut(firebaseAuth)}
           resumeAlert={resumeAlert}
@@ -278,6 +282,13 @@ export default function App() {
       )}
       {screen === 'wrongAnswers' && profile && (
         <WrongAnswersPage
+          sessionToken={sessionToken}
+          onBack={() => setScreen('profile')}
+          onError={handleApiError}
+        />
+      )}
+      {screen === 'submissions' && profile && (
+        <SubmissionsPage
           sessionToken={sessionToken}
           onBack={() => setScreen('profile')}
           onError={handleApiError}
@@ -415,7 +426,7 @@ function OnboardingPage({
 // ─── ProfilePage ──────────────────────────────────────────────────────────────
 
 function ProfilePage({
-  profile, sessionToken, onProfileUpdate, onChangeSubjects, onPractice, onExam, onLeaderboard, onProgress, onWrongAnswers, onError, onLogout,
+  profile, sessionToken, onProfileUpdate, onChangeSubjects, onPractice, onExam, onLeaderboard, onProgress, onWrongAnswers, onSubmissions, onError, onLogout,
   resumeAlert, onResumeExam, onAbandonResume, unreadCount, onNotifClick,
 }: {
   profile: UserProfile;
@@ -427,6 +438,7 @@ function ProfilePage({
   onLeaderboard: () => void;
   onProgress: () => void;
   onWrongAnswers: () => void;
+  onSubmissions: () => void;
   onError: (e: unknown) => void;
   onLogout: () => void;
   resumeAlert?: ActiveExamSessionInfo | null;
@@ -646,6 +658,9 @@ function ProfilePage({
         </button>
         <button className="btn-secondary btn-lg" onClick={onWrongAnswers} style={{ background: 'linear-gradient(135deg,#f093fb,#f5576c)', color: '#fff', border: 'none' }}>
           ❌ Ôn câu sai
+        </button>
+        <button className="btn-secondary btn-lg" onClick={onSubmissions} style={{ background: 'linear-gradient(135deg,#84fab0,#8fd3f4)', color: '#333', border: 'none' }}>
+          ✍️ Gửi câu hỏi
         </button>
       </div>
 
@@ -2154,8 +2169,6 @@ function GoogleIcon() {
 // ─── Admin: Quan ly bao cao cau hoi ────────────────────────────────────────────
 
 const ADMIN_PAGE_SIZE = 20;
-const ADMIN_REPORT_STATUSES: ReportStatus[] = ['PENDING', 'REVIEWED', 'FIXED', 'DISMISSED'];
-
 const REPORT_STATUS_LABEL: Record<string, string> = {
   PENDING:   'Chờ xử lý',
   REVIEWED:  'Đã xem',
@@ -2167,11 +2180,30 @@ const REPORT_REASON_LABEL: Record<string, string> = Object.fromEntries(
   REPORT_REASONS.map((r) => [r.value, r.label]),
 );
 
-type AdminTab = 'dashboard' | 'users' | 'reports' | 'exams' | 'bank';
+type AdminTab = 'dashboard' | 'users' | 'questions' | 'exams' | 'bank';
 
 function AdminPage() {
   const [secret, setSecret] = useState(() => sessionStorage.getItem('adminSecret') ?? '');
   const [tab, setTab] = useState<AdminTab>('dashboard');
+  // Badge tổng "chờ xử lý" trên tab cha "Câu hỏi" — gộp cả bài học sinh gửi (PENDING)
+  // + báo cáo lỗi (pendingReports). Refetch mỗi khi đổi tab để cập nhật sau khi xử lý xong.
+  const [questionsPendingBadge, setQuestionsPendingBadge] = useState(0);
+
+  useEffect(() => {
+    if (!secret) return;
+    let cancelled = false;
+    async function loadBadge() {
+      try {
+        const [summary, subs] = await Promise.all([
+          adminGetReportsSummary(secret),
+          adminListSubmissions(secret, { status: 'PENDING', limit: 1 }),
+        ]);
+        if (!cancelled) setQuestionsPendingBadge(summary.pendingReports + subs.total);
+      } catch { /* bỏ qua — không để lỗi badge làm hỏng trang admin */ }
+    }
+    void loadBadge();
+    return () => { cancelled = true; };
+  }, [secret, tab]);
 
   function handleLoginSuccess(value: string) {
     sessionStorage.setItem('adminSecret', value);
@@ -2196,8 +2228,9 @@ function AdminPage() {
         <button className={`admin-tab ${tab === 'users' ? 'active' : ''}`} onClick={() => setTab('users')}>
           👥 Người dùng
         </button>
-        <button className={`admin-tab ${tab === 'reports' ? 'active' : ''}`} onClick={() => setTab('reports')}>
-          Báo cáo câu hỏi
+        <button className={`admin-tab ${tab === 'questions' ? 'active' : ''}`} onClick={() => setTab('questions')}>
+          Câu hỏi
+          {questionsPendingBadge > 0 && <span className="admin-tab-badge">{questionsPendingBadge}</span>}
         </button>
         <button className={`admin-tab ${tab === 'exams' ? 'active' : ''}`} onClick={() => setTab('exams')}>
           Đề thi thử
@@ -2211,7 +2244,7 @@ function AdminPage() {
       </div>
       {tab === 'dashboard' && <AdminDashboardPage secret={secret} onLogout={handleLogout} />}
       {tab === 'users'     && <AdminUsersPage secret={secret} onLogout={handleLogout} />}
-      {tab === 'reports'   && <AdminReportsPage secret={secret} onLogout={handleLogout} />}
+      {tab === 'questions' && <AdminQuestionManagementPage secret={secret} onLogout={handleLogout} />}
       {tab === 'exams'     && <AdminExamPage secret={secret} onLogout={handleLogout} />}
       {tab === 'bank'      && <AdminQuestionBankPage secret={secret} onLogout={handleLogout} />}
     </div>
@@ -2278,28 +2311,57 @@ function AdminLoginPage({ onSuccess }: { onSuccess: (secret: string) => void }) 
   );
 }
 
-// ─── AdminReportsPage ───────────────────────────────────────────────────────────
+// ─── AdminQuestionManagementPage — gộp "Bài học sinh gửi" + "Báo cáo lỗi" ────────
 
-function AdminReportsPage({ secret, onLogout }: { secret: string; onLogout: () => void }) {
-  const [summary, setSummary] = useState<ReportsSummary | null>(null);
-  const [items, setItems] = useState<QuestionReportDto[]>([]);
+type AdminQuestionSub = 'submissions' | 'reports';
+
+function AdminQuestionManagementPage({ secret, onLogout }: { secret: string; onLogout: () => void }) {
+  const [sub, setSub] = useState<AdminQuestionSub>('submissions');
+
+  return (
+    <div className="screen screen-admin">
+      <div className="admin-header">
+        <h2 className="page-title">Quản lý câu hỏi</h2>
+        <button className="btn-link" onClick={onLogout}>Đăng xuất</button>
+      </div>
+
+      <div className="admin-tabs" style={{ marginBottom: '1rem' }}>
+        <button className={`admin-tab ${sub === 'submissions' ? 'active' : ''}`} onClick={() => setSub('submissions')}>
+          Bài học sinh gửi
+        </button>
+        <button className={`admin-tab ${sub === 'reports' ? 'active' : ''}`} onClick={() => setSub('reports')}>
+          Báo cáo lỗi
+        </button>
+      </div>
+
+      {sub === 'submissions' && <AdminSubmissionsPage secret={secret} onLogout={onLogout} />}
+      {sub === 'reports' && <AdminReportsPage secret={secret} onLogout={onLogout} />}
+    </div>
+  );
+}
+
+// ─── AdminSubmissionsPage — duyệt câu hỏi học sinh gửi ───────────────────────────
+
+const ADMIN_SUBMISSION_STATUSES: SubmissionStatus[] = ['PENDING', 'APPROVED', 'REJECTED'];
+
+function AdminSubmissionsPage({ secret, onLogout }: { secret: string; onLogout: () => void }) {
+  const [items, setItems] = useState<AdminSubmissionListItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('PENDING');
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busyId, setBusyId] = useState('');
+  const [detailItem, setDetailItem] = useState<AdminSubmissionListItem | null>(null);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [rejectNote, setRejectNote] = useState('');
 
   async function load() {
     setLoading(true);
     setError('');
     try {
-      const [s, r] = await Promise.all([
-        adminGetReportsSummary(secret),
-        adminListReports(secret, { status: statusFilter || undefined, page, limit: ADMIN_PAGE_SIZE }),
-      ]);
-      setSummary(s);
+      const r = await adminListSubmissions(secret, { status: statusFilter || undefined, page, limit: ADMIN_PAGE_SIZE });
       setItems(r.items);
       setTotal(r.total);
     } catch (err) {
@@ -2316,12 +2378,33 @@ function AdminReportsPage({ secret, onLogout }: { secret: string; onLogout: () =
   // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- load() goi API va setState de dong bo voi statusFilter/page
   useEffect(() => { void load(); }, [statusFilter, page]);
 
-  async function handleStatusChange(reportId: string, status: ReportStatus) {
-    setBusyId(reportId);
+  async function handleApprove(id: string) {
+    setBusyId(id);
     setNotice('');
+    setError('');
     try {
-      const result = await adminUpdateReportStatus(secret, reportId, status);
-      if (result.autoHidden) setNotice('Câu hỏi liên quan đã bị tự động ẩn do vượt ngưỡng báo cáo.');
+      await adminApproveSubmission(secret, id);
+      setNotice('Đã duyệt câu hỏi — thêm vào ngân hàng câu hỏi + thưởng 30 điểm cho học sinh.');
+      setDetailItem(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Lỗi không xác định');
+    } finally {
+      setBusyId('');
+    }
+  }
+
+  async function handleReject(id: string) {
+    if (!rejectNote.trim()) { setError('Vui lòng nhập lý do từ chối.'); return; }
+    setBusyId(id);
+    setNotice('');
+    setError('');
+    try {
+      await adminRejectSubmission(secret, id, rejectNote.trim());
+      setNotice('Đã từ chối câu hỏi.');
+      setRejectingId(null);
+      setRejectNote('');
+      setDetailItem(null);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Lỗi không xác định');
@@ -2333,21 +2416,211 @@ function AdminReportsPage({ secret, onLogout }: { secret: string; onLogout: () =
   const totalPages = Math.max(1, Math.ceil(total / ADMIN_PAGE_SIZE));
 
   return (
-    <div className="screen screen-admin">
-      <div className="admin-header">
-        <h2 className="page-title">Quản lý báo cáo câu hỏi</h2>
-        <button className="btn-link" onClick={onLogout}>Đăng xuất</button>
+    <div>
+      <div className="admin-filter">
+        <select
+          className="field-input"
+          value={statusFilter}
+          onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+        >
+          <option value="">Tất cả trạng thái</option>
+          {ADMIN_SUBMISSION_STATUSES.map((s) => (
+            <option key={s} value={s}>{SUBMISSION_STATUS_LABEL[s]}</option>
+          ))}
+        </select>
       </div>
 
+      {error && <p className="report-error admin-msg">{error}</p>}
+      {notice && <p className="admin-notice admin-msg">{notice}</p>}
+
+      {loading ? (
+        <div className="screen-center"><Spinner /></div>
+      ) : items.length === 0 ? (
+        <p className="empty admin-msg">Không có câu hỏi nào.</p>
+      ) : (
+        <div className="admin-report-list">
+          {items.map((item) => (
+            <div key={item.id} className="admin-report-row">
+              <div className="admin-report-top">
+                <span className={`admin-status-badge status-${item.status.toLowerCase()}`}>
+                  {SUBMISSION_STATUS_LABEL[item.status]}
+                </span>
+                <span className="admin-report-reason">
+                  {SUBJECTS.find((s) => s.id === item.subject)?.name ?? item.subject}
+                </span>
+                {item.duplicateWarning && (
+                  <span className="admin-status-badge" style={{ background: '#fef3c7', color: '#92400e' }}>
+                    ⚠️ Có thể trùng ({Math.round(item.duplicateWarning.similarity * 100)}%)
+                  </span>
+                )}
+              </div>
+              <p className="admin-report-q">{item.questionText}</p>
+              <p className="admin-report-time">{new Date(item.createdAt).toLocaleString('vi-VN')}</p>
+              <div className="admin-report-actions">
+                <button className="btn-secondary" onClick={() => setDetailItem(item)}>Xem chi tiết</button>
+                {item.status === 'PENDING' && (
+                  <>
+                    <button className="btn-secondary" disabled={busyId === item.id} onClick={() => void handleApprove(item.id)}>
+                      ✅ Duyệt
+                    </button>
+                    <button className="btn-secondary" disabled={busyId === item.id} onClick={() => setRejectingId(item.id)}>
+                      ❌ Từ chối
+                    </button>
+                  </>
+                )}
+              </div>
+              {rejectingId === item.id && (
+                <div style={{ marginTop: '.5rem', display: 'flex', gap: '.5rem' }}>
+                  <input
+                    className="field-input"
+                    style={{ flex: 1 }}
+                    placeholder="Lý do từ chối..."
+                    value={rejectNote}
+                    onChange={(e) => setRejectNote(e.target.value)}
+                  />
+                  <button className="btn-primary" disabled={busyId === item.id} onClick={() => void handleReject(item.id)}>Gửi</button>
+                  <button className="btn-secondary" onClick={() => { setRejectingId(null); setRejectNote(''); }}>Huỷ</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="admin-pagination">
+          <button className="btn-secondary" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>← Trước</button>
+          <span>Trang {page}/{totalPages}</span>
+          <button className="btn-secondary" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Sau →</button>
+        </div>
+      )}
+
+      {/* Modal xem chi tiết */}
+      {detailItem && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" onClick={() => setDetailItem(null)}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
+            <h3 className="modal-title">Chi tiết câu hỏi gửi</h3>
+            <p>
+              <strong>Môn:</strong> {SUBJECTS.find((s) => s.id === detailItem.subject)?.name ?? detailItem.subject}
+              {detailItem.chapter ? ` · ${detailItem.chapter}` : ''}
+            </p>
+            <p style={{ fontWeight: 600 }}>{detailItem.questionText}</p>
+            <ul style={{ paddingLeft: '1.25rem' }}>
+              {detailItem.options.map((opt, i) => (
+                <li key={i} style={{
+                  color: i === detailItem.correctOptionIndex ? '#16a34a' : undefined,
+                  fontWeight: i === detailItem.correctOptionIndex ? 700 : 400,
+                }}>
+                  {String.fromCharCode(65 + i)}. {opt}{i === detailItem.correctOptionIndex && ' ✓'}
+                </li>
+              ))}
+            </ul>
+            {detailItem.duplicateWarning && (
+              <p style={{ color: '#92400e', background: '#fef3c7', padding: '.5rem .75rem', borderRadius: 8 }}>
+                ⚠️ Có thể trùng với câu hỏi đã có trong kho (độ tương đồng {Math.round(detailItem.duplicateWarning.similarity * 100)}%).
+              </p>
+            )}
+            <div className="modal-actions">
+              {detailItem.status === 'PENDING' && (
+                <>
+                  <button className="btn-primary" disabled={busyId === detailItem.id} onClick={() => void handleApprove(detailItem.id)}>
+                    ✅ Duyệt
+                  </button>
+                  <button
+                    className="btn-secondary"
+                    disabled={busyId === detailItem.id}
+                    onClick={() => { setRejectingId(detailItem.id); setDetailItem(null); }}
+                  >❌ Từ chối</button>
+                </>
+              )}
+              <button className="btn-secondary" onClick={() => setDetailItem(null)}>Đóng</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── AdminReportsPage — hiện đầy đủ nội dung câu hỏi, sửa tại chỗ ────────────────
+
+function AdminReportsPage({ secret, onLogout }: { secret: string; onLogout: () => void }) {
+  const [summary, setSummary] = useState<ReportsSummary | null>(null);
+  const [items, setItems] = useState<QuestionReportDto[]>([]);
+  const [total, setTotal] = useState(0);
+  const [statusFilter, setStatusFilter] = useState('PENDING');
+  const [subjectFilter, setSubjectFilter] = useState('');
+  const [reasonFilter, setReasonFilter] = useState('');
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [busyId, setBusyId] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    setError('');
+    try {
+      const [s, r] = await Promise.all([
+        adminGetReportsSummary(secret),
+        adminListReports(secret, {
+          status: statusFilter || undefined,
+          subject: subjectFilter || undefined,
+          reason: reasonFilter || undefined,
+          page,
+          limit: ADMIN_PAGE_SIZE,
+        }),
+      ]);
+      setSummary(s);
+      setItems(r.items);
+      setTotal(r.total);
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        onLogout();
+        return;
+      }
+      setError(err instanceof Error ? err.message : 'Lỗi không xác định');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- load() goi API va setState de dong bo voi bo loc/page
+  useEffect(() => { void load(); }, [statusFilter, subjectFilter, reasonFilter, page]);
+
+  async function handleDismiss(reportId: string) {
+    setBusyId(reportId);
+    setNotice('');
+    setError('');
+    try {
+      const result = await adminResolveReport(secret, reportId, 'DISMISSED');
+      setNotice(
+        result.batchResolvedCount > 0
+          ? `Đã bỏ qua báo cáo (kèm ${result.batchResolvedCount} báo cáo trùng khác của cùng câu hỏi).`
+          : 'Đã bỏ qua báo cáo.',
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Lỗi không xác định');
+    } finally {
+      setBusyId('');
+    }
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / ADMIN_PAGE_SIZE));
+
+  return (
+    <div>
       {summary && (
         <div className="admin-stats">
           <div className="admin-stat-card">
-            <span className="admin-stat-num">{summary.pending}</span>
-            <span className="admin-stat-label">Chờ xử lý</span>
+            <span className="admin-stat-num">{summary.pendingReports}</span>
+            <span className="admin-stat-label">Báo cáo chờ xử lý</span>
           </div>
           <div className="admin-stat-card">
-            <span className="admin-stat-num">{summary.reviewed}</span>
-            <span className="admin-stat-label">Đã xem</span>
+            <span className="admin-stat-num">{summary.pendingQuestions}</span>
+            <span className="admin-stat-label">Câu hỏi bị báo cáo</span>
           </div>
           <div className="admin-stat-card">
             <span className="admin-stat-num">{summary.fixed}</span>
@@ -2360,16 +2633,32 @@ function AdminReportsPage({ secret, onLogout }: { secret: string; onLogout: () =
         </div>
       )}
 
-      <div className="admin-filter">
+      <div className="admin-filter" style={{ display: 'flex', gap: '.5rem', flexWrap: 'wrap' }}>
         <select
           className="field-input"
           value={statusFilter}
           onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
         >
           <option value="">Tất cả trạng thái</option>
-          {ADMIN_REPORT_STATUSES.map((s) => (
-            <option key={s} value={s}>{REPORT_STATUS_LABEL[s]}</option>
-          ))}
+          <option value="PENDING">Chờ xử lý</option>
+          <option value="FIXED">Đã sửa</option>
+          <option value="DISMISSED">Đã bỏ qua</option>
+        </select>
+        <select
+          className="field-input"
+          value={subjectFilter}
+          onChange={(e) => { setSubjectFilter(e.target.value); setPage(1); }}
+        >
+          <option value="">Tất cả môn</option>
+          {SUBJECTS.map((s) => <option key={s.id} value={s.id}>{s.emoji} {s.name}</option>)}
+        </select>
+        <select
+          className="field-input"
+          value={reasonFilter}
+          onChange={(e) => { setReasonFilter(e.target.value); setPage(1); }}
+        >
+          <option value="">Tất cả lý do</option>
+          {REPORT_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
         </select>
       </div>
 
@@ -2383,25 +2672,56 @@ function AdminReportsPage({ secret, onLogout }: { secret: string; onLogout: () =
       ) : (
         <div className="admin-report-list">
           {items.map((r) => (
-            <div key={r.id} className="admin-report-row">
-              <div className="admin-report-top">
-                <span className={`admin-status-badge status-${r.status.toLowerCase()}`}>
-                  {REPORT_STATUS_LABEL[r.status] ?? r.status}
-                </span>
-                <span className="admin-report-reason">{REPORT_REASON_LABEL[r.reason] ?? r.reason}</span>
+            editingId === r.id ? (
+              <AdminReportResolveForm
+                key={r.id}
+                secret={secret}
+                report={r}
+                onDone={(msg) => { setNotice(msg); setEditingId(null); void load(); }}
+                onCancel={() => setEditingId(null)}
+                onError={(msg) => setError(msg)}
+              />
+            ) : (
+              <div key={r.id} className="admin-report-row">
+                <div className="admin-report-top">
+                  <span className={`admin-status-badge status-${r.status.toLowerCase()}`}>
+                    {REPORT_STATUS_LABEL[r.status] ?? r.status}
+                  </span>
+                  <span className="admin-report-reason">{REPORT_REASON_LABEL[r.reason] ?? r.reason}</span>
+                  <span className="admin-report-reason">
+                    {SUBJECTS.find((s) => s.id === r.question.subject)?.name ?? r.question.subject}
+                  </span>
+                  {!r.question.isActive && (
+                    <span className="admin-status-badge" style={{ background: '#fee2e2', color: '#991b1b' }}>
+                      Đang bị ẩn
+                    </span>
+                  )}
+                </div>
+                <p className="admin-report-q" style={{ fontWeight: 600 }}>{r.question.question}</p>
+                <ul style={{ paddingLeft: '1.25rem', margin: '.35rem 0' }}>
+                  {r.question.options.map((opt, i) => (
+                    <li key={i} style={{
+                      color: i === r.question.correctAnswer ? '#16a34a' : undefined,
+                      fontWeight: i === r.question.correctAnswer ? 700 : 400,
+                    }}>
+                      {String.fromCharCode(65 + i)}. {opt}{i === r.question.correctAnswer && ' ✓'}
+                    </li>
+                  ))}
+                </ul>
+                {r.description && <p className="admin-report-desc">Học sinh ghi chú: {r.description}</p>}
+                <p className="admin-report-time">{new Date(r.createdAt).toLocaleString('vi-VN')}</p>
+                {r.status === 'PENDING' && (
+                  <div className="admin-report-actions">
+                    <button className="btn-secondary" disabled={busyId === r.id} onClick={() => setEditingId(r.id)}>
+                      ✏️ Sửa & Đánh dấu đã sửa
+                    </button>
+                    <button className="btn-secondary" disabled={busyId === r.id} onClick={() => void handleDismiss(r.id)}>
+                      Bỏ qua
+                    </button>
+                  </div>
+                )}
               </div>
-              <p className="admin-report-q">Câu hỏi: <code>{r.questionId}</code></p>
-              {r.description && <p className="admin-report-desc">{r.description}</p>}
-              <p className="admin-report-time">{new Date(r.createdAt).toLocaleString('vi-VN')}</p>
-              <div className="admin-report-actions">
-                <button className="btn-secondary" disabled={busyId === r.id || r.status === 'REVIEWED'}
-                  onClick={() => void handleStatusChange(r.id, 'REVIEWED')}>Đã xem</button>
-                <button className="btn-secondary" disabled={busyId === r.id || r.status === 'FIXED'}
-                  onClick={() => void handleStatusChange(r.id, 'FIXED')}>Đã sửa</button>
-                <button className="btn-secondary" disabled={busyId === r.id || r.status === 'DISMISSED'}
-                  onClick={() => void handleStatusChange(r.id, 'DISMISSED')}>Bỏ qua</button>
-              </div>
-            </div>
+            )
           ))}
         </div>
       )}
@@ -2413,6 +2733,133 @@ function AdminReportsPage({ secret, onLogout }: { secret: string; onLogout: () =
           <button className="btn-secondary" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Sau →</button>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Form sửa nội dung câu hỏi tại chỗ (pre-fill từ Question) — dùng khi admin bấm "Sửa & Đánh dấu đã sửa". */
+function AdminReportResolveForm({
+  secret, report, onDone, onCancel, onError,
+}: {
+  secret: string;
+  report: QuestionReportDto;
+  onDone: (message: string) => void;
+  onCancel: () => void;
+  onError: (message: string) => void;
+}) {
+  const q = report.question;
+  const [subject, setSubject] = useState(q.subject);
+  const [chapter, setChapter] = useState(q.chapter ?? '');
+  const [difficulty, setDifficulty] = useState(q.difficulty);
+  const [questionText, setQuestionText] = useState(q.question);
+  const [options, setOptions] = useState<[string, string, string, string]>(
+    [q.options[0] ?? '', q.options[1] ?? '', q.options[2] ?? '', q.options[3] ?? ''],
+  );
+  const [correctAnswer, setCorrectAnswer] = useState(q.correctAnswer);
+  const [explanation, setExplanation] = useState(q.explanation ?? '');
+  const [busy, setBusy] = useState(false);
+
+  function updateOption(i: number, value: string) {
+    setOptions((prev) => {
+      const next = [...prev] as [string, string, string, string];
+      next[i] = value;
+      return next;
+    });
+  }
+
+  /** Chỉ gửi các field THỰC SỰ thay đổi — tránh tạo snapshot question_edit_history vô ích. */
+  function buildQuestionUpdate(): ResolveReportQuestionUpdate | undefined {
+    const update: ResolveReportQuestionUpdate = {};
+    if (subject !== q.subject) update.subject = subject;
+    if (chapter !== (q.chapter ?? '')) update.chapter = chapter.trim() || null;
+    if (difficulty !== q.difficulty) update.difficulty = difficulty;
+    if (questionText.trim() !== q.question) update.question = questionText.trim();
+    if (JSON.stringify(options) !== JSON.stringify(q.options)) {
+      update.options = options.map((o) => o.trim()) as [string, string, string, string];
+    }
+    if (correctAnswer !== q.correctAnswer) update.correctAnswer = correctAnswer;
+    if (explanation.trim() !== (q.explanation ?? '')) update.explanation = explanation.trim() || null;
+    return Object.keys(update).length > 0 ? update : undefined;
+  }
+
+  async function handleSaveFixed() {
+    setBusy(true);
+    try {
+      const questionUpdate = buildQuestionUpdate();
+      const result = await adminResolveReport(secret, report.id, 'FIXED', questionUpdate);
+      const parts = [
+        result.batchResolvedCount > 0
+          ? `Đã đánh dấu đã sửa (kèm ${result.batchResolvedCount} báo cáo trùng khác của cùng câu hỏi).`
+          : 'Đã đánh dấu đã sửa.',
+      ];
+      if (result.reactivated) parts.push('Câu hỏi đã được hiện lại (trước đó bị ẩn tự động do vượt ngưỡng báo cáo).');
+      onDone(parts.join(' '));
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Lỗi không xác định');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDismiss() {
+    setBusy(true);
+    try {
+      const result = await adminResolveReport(secret, report.id, 'DISMISSED');
+      onDone(
+        result.batchResolvedCount > 0
+          ? `Đã bỏ qua (kèm ${result.batchResolvedCount} báo cáo trùng khác của cùng câu hỏi).`
+          : 'Đã bỏ qua báo cáo.',
+      );
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Lỗi không xác định');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="admin-report-row" style={{ border: '2px solid #6366f1' }}>
+      <p style={{ fontWeight: 600, margin: '0 0 .5rem' }}>Sửa nội dung câu hỏi</p>
+      <label className="form-field">
+        <span className="field-label">Môn học</span>
+        <select className="field-input" value={subject} onChange={(e) => setSubject(e.target.value)}>
+          {SUBJECTS.map((s) => <option key={s.id} value={s.id}>{s.emoji} {s.name}</option>)}
+        </select>
+      </label>
+      <label className="form-field">
+        <span className="field-label">Chương/chủ đề</span>
+        <input className="field-input" value={chapter} onChange={(e) => setChapter(e.target.value)} />
+      </label>
+      <label className="form-field">
+        <span className="field-label">Độ khó</span>
+        <select className="field-input" value={difficulty} onChange={(e) => setDifficulty(Number(e.target.value))}>
+          <option value={1}>Dễ</option>
+          <option value={2}>Trung bình</option>
+          <option value={3}>Khó</option>
+        </select>
+      </label>
+      <label className="form-field">
+        <span className="field-label">Nội dung câu hỏi</span>
+        <textarea className="field-input" rows={3} value={questionText} onChange={(e) => setQuestionText(e.target.value)} />
+      </label>
+      <span className="field-label" style={{ display: 'block', marginTop: '.5rem' }}>4 đáp án (chọn ô tròn cho đáp án đúng)</span>
+      {options.map((opt, i) => (
+        <label key={i} className="form-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '.5rem' }}>
+          <input type="radio" name={`correct-${report.id}`} checked={correctAnswer === i} onChange={() => setCorrectAnswer(i)} />
+          <input className="field-input" style={{ flex: 1 }} value={opt} onChange={(e) => updateOption(i, e.target.value)} />
+        </label>
+      ))}
+      <label className="form-field">
+        <span className="field-label">Giải thích (tuỳ chọn)</span>
+        <textarea className="field-input" rows={2} value={explanation} onChange={(e) => setExplanation(e.target.value)} />
+      </label>
+      <div style={{ display: 'flex', gap: '.5rem', marginTop: '.75rem', flexWrap: 'wrap' }}>
+        <button className="btn-primary" disabled={busy} onClick={() => void handleSaveFixed()}>
+          {busy ? <><Spinner /> Đang lưu…</> : 'Lưu & Đánh dấu đã sửa'}
+        </button>
+        <button className="btn-secondary" disabled={busy} onClick={() => void handleDismiss()}>Bỏ qua</button>
+        <button className="btn-secondary" disabled={busy} onClick={onCancel}>Huỷ</button>
+      </div>
     </div>
   );
 }
@@ -4396,6 +4843,286 @@ const res: WrongAnswerListResponse = await getWrongAnswers(sessionToken, subj ||
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── SubmissionsPage (học sinh) — gửi câu hỏi + xem câu đã gửi ───────────────
+
+type SubmissionsSub = 'form' | 'list';
+
+const SUBMISSION_STATUS_LABEL: Record<SubmissionStatus, string> = {
+  PENDING:  '🟡 Chờ duyệt',
+  APPROVED: '✅ Đã duyệt',
+  REJECTED: '❌ Từ chối',
+};
+
+function SubmissionsPage({
+  sessionToken, onBack, onError,
+}: {
+  sessionToken: string;
+  onBack: () => void;
+  onError: (e: unknown) => void;
+}) {
+  const [sub, setSub] = useState<SubmissionsSub>('form');
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  return (
+    <div className="screen" style={{ background: '#f8fafc', minHeight: '100vh', paddingBottom: '80px' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '.75rem', padding: '1rem 1.25rem .75rem', background: 'linear-gradient(135deg,#84fab0,#8fd3f4)', color: '#1e293b' }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1e293b', fontSize: '1.4rem', cursor: 'pointer', padding: 0 }}>←</button>
+        <h2 style={{ flex: 1, margin: 0, fontSize: '1.15rem', fontWeight: 700 }}>✍️ Đóng góp câu hỏi</h2>
+      </div>
+
+      {/* Sub-tabs */}
+      <div style={{ display: 'flex', background: '#fff', borderBottom: '1px solid #e2e8f0' }}>
+        <button
+          className={`admin-tab ${sub === 'form' ? 'active' : ''}`}
+          style={{ flex: 1 }}
+          onClick={() => setSub('form')}
+        >Gửi câu hỏi mới</button>
+        <button
+          className={`admin-tab ${sub === 'list' ? 'active' : ''}`}
+          style={{ flex: 1 }}
+          onClick={() => setSub('list')}
+        >Câu đã gửi</button>
+      </div>
+
+      <div style={{ padding: '1rem 1.25rem' }}>
+        {sub === 'form' && (
+          <SubmissionFormFields
+            mode="create"
+            sessionToken={sessionToken}
+            onError={onError}
+            onDone={() => { setSub('list'); setRefreshKey((k) => k + 1); }}
+          />
+        )}
+        {sub === 'list' && (
+          <SubmissionListSection key={refreshKey} sessionToken={sessionToken} onError={onError} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Form dùng chung cho tạo mới (mode="create") và sửa (mode="edit", cần truyền `initial`). */
+function SubmissionFormFields({
+  mode, initial, sessionToken, onError, onDone, onCancel,
+}: {
+  mode: 'create' | 'edit';
+  initial?: SubmissionDto;
+  sessionToken: string;
+  onError: (e: unknown) => void;
+  onDone: () => void;
+  onCancel?: () => void;
+}) {
+  const [subject, setSubject] = useState(initial?.subject ?? '');
+  const [chapter, setChapter] = useState(initial?.chapter ?? '');
+  const [questionText, setQuestionText] = useState(initial?.questionText ?? '');
+  const [options, setOptions] = useState<[string, string, string, string]>(
+    initial?.options ?? ['', '', '', ''],
+  );
+  const [correctOptionIndex, setCorrectOptionIndex] = useState<number | null>(
+    initial?.correctOptionIndex ?? null,
+  );
+  const [busy, setBusy] = useState(false);
+  const [validationError, setValidationError] = useState('');
+
+  function updateOption(i: number, value: string) {
+    setOptions((prev) => {
+      const next = [...prev] as [string, string, string, string];
+      next[i] = value;
+      return next;
+    });
+  }
+
+  function validate(): string {
+    if (!subject) return 'Vui lòng chọn môn học.';
+    if (questionText.trim().length < 5) return 'Nội dung câu hỏi quá ngắn (tối thiểu 5 ký tự).';
+    if (options.some((o) => !o.trim())) return 'Vui lòng nhập đủ 4 đáp án.';
+    if (correctOptionIndex === null) return 'Vui lòng chọn đáp án đúng.';
+    return '';
+  }
+
+  async function handleSubmit() {
+    const validationMsg = validate();
+    if (validationMsg) { setValidationError(validationMsg); return; }
+    setValidationError('');
+    setBusy(true);
+    try {
+      const payload = {
+        subject,
+        chapter: chapter.trim() || undefined,
+        questionText: questionText.trim(),
+        options: options.map((o) => o.trim()) as [string, string, string, string],
+        correctOptionIndex: correctOptionIndex!,
+      };
+      if (mode === 'create') {
+        await createSubmission(sessionToken, payload);
+      } else if (initial) {
+        await updateSubmission(sessionToken, initial.id, payload);
+      }
+      if (mode === 'create') {
+        setSubject(''); setChapter(''); setQuestionText('');
+        setOptions(['', '', '', '']); setCorrectOptionIndex(null);
+      }
+      onDone();
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 400 || err.status === 409)) {
+        setValidationError(err.message);
+      } else {
+        onError(err);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ background: '#fff', borderRadius: 12, padding: '1rem', border: '1px solid #e2e8f0' }}>
+      {mode === 'create' && (
+        <p style={{ margin: '0 0 1rem', fontSize: '.85rem', color: '#64748b' }}>
+          Gửi câu hỏi trắc nghiệm để đóng góp vào ngân hàng câu hỏi. Câu hỏi được duyệt sẽ thưởng{' '}
+          <strong>30 điểm</strong>, mỗi lần được dùng trong 1 đề thi thật sẽ thưởng thêm{' '}
+          <strong>5 điểm</strong> (tối đa 100 điểm/câu). Tối đa 5 câu/ngày.
+        </p>
+      )}
+      <label className="form-field">
+        <span className="field-label">Môn học</span>
+        <select className="field-input" value={subject} onChange={(e) => setSubject(e.target.value)}>
+          <option value="">-- Chọn môn --</option>
+          {SUBJECTS.map((s) => <option key={s.id} value={s.id}>{s.emoji} {s.name}</option>)}
+        </select>
+      </label>
+      <label className="form-field">
+        <span className="field-label">Chương/chủ đề (tuỳ chọn)</span>
+        <input
+          className="field-input"
+          value={chapter}
+          onChange={(e) => setChapter(e.target.value)}
+          placeholder="VD: Hàm số"
+        />
+      </label>
+      <label className="form-field">
+        <span className="field-label">Nội dung câu hỏi</span>
+        <textarea
+          className="field-input"
+          rows={3}
+          value={questionText}
+          onChange={(e) => setQuestionText(e.target.value)}
+          placeholder="Nhập nội dung câu hỏi..."
+        />
+      </label>
+      <span className="field-label" style={{ display: 'block', marginTop: '.5rem' }}>4 đáp án (chọn ô tròn cho đáp án đúng)</span>
+      {options.map((opt, i) => (
+        <label key={i} className="form-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '.5rem' }}>
+          <input
+            type="radio"
+            name="correctOption"
+            checked={correctOptionIndex === i}
+            onChange={() => setCorrectOptionIndex(i)}
+          />
+          <input
+            className="field-input"
+            style={{ flex: 1 }}
+            value={opt}
+            onChange={(e) => updateOption(i, e.target.value)}
+            placeholder={`Đáp án ${String.fromCharCode(65 + i)}`}
+          />
+        </label>
+      ))}
+      {validationError && <p className="report-error">{validationError}</p>}
+      <div style={{ display: 'flex', gap: '.5rem', marginTop: '.75rem' }}>
+        <button className="btn-primary btn-lg" disabled={busy} onClick={() => void handleSubmit()}>
+          {busy ? <><Spinner /> Đang lưu…</> : mode === 'create' ? 'Gửi câu hỏi' : 'Lưu thay đổi'}
+        </button>
+        {mode === 'edit' && onCancel && (
+          <button className="btn-secondary btn-lg" disabled={busy} onClick={onCancel}>Huỷ</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SubmissionListSection({
+  sessionToken, onError,
+}: {
+  sessionToken: string;
+  onError: (e: unknown) => void;
+}) {
+  const [items, setItems] = useState<SubmissionDto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const res = await getMySubmissions(sessionToken, { limit: 50 });
+      setItems(res.items);
+    } catch (err) { onError(err); }
+    finally { setLoading(false); }
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- load() 1 lan khi mount
+  useEffect(() => { void load(); }, []);
+
+  async function handleDelete(id: string) {
+    if (!confirm('Xoá câu hỏi này?')) return;
+    try {
+      await deleteSubmission(sessionToken, id);
+      await load();
+    } catch (err) { onError(err); }
+  }
+
+  if (loading) return <div style={{ textAlign: 'center', padding: '2rem' }}><Spinner /></div>;
+  if (items.length === 0) {
+    return <p style={{ textAlign: 'center', color: '#94a3b8', padding: '2rem' }}>Bạn chưa gửi câu hỏi nào.</p>;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '.75rem' }}>
+      {items.map((item) => (
+        editingId === item.id ? (
+          <SubmissionFormFields
+            key={item.id}
+            mode="edit"
+            initial={item}
+            sessionToken={sessionToken}
+            onError={onError}
+            onDone={() => { setEditingId(null); void load(); }}
+            onCancel={() => setEditingId(null)}
+          />
+        ) : (
+          <div key={item.id} style={{ background: '#fff', borderRadius: 12, padding: '.85rem 1rem', border: '1px solid #e2e8f0' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontWeight: 600, fontSize: '.85rem' }}>{SUBMISSION_STATUS_LABEL[item.status]}</span>
+              <span style={{ fontSize: '.78rem', color: '#94a3b8' }}>{new Date(item.createdAt).toLocaleDateString('vi-VN')}</span>
+            </div>
+            <p style={{ margin: '.5rem 0', fontWeight: 500 }}>{item.questionText}</p>
+            <p style={{ margin: 0, fontSize: '.82rem', color: '#64748b' }}>
+              Môn: {SUBJECTS.find((s) => s.id === item.subject)?.name ?? item.subject}
+              {item.chapter ? ` · ${item.chapter}` : ''}
+            </p>
+            {item.status === 'REJECTED' && item.adminNote && (
+              <p style={{ margin: '.5rem 0 0', fontSize: '.82rem', color: '#e53', background: '#fef2f2', padding: '.5rem .65rem', borderRadius: 8 }}>
+                Lý do từ chối: {item.adminNote}
+              </p>
+            )}
+            {item.status === 'APPROVED' && (
+              <p style={{ margin: '.5rem 0 0', fontSize: '.82rem', color: '#16a34a' }}>
+                Đã dùng {item.usageCount} lần trong đề thi · +{item.usagePointsEarned}đ (tối đa 100đ)
+              </p>
+            )}
+            {item.status === 'PENDING' && (
+              <div style={{ display: 'flex', gap: '.5rem', marginTop: '.6rem' }}>
+                <button className="btn-secondary" onClick={() => setEditingId(item.id)}>Sửa</button>
+                <button className="btn-secondary" style={{ color: '#e53' }} onClick={() => void handleDelete(item.id)}>Xoá</button>
+              </div>
+            )}
+          </div>
+        )
+      ))}
     </div>
   );
 }
