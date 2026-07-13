@@ -15,6 +15,8 @@ import { progressRouter } from './routes/progress.route.js';
 import { wrongAnswerRouter } from './routes/wrongAnswer.route.js';
 import { adminUsersRouter } from './routes/admin-users.route.js';
 import { notificationRouter } from './routes/notification.route.js';
+import { submissionRouter } from './routes/submission.route.js';
+import { adminSubmissionRouter } from './routes/admin-submission.route.js';
 import type { ZodIssue } from 'zod';
 
 /**
@@ -91,6 +93,12 @@ const ERROR_CODE_TO_HTTP_STATUS: Readonly<Record<string, number>> = {
   // Notifications
   NOTIFICATION_NOT_FOUND: 404,
   NOTIFICATION_NOT_OWNED: 403,
+  // Quan ly cau hoi — Hoc sinh dong gop cau hoi (Submissions)
+  SUBMISSION_NOT_FOUND: 404,
+  SUBMISSION_NOT_OWNED: 403,
+  SUBMISSION_NOT_PENDING: 409,
+  SUBMISSION_RATE_LIMIT_EXCEEDED: 400,
+  SUBMISSION_REJECT_NOTE_REQUIRED: 400,
 };
 
 /** Kiem tra 1 gia tri loi co phai la "custom error" co truong `code` (string) hay khong. */
@@ -141,6 +149,8 @@ export function createApp(): Application {
   app.use('/api/wrong-answers', wrongAnswerRouter);
   app.use('/api/admin', adminUsersRouter);
   app.use('/api/notifications', notificationRouter);
+  app.use('/api/submissions', submissionRouter);
+  app.use('/api/admin', adminSubmissionRouter);
 
   // Route kiem tra suc khoe server
   app.get('/api/health', (_req: Request, res: Response) => {
