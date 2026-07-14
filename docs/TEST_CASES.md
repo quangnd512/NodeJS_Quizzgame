@@ -707,6 +707,8 @@
 > Bổ sung ở vòng S3 (2026-07-13): 5 test case race-condition (approve/reject/update/xoá
 > submission) + 5 test case usage-points CAS (question-bank.service) + 10 test case
 > text-similarity.utils (trước đó chỉ được test gián tiếp qua duplicateWarning).
+> Bổ sung ở vòng làm lại S3 (2026-07-14/15, theo phát hiện của S8): case #32 —
+> `resolveReport()` cũng cần claim-pattern race-condition như `approveSubmission`.
 
 ### Happy Path
 | # | Mô tả | Input | Expected Output |
@@ -750,3 +752,4 @@
 | 29 | **Race condition (CAS)**: 2 lần addFromBank cho cùng 1 câu hỏi xảy ra gần như đồng thời | lần ghi đầu bị xung đột (`usagePointsEarned` đã đổi) | tự động đọc lại giá trị mới nhất và thử lại (tối đa 5 lần) — không bị "lost update" làm sai điểm/trần usage |
 | 30 | PATCH .../resolve — status không hợp lệ (gửi REVIEWED) | status="REVIEWED" | 400 (Zod: chỉ chấp nhận FIXED\|DISMISSED) |
 | 31 | PATCH .../resolve — reportId không tồn tại | id ngẫu nhiên | 404 | `QUESTION_REPORT_NOT_FOUND` |
+| 32 | **Race condition**: PATCH .../resolve gọi 2 lần liên tiếp trên cùng 1 report (double-click, retry client, hoặc 2 admin xử lý gần như đồng thời) | request thứ 2 "thua cuộc đua claim" (`updateMany` điều kiện `status:'PENDING'` trong transaction trả count=0) | 409 `REPORT_NOT_PENDING` — KHÔNG tạo thêm `question_edit_history` thừa, KHÔNG ghi đè Question, KHÔNG gửi trùng thông báo REPORT_RESOLVED |

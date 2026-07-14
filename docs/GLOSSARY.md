@@ -1296,3 +1296,92 @@ const handleVisibilityChange = () => {
 };
 document.addEventListener('visibilitychange', handleVisibilityChange);
 ```
+
+---
+
+## Thuật ngữ Feature 014 — Quản lý câu hỏi (Học sinh đóng góp + Report Redesign)
+
+> Các thuật ngữ dưới đây là **pattern tổng quát**, không riêng gì QuizzGame — đáng nhớ để áp dụng lại ở các dự án khác có cùng nhu cầu (cộng dồn giá trị có trần dưới concurrency, cho phép "unique có điều kiện", hoặc lọc nhiều chiều liên động).
+
+### Compare-And-Swap (CAS) Retry Pattern
+
+**Định nghĩa**: Kỹ thuật cập nhật an toàn dưới concurrency mà KHÔNG cần lock DB (`SELECT FOR UPDATE`) hay cột `version` riêng — đọc giá trị hiện tại, rồi ghi có điều kiện đúng bằng giá trị vừa đọc đó (đưa vào mệnh đề `WHERE`). Nếu có ai khác đã ghi trước, điều kiện không khớp (`count === 0`) → đọc lại giá trị mới nhất và thử lại.
+
+**Trong dự án này** (`question-bank.service.ts` → `awardUsagePointsForSubmission`):
+```ts
+for (let attempt = 0; attempt < MAX_CAS_RETRY; attempt++) {
+  const sub = await prisma.studentQuestionSubmission.findUnique({ where: { id } });
+  const newTotal = sub.usagePointsEarned + pointsToAdd;
+  const claimed = await prisma.studentQuestionSubmission.updateMany({
+    where: { id, usagePointsEarned: sub.usagePointsEarned }, // ← điều kiện = giá trị vừa đọc
+    data: { usagePointsEarned: newTotal },
+  });
+  if (claimed.count === 0) continue; // thua cuộc đua — đọc lại, thử lại
+  break; // thắng
+}
+```
+
+**Khi nào chọn CAS thay vì cột `version`**: khi chính giá trị nghiệp vụ cần bảo vệ (ở đây: `usagePointsEarned`) đã đủ để làm điều kiện so sánh — không cần theo dõi "có ai đụng vào bản ghi hay không" một cách tổng quát cho MỌI trường.
+
+**Rủi ro nếu thiếu**: "lost update" — 2 lần ghi gần như đồng thời, lần sau ghi đè lần trước mà không biết, khiến tổng giá trị thực tế thấp hơn tính toán (ở đây làm trần 100đ/câu bị tính sai).
+
+---
+
+### Partial Unique Index (Unique Index có điều kiện)
+
+**Định nghĩa**: Ràng buộc `UNIQUE` ở tầng DB chỉ áp dụng cho các hàng thoả 1 điều kiện `WHERE`, thay vì áp dụng cho toàn bộ bảng.
+
+**Cú pháp SQL** (không có trong cú pháp khai báo của `schema.prisma` — phải viết raw SQL migration):
+```sql
+CREATE UNIQUE INDEX ... ON question_reports (userId, questionId)
+  WHERE status = 'PENDING';
+```
+
+**Trong dự án này**: cho phép 1 học sinh có NHIỀU report lịch sử cho cùng 1 câu hỏi (đã FIXED/DISMISSED), nhưng chỉ được có TỐI ĐA 1 report đang PENDING tại một thời điểm — khác với `UNIQUE` toàn phần trước đó (chặn báo cáo lại vĩnh viễn).
+
+**Vì sao rẻ hơn phương án tự quản lý ở code**: nếu không có partial index, service phải tự kiểm tra "còn PENDING không" rồi mới cho tạo — nhưng giữa lúc kiểm tra và lúc ghi luôn có khe hở race condition (TOCTOU). Partial index đẩy việc đảm bảo tính duy nhất xuống tầng DB — atomic thật sự, không cần transaction riêng.
+
+---
+
+### Faceted Filtering (Lọc liên động nhiều chiều)
+
+**Định nghĩa**: Kỹ thuật UI/API cho trang có ≥2 dropdown lọc đồng thời — giá trị hiển thị trong dropdown X chỉ là các giá trị THỰC SỰ tồn tại trong dữ liệu đã lọc theo TẤT CẢ điều kiện khác (bỏ qua chính X).
+
+**Công thức chung**:
+```
+facets(status, subject, reason):
+  statuses = distinct(status)  WHERE subject=? AND reason=?   (bỏ qua status)
+  subjects = distinct(subject) WHERE status=?  AND reason=?   (bỏ qua subject)
+  reasons  = distinct(reason)  WHERE status=?  AND subject=?  (bỏ qua reason)
+```
+→ luôn cần N query riêng biệt cho N dropdown (không gộp thành 1 query được), vì mỗi dropdown cần loại trừ đúng 1 điều kiện khác nhau.
+
+**Trong dự án này** (`practice.service.ts` → `getReportFilterFacets`): phức tạp hơn công thức chuẩn vì `subject` không nằm trực tiếp trên bảng `QuestionReport` — phải tự JOIN 2 bước qua bảng `Question` bằng `Map` trong bộ nhớ (không có Prisma relation chính thức giữa 2 bảng).
+
+---
+
+### Claim Pattern (updateMany/deleteMany điều kiện trạng thái)
+
+**Định nghĩa**: Thay vì `findUnique` rồi kiểm tra điều kiện ở tầng code rồi mới `update`/`delete` theo `id` đơn thuần (dễ dính TOCTOU — Time-Of-Check to Time-Of-Use), dùng `updateMany`/`deleteMany` với điều kiện đầy đủ (`id` + trạng thái mong đợi) ngay trong `WHERE`, rồi kiểm tra `count` trả về.
+
+**Trong dự án này**: `approveSubmission`/`rejectSubmission`/`updateSubmission`/`deleteSubmission` đều dùng `updateMany({ where: { id, status: 'PENDING' }, ... })` — nếu 2 admin cùng xử lý 1 submission gần như đồng thời, chỉ 1 request có `count === 1` (thắng "cuộc đua"), request còn lại nhận `count === 0` và báo lỗi rõ ràng thay vì âm thầm ghi đè hoặc xoá hụt.
+
+**Vì sao không dùng `update`/`delete` đơn thuần theo `id`**: các hàm này chỉ ném lỗi runtime nếu bản ghi biến mất hoàn toàn, KHÔNG kiểm tra được "bản ghi còn đúng trạng thái tôi mong đợi hay không" — `updateMany`/`deleteMany` trả `count` cho phép code tự biết mình có "thắng cuộc đua" hay không trong 1 round-trip DB duy nhất.
+
+---
+
+### Jaccard Similarity (Độ tương đồng Jaccard)
+
+**Định nghĩa**: Thước đo độ giống nhau giữa 2 tập hợp = (số phần tử chung) / (tổng số phần tử khác nhau của cả 2 tập). Áp dụng cho văn bản bằng cách tách thành tập hợp từ (sau khi chuẩn hoá).
+
+**Trong dự án này** (`text-similarity.utils.ts`): chuẩn hoá câu hỏi (bỏ dấu tiếng Việt, hạ chữ thường, bỏ ký tự đặc biệt) → tách tập từ → tính tỉ lệ từ chung. Dùng để CẢNH BÁO (không chặn) khi câu học sinh gửi có thể trùng câu đã có trong Ngân hàng câu hỏi.
+
+**Giới hạn cần nhớ**: đây là thuật toán "thô" — không hiểu đồng nghĩa, không hiểu đảo vị trí câu. Chỉ đủ bắt các trường hợp copy/paste gần giống hệt nhau. Nếu cần độ chính xác cao hơn (đồng nghĩa, diễn đạt lại), cần embedding-based similarity (vector hoá + cosine similarity) — ngoài phạm vi yêu cầu "so khớp đơn giản" ban đầu.
+
+---
+
+### Schema-Shape Validation Reuse (Tái dùng hàm kiểm tra hình dạng dữ liệu)
+
+**Định nghĩa**: Khi 2 tính năng khác nhau cùng cần đảm bảo "dữ liệu đầu vào đúng hình dạng theo 1 discriminator field" (ở đây: `options`/`correctAnswer` phải đúng hình dạng theo `questionType`), tái dùng lại đúng 1 hàm validate thay vì viết lại logic tương tự ở nơi khác.
+
+**Trong dự án này**: `validateQuestionShape()` vốn viết cho module Thi thử (`exam.service.ts`), được `submission.service.ts` import và gọi lại y nguyên khi học sinh gửi/sửa câu hỏi — đảm bảo 2 nơi tạo câu hỏi trong hệ thống (`ExamQuestion` và `StudentQuestionSubmission`) không bao giờ lệch quy tắc hình dạng dữ liệu với nhau.

@@ -153,3 +153,33 @@ Toast 4 giây (giá trị ban đầu S2 chọn) là hợp lý về lý thuyết,
 
 **9. `setInterval` bị trình duyệt throttle ở tab nền — cần lắng nghe `visibilitychange` bổ sung**
 Polling 30 giây qua `setInterval` hoạt động đúng khi tab đang active, nhưng khi user chuyển sang tab/cửa sổ khác một lúc rồi quay lại, `setInterval` có thể đã bị trình duyệt tạm hoãn để tiết kiệm tài nguyên → badge/toast "trễ" hơn 30 giây thực tế, cảm giác như phải F5 mới cập nhật. **Bài học**: bất kỳ polling nào chạy nền qua `setInterval` trong ứng dụng web nên có thêm 1 listener `visibilitychange` gọi lại ngay khi tab active trở lại — đây không phải bug logic mà là đặc tính có chủ đích của trình duyệt (tiết kiệm CPU/pin cho tab ẩn), nên phải chủ động bù trừ ở tầng code.
+
+## Vòng 14: Quản lý câu hỏi — Học sinh đóng góp câu hỏi + Report Redesign (2026-07-13 → 2026-07-14)
+
+### Bài học từ S3 review (3 race condition)
+
+**1. Check-rồi-ghi (TOCTOU) là lỗi lặp lại — luôn nghĩ tới `updateMany`/`deleteMany` điều kiện ngay từ bản nháp đầu tiên**
+Bản đầu tiên của `approveSubmission`/`rejectSubmission`/`updateSubmission`/`deleteSubmission` đều viết theo mẫu "check status rồi mới update/delete theo id" — dính race condition khi 2 admin xử lý gần như đồng thời, hoặc học sinh sửa đúng lúc admin duyệt. **Bài học**: đây là lỗi đã từng gặp ở nhiều feature trước (Notifications, Exam submit...) — bất kỳ thao tác ghi nào có điều kiện tiền đề về trạng thái ("chỉ khi còn PENDING") nên mặc định viết bằng `updateMany`/`deleteMany` kèm điều kiện đó trong `WHERE` NGAY TỪ ĐẦU, không đợi review phát hiện. Xem Glossary "Claim Pattern".
+
+**2. Lost update trên giá trị có trần (cap) — cần Compare-And-Swap, không phải `update` thường**
+`awardUsagePointsForSubmission` (cộng điểm usage, trần 100đ/câu) ban đầu đọc-tính-ghi bằng `update` thường — 2 lần gọi gần như đồng thời (2 đề thi khác nhau cùng thêm 1 câu) có thể làm mất 1 lần cộng điểm mà không có dấu hiệu lỗi nào. **Bài học**: bất kỳ giá trị nào "cộng dồn có trần" dưới điều kiện concurrency cao cần CAS (đọc giá trị cũ, ghi có điều kiện đúng giá trị cũ đó) — không thể phát hiện qua test đơn luồng, chỉ lộ ra qua test concurrency có chủ đích. Xem Glossary "Compare-And-Swap (CAS) Retry Pattern".
+
+**3. Reuse hàm validate giữa 2 module giảm rủi ro lệch quy tắc dữ liệu**
+`validateQuestionShape()` viết cho module Thi thử được tái dùng nguyên vẹn cho Submissions — tránh 2 nơi tạo câu hỏi trong hệ thống có 2 bộ quy tắc hình dạng dữ liệu khác nhau (rủi ro: 1 câu hợp lệ ở module này nhưng crash ở module kia khi hiển thị chung).
+
+### Bài học bổ sung từ S5 testing (5 thay đổi so với thiết kế gốc)
+
+**4. Thiết kế ban đầu quá đơn giản so với nhu cầu thật — chỉ lộ ra khi người dùng thử luồng thật**
+Bản gốc S1 chỉ định "học sinh gửi câu hỏi trắc nghiệm 4 đáp án" — khi thử nghiệm thực tế, phát hiện câu hỏi học sinh gửi "kém phong phú" hẳn so với câu admin tự soạn (vốn có 3 dạng). Phải bổ sung `questionType`, kéo theo đổi kiểu cột `correctOptionIndex`(Int)→`correctAnswer`(Json) — 1 migration thay đổi HÌNH DẠNG dữ liệu, không chỉ thêm cột. **Bài học**: với tính năng cho phép user tự tạo nội dung, nên đối chiếu ngay từ đầu với "nội dung cùng loại đã có trong hệ thống được tạo phong phú thế nào" — tránh sản phẩm 2 hạng (nội dung do admin tạo > nội dung do user tạo) không chủ đích.
+
+**5. Ràng buộc UNIQUE "vĩnh viễn" dễ trở thành bug UX khi nhìn theo trục thời gian**
+`UNIQUE(userId, questionId)` cho báo cáo lỗi nghe hợp lý lúc thiết kế ("1 người báo cáo 1 câu 1 lần") nhưng bỏ qua trục thời gian: câu hỏi có thể được sửa xong, rồi phát sinh lỗi MỚI sau đó — ràng buộc cũ chặn vĩnh viễn không cho báo cáo lại. **Bài học**: khi thiết kế ràng buộc UNIQUE cho 1 cặp (user, đối tượng), tự hỏi "ràng buộc này có nên tồn tại MÃI MÃI, hay chỉ nên đúng trong 1 trạng thái/thời điểm nhất định?" — nếu là vế sau, cân nhắc partial unique index ngay từ đầu thay vì unique toàn phần.
+
+**6. UX lỗi nên phân biệt "sửa được ngay" vs "giới hạn cứng"**
+Lỗi validate (sai định dạng...) và lỗi rate-limit (vượt 5 câu/ngày) ban đầu hiện chung 1 kiểu (chữ đỏ inline) — nhưng bản chất khác hẳn nhau: 1 loại sửa xong thử lại được ngay, loại kia phải đợi qua ngày. **Bài học**: phân loại lỗi theo "hành động tiếp theo của user là gì" (sửa ngay / chờ / liên hệ hỗ trợ) để chọn mức độ hiển thị tương xứng (inline / modal / trang riêng), không mặc định mọi lỗi đều hiển thị giống nhau.
+
+**7. Cảnh báo "có thể trùng X%" không đủ thông tin để hành động — cần kèm bằng chứng cụ thể**
+Cảnh báo trùng lặp ban đầu chỉ có con số % — admin muốn xác minh phải tự mở tab khác tra cứu, tốn thao tác và dễ bỏ qua cảnh báo vì lười kiểm tra. Bổ sung nội dung + đáp án đầy đủ của câu nghi trùng ngay trong response. **Bài học**: khi hệ thống đưa ra 1 cảnh báo/gợi ý cần con người ra quyết định, luôn tự hỏi "người dùng có đủ thông tin để hành động NGAY tại đây không, hay họ phải rời màn hình để tìm thêm?" — nếu phải rời màn hình, khả năng cao cảnh báo sẽ bị bỏ qua.
+
+**8. Dropdown lọc tĩnh gây hiểu lầm "không có dữ liệu" khi thực chất là "tổ hợp lọc rỗng"**
+3 dropdown lọc (status/subject/reason) ban đầu luôn hiện đủ mọi giá trị tĩnh — chọn `status=FIXED` + `subject=VĂN` (chưa từng có báo cáo FIXED môn Văn) → danh sách trống, học sinh/admin dễ hiểu lầm là lỗi hệ thống thay vì "tổ hợp lọc này không có dữ liệu". **Bài học**: với trang có ≥2 dropdown lọc đồng thời, nên làm lọc liên động (mỗi dropdown chỉ hiện giá trị thực sự khớp với các điều kiện lọc còn lại) ngay từ đầu nếu ngân sách cho phép — tránh phải làm lại sau khi người dùng phản hồi "sao chọn xong không có gì cả".

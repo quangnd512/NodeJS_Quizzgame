@@ -837,7 +837,7 @@ Fail-closed ở `checkRateLimit` là quyết định bảo mật đúng. Sentine
 | 4 | Input validation | ✅ Pass | Zod validate đầy đủ ở mọi route mới (subject theo `SUBJECT_CATALOG`, options tuple 4 phần tử, correctOptionIndex 0-3, note bắt buộc khi reject, status resolve chỉ nhận FIXED\|DISMISSED); không có raw SQL với input người dùng |
 | 5 | N+1 / Index | ✅ Pass (1 ghi chú nhẹ) | `computeDuplicateWarnings` 1 query duy nhất cho toàn bộ candidates rồi so khớp in-memory (không N+1 DB); `joinReportsWithQuestions` cũng 1 query gộp. Index mới `[userId,status,createdAt]` phục vụ tốt truy vấn học sinh + rate-limit, nhưng `listSubmissionsAdmin` (lọc theo status, không có userId) sẽ không tận dụng được index này — chấp nhận được vì khối lượng dữ liệu nhỏ (rate limit 5 câu/ngày/học sinh), không thêm migration mới để tránh rủi ro trùng với vấn đề "drift cosmetic" đã ghi nhận ở bảng notifications (theo lưu ý của S2) |
 | 6 | TypeScript `any` | ✅ Pass | Rà toàn bộ diff (backend + frontend) — không có `any` nào |
-| 7 | Edge cases | ✅ Pass | Rỗng (rows.length===0 trong computeDuplicateWarnings/joinReportsWithQuestions), question bị xoá khi JOIN report (bỏ qua an toàn), trần usage 100đ (min() đúng), report đã bị resolve trước đó, rate limit biên (4 vs 5) |
+| 7 | Edge cases | ⚠️ Ghi nhận SAI ở vòng đầu, đã sửa ở vòng làm lại (xem mục "Làm lại lần 1" bên dưới) | Rỗng (rows.length===0 trong computeDuplicateWarnings/joinReportsWithQuestions), question bị xoá khi JOIN report (bỏ qua an toàn), trần usage 100đ (min() đúng), rate limit biên (4 vs 5) đều ĐÚNG. Riêng dòng "report đã bị resolve trước đó" ghi nhận NHẦM — lúc đó tôi kiểm tra hành vi của `updateReport()` cũ (vẫn giữ nội bộ) chứ không phải `resolveReport()` mới (hàm THẬT SỰ được endpoint dùng) — `resolveReport()` lúc đó KHÔNG có guard này. S8 phát hiện và trả lại, xem chi tiết bên dưới. |
 | 8 | API contract | ✅ Pass | Đối chiếu từng endpoint với `docs/api/drafts/quan-ly-cau-hoi.yaml`: method/path/request/response/error codes đều khớp (kể cả HTTP status 404/403/409/400 map đúng trong `app.ts`) |
 
 ### 🔴 Lỗi Race Condition tìm thấy & đã sửa
@@ -872,3 +872,53 @@ Fail-closed ở `checkRateLimit` là quyết định bảo mật đúng. Sentine
 - `backend/src/utils/__tests__/text-similarity.utils.test.ts` — file test MỚI (10 test)
 - `docs/TEST_CASES.md` — thêm 31 test case Feature 014
 - `docs/CODE_REVIEW_LOG.md` — file này
+
+---
+
+### Làm lại lần 1 — race condition sót lại trong `resolveReport()` (phát hiện bởi S8)
+
+**Ngày**: 2026-07-14/15
+**Reviewer**: S3-SoatLoi (theo yêu cầu làm lại từ S8-GiamSat)
+**Branch**: `feature/question-management-hub`
+
+**Lỗi S8 phát hiện**: `resolveReport()` (`practice.service.ts` dòng ~951) — endpoint MỚI thay thế
+toàn bộ luồng xử lý báo cáo cũ — cập nhật report CHÍNH bằng `tx.questionReport.update({ where: {
+id: reportId }, data: { status } })`, một `update` THƯỜNG không điều kiện, trong khi phần "batch
+đóng các report PENDING KHÁC cùng câu" lại đã đúng. Đây CHÍNH LÀ lớp race condition tôi vừa tìm và
+sửa ở 2 chỗ khác trong cùng PR này (`approveSubmission`, `rejectSubmission`/`updateSubmission`/
+`deleteSubmission`) nhưng đã bỏ sót ở hàm này. Gọi resolve 2 lần liên tiếp trên cùng 1 report
+(double-click, retry client, hoặc 2 admin xử lý gần như đồng thời) không báo lỗi, chạy lại toàn
+bộ: tạo thêm 1 `question_edit_history` thừa, có thể ghi đè Question (lost update), gửi thêm 1
+thông báo REPORT_RESOLVED trùng lặp.
+
+Tôi cũng ghi nhận sai trong review log vòng đầu (dòng "report đã bị resolve trước đó ✅") — do
+nhầm với hành vi gate-thông-báo của hàm `updateReport()` cũ (khác hàm, chỉ dùng nội bộ), không
+phải hành vi thật của `resolveReport()`.
+
+**Đã sửa**:
+1. Thêm `ReportNotPendingError extends PracticeError` (HTTP 409, mã `REPORT_NOT_PENDING`) trong
+   `practice.errors.ts`, theo đúng convention của `SubmissionNotPendingError`.
+2. Map `REPORT_NOT_PENDING: 409` vào `ERROR_CODE_TO_HTTP_STATUS` trong `app.ts`.
+3. Trong `resolveReport()`: thêm bước "claim" report CHÍNH bằng `tx.questionReport.updateMany({
+   where: { id: reportId, status: 'PENDING' }, data: { status } })` NGAY SAU khi đọc
+   `currentQuestion`, TRƯỚC bước tạo snapshot/update Question. Nếu `claimed.count === 0` → throw
+   `ReportNotPendingError` để rollback toàn bộ transaction ngay — không tạo snapshot/update
+   Question/batch-resolve report khác cho lần gọi thua cuộc. Xoá dòng `tx.questionReport.update`
+   đứng riêng cũ (không cần nữa vì claim đã làm luôn việc đó).
+4. Bổ sung 1 test case mới trong `practice.service.test.ts` (`describe('resolveReport')`): mock
+   `tx.questionReport.updateMany` (claim) trả `{ count: 0 }` → assert throw `ReportNotPendingError`,
+   VÀ assert `tx.question.update`/`tx.questionEditHistory.create`/`tx.questionReport.findMany`
+   (bước batch) đều KHÔNG được gọi — xác nhận dừng đúng ngay từ bước claim.
+5. Cập nhật 5 test case cũ trong cùng `describe` để khớp claim pattern mới (mock `updateMany` trả
+   `{ count: 1 }` thay vì mock `update` riêng).
+
+**Kết quả test tự động (sau khi sửa)**: 138/138 PASS (137 trước đó + 1 test mới; 5 test cũ được
+sửa lại mock, không phải test mới thêm). Build sạch (BE `tsc`).
+
+**Files sửa thêm ở vòng làm lại này**:
+- `backend/src/services/practice/practice.errors.ts` — thêm `ReportNotPendingError`
+- `backend/src/app.ts` — map `REPORT_NOT_PENDING: 409`
+- `backend/src/services/practice/practice.service.ts` — claim pattern trong `resolveReport()`
+- `backend/src/services/practice/__tests__/practice.service.test.ts` — 1 test mới + sửa 5 test cũ
+- `docs/TEST_CASES.md` — thêm 1 test case
+- `docs/CODE_REVIEW_LOG.md` — sửa dòng ghi nhận sai (Edge cases) + mục này

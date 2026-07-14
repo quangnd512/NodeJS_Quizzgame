@@ -202,3 +202,55 @@ ORDER BY "completedAt" DESC LIMIT 30;
 - Xem mục 13.3 trong `admin-guide.md` để kiểm tra điều kiện trigger.
 - Xác nhận học sinh đã từng luyện tập/thi môn đó ít nhất 1 lần trước khi đề mới được bật.
 - Không có cách gửi lại thủ công — nếu cần, admin tắt rồi bật lại `isActive` để trigger chạy lại (sẽ gửi lại cho TẤT CẢ user đủ điều kiện, không chỉ user mới).
+
+---
+
+## Lỗi liên quan đến Quản lý câu hỏi — Submissions + Report Redesign (Feature 014)
+
+### 15. Duyệt/từ chối/sửa/xoá câu hỏi gửi báo lỗi 409 SUBMISSION_NOT_PENDING
+
+**Triệu chứng**: Admin bấm "Duyệt" hoặc "Từ chối" (hoặc học sinh bấm "Sửa"/"Xoá") trên 1 câu hỏi gửi, nhận lỗi 409 dù nhìn trên màn hình vẫn thấy trạng thái "Chờ duyệt".
+
+**Nguyên nhân**: Đây là kết quả của cơ chế chống race condition có chủ đích (claim pattern bằng `updateMany`/`deleteMany` điều kiện `status=PENDING`, xem `docs/FEATURE_LOG.md` Section 14 mục "Ghi chú kỹ thuật") — không phải bug. Xảy ra khi: 2 admin cùng xử lý 1 submission gần như đồng thời (người thao tác sau nhận 409), hoặc học sinh vừa sửa/xoá đúng lúc admin đang duyệt, hoặc dữ liệu trên màn hình admin đã cũ (chưa refresh sau khi người khác xử lý).
+
+**Giải pháp**:
+- Làm mới (F5 hoặc bấm lại filter) danh sách để lấy trạng thái mới nhất trước khi thao tác lại.
+- Nếu lỗi lặp lại liên tục với cùng 1 submission dù đã refresh: kiểm tra trực tiếp trong DB `SELECT status FROM student_question_submissions WHERE id = '<id>';` — trạng thái thực tế mới là nguồn đúng, không phải giao diện.
+
+### 16. Học sinh báo "đã được duyệt" nhưng không thấy cộng 30 điểm
+
+**Triệu chứng**: Submission đã chuyển sang trạng thái ✅ Đã duyệt, nhưng điểm tích luỹ của học sinh không tăng.
+
+**Nguyên nhân**: Bước cộng điểm + gửi thông báo chạy **fire-and-forget** (`fireApprovedRewards`, không `await`, không block response duyệt) — nếu bước này lỗi (hiếm, ví dụ DB tạm thời không kết nối được), việc duyệt (tạo bản ghi Ngân hàng câu hỏi) vẫn thành công nhưng điểm sẽ **không** được cộng.
+
+**Giải pháp**:
+- Kiểm tra log backend tìm dòng `[SubmissionService] fireApprovedRewards addPoints error`.
+- Nếu có, cộng điểm thủ công 30đ cho học sinh (qua `pointsService.addPoints` hoặc script debug), lý do `SUBMISSION_APPROVED`.
+- Áp dụng tương tự cho điểm "usage" (+5đ/lần dùng trong đề thi) — tìm log `[QuestionBankService] fireUsagePointsTrigger addPoints error`.
+
+### 17. Gọi `PATCH /api/admin/questions/reports/:id` (không có `/resolve`) trả về 404
+
+**Triệu chứng**: Script/Postman collection cũ gọi `PATCH /api/admin/questions/reports/:id` để đổi trạng thái báo cáo, nhận lỗi 404 "Not Found" (không phải lỗi nghiệp vụ `QUESTION_REPORT_NOT_FOUND`).
+
+**Nguyên nhân**: Đây là **breaking change có chủ đích** của Feature 014 — endpoint cũ đã bị xoá hoàn toàn khỏi router, thay bằng `PATCH /api/admin/questions/reports/:id/resolve` (thêm `/resolve`, chỉ nhận `status: FIXED|DISMISSED`, không còn `REVIEWED`).
+
+**Giải pháp**:
+- Cập nhật mọi script/Postman collection/tài liệu nội bộ sang endpoint mới, xem `docs/api/openapi.yaml` hoặc mục 4.3 trong `admin-guide.md`.
+- Nếu cần xử lý hàng loạt bằng script, nhớ đổi luôn field response: `autoHidden` (cũ) → `reactivated` + `batchResolvedCount` (mới).
+
+### 18. Bấm "Bỏ qua" (DISMISSED) nhưng câu hỏi vẫn bị ẩn — tưởng là bug
+
+**Triệu chứng**: Câu hỏi đang bị auto-hide (do ≥5 báo cáo PENDING), admin xử lý báo cáo bằng "Bỏ qua", nhưng câu hỏi vẫn không hiện lại cho học sinh.
+
+**Nguyên nhân**: **Đây là hành vi đúng theo thiết kế**, không phải bug — chỉ `status=FIXED` mới kích hoạt tự động `isActive=true`. `DISMISSED` nghĩa là "báo cáo này không hợp lệ", không phải "đã xác nhận câu hỏi ổn" — hệ thống cố tình không tự hiện lại câu hỏi trong trường hợp này để tránh admin vô tình bỏ qua 1 báo cáo hợp lệ rồi câu hỏi lỗi lại hiện ra cho học sinh khác.
+
+**Giải pháp**:
+- Nếu sau khi xem xét, câu hỏi thực sự không có vấn đề gì (báo cáo sai), admin cần chủ động sửa `isActive=true` qua tab "Ngân hàng câu hỏi" (mục 8, `admin-guide.md`) hoặc dùng nút "✏️ Sửa & Đánh dấu đã sửa" (`status=FIXED`) thay vì "Bỏ qua" nếu muốn câu hỏi tự động hiện lại.
+
+### 19. Dashboard admin hiện số "chờ xử lý" trên tab "Câu hỏi" sai/không khớp
+
+**Triệu chứng**: Badge đỏ trên tab "Câu hỏi" hiện số không khớp với tổng số báo cáo PENDING + submission PENDING thực tế.
+
+**Nguyên nhân phổ biến nhất**: Badge (`questionsPendingBadge`) chỉ refetch khi đổi `tab` hoặc `secret` thay đổi (`useEffect` phụ thuộc `[secret, tab]`) — nếu admin xử lý xong 1 báo cáo/submission mà KHÔNG chuyển tab ra rồi vào lại, badge không tự cập nhật ngay (không có polling như bell icon phía học sinh, Feature 013).
+
+**Giải pháp**: Chuyển sang tab khác rồi quay lại tab "Câu hỏi" để buộc tính lại badge, hoặc F5 trang. Đây là giới hạn đã biết (badge admin không polling theo thời gian thực), không phải lỗi tính toán sai.

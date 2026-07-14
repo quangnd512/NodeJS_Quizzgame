@@ -1,0 +1,152 @@
+# API Draft: Quản lý câu hỏi (gộp Submissions + Report Redesign)
+# Feature 014 — S1 draft 2026-07-13
+
+# ============================================================================
+# PHẦN A — Học sinh đóng góp câu hỏi (Submissions)
+# ============================================================================
+endpoints:
+  # --- Student-facing ---
+  - method: POST
+    path: /api/submissions
+    auth: required (user)
+    request:
+      subject: string          # phải khớp SUBJECT_CATALOG
+      chapter: string?
+      questionText: string
+      options: [string, string, string, string]
+      correctOptionIndex: number  # 0-3
+    response_201: { id: string, status: "PENDING", createdAt: string }
+    errors: [400 (thiếu field/index ngoài 0-3), 400 (vượt rate limit 5/ngày), 401]
+
+  - method: GET
+    path: /api/submissions
+    auth: required (user)
+    query: { status: string?, page: number?, limit: number? }
+    response_200: { items: SubmissionDto[], total: number }
+    errors: [401]
+
+  - method: GET
+    path: /api/submissions/:id
+    auth: required (user, chỉ chủ sở hữu)
+    response_200: SubmissionDto  # kèm adminNote nếu REJECTED
+    errors: [401, 403, 404]
+
+  - method: PUT
+    path: /api/submissions/:id
+    auth: required (user, chỉ chủ sở hữu, chỉ khi status=PENDING)
+    request: { subject?, chapter?, questionText?, options?, correctOptionIndex? }
+    response_200: SubmissionDto
+    errors: [400, 401, 403, 404, 409 (không còn PENDING)]
+
+  - method: DELETE
+    path: /api/submissions/:id
+    auth: required (user, chỉ chủ sở hữu, chỉ khi status=PENDING)
+    response_200: { message: string }
+    errors: [401, 403, 404, 409 (không còn PENDING)]
+
+  # --- Admin-facing ---
+  - method: GET
+    path: /api/admin/submissions
+    auth: required (X-Admin-Secret)
+    query: { status: string?, page: number?, limit: number? }
+    response_200: { items: (SubmissionDto & { duplicateWarning: { questionBankId: string, similarity: number } | null })[], total: number }
+    errors: [401]
+
+  - method: POST
+    path: /api/admin/submissions/:id/approve
+    auth: required (X-Admin-Secret)
+    response_200: { id: string, status: "APPROVED", questionBankId: string }
+    errors: [401, 404, 409 (không còn PENDING)]
+    side_effects:
+      - "Tạo QuestionBank entry (type=MCQ_4, isActive=true)"
+      - "pointsService.addPoints(userId, 30, 'SUBMISSION_APPROVED')"
+      - "notificationService.create(userId, SUBMISSION_APPROVED)"
+
+  - method: POST
+    path: /api/admin/submissions/:id/reject
+    auth: required (X-Admin-Secret)
+    request: { note: string }
+    response_200: { id: string, status: "REJECTED" }
+    errors: [400 (thiếu note), 401, 404, 409]
+    side_effects:
+      - "notificationService.create(userId, SUBMISSION_REJECTED, body=note)"
+
+# ============================================================================
+# PHẦN B — Xử lý báo cáo lỗi câu hỏi (Report Redesign)
+# ============================================================================
+
+  - method: GET
+    path: /api/admin/questions/reports
+    auth: required (X-Admin-Secret)
+    query: { status: string? (chỉ PENDING/FIXED/DISMISSED), subject: string?, reason: string?, page: number?, limit: number? }
+    change: "JOIN Question để trả đầy đủ nội dung, không chỉ questionId"
+    response_200:
+      items:
+        - id: string
+          questionId: string
+          userId: string
+          reason: string
+          description: string?
+          status: string
+          createdAt: string
+          question:
+            subject: string
+            chapter: string?
+            difficulty: number
+            question: string
+            options: [string, string, string, string]
+            correctAnswer: number
+            explanation: string?
+            isActive: boolean
+      total: number
+    errors: [401]
+
+  - method: GET
+    path: /api/admin/questions/reports/summary
+    auth: required (X-Admin-Secret)
+    change: "Tách rõ 2 số liệu, tránh lệch hiểu lầm như trước"
+    response_200:
+      pendingReports: number       # tổng số DÒNG report đang PENDING
+      pendingQuestions: number     # số CÂU HỎI khác nhau đang có report PENDING
+      fixed: number
+      dismissed: number
+      topReportedQuestions: [{ questionId: string, count: number }]
+    errors: [401]
+
+  - method: PATCH
+    path: /api/admin/questions/reports/:id/resolve
+    auth: required (X-Admin-Secret)
+    request:
+      status: "FIXED" | "DISMISSED"
+      questionUpdate:   # optional, chỉ gửi khi status=FIXED và có sửa nội dung
+        subject: string?
+        chapter: string?
+        difficulty: number?
+        question: string?
+        options: [string, string, string, string]?
+        correctAnswer: number?
+        explanation: string?
+    response_200:
+      id: string
+      status: string
+      batchResolvedCount: number   # số report PENDING khác cùng questionId cũng được đóng theo
+      reactivated: boolean         # true nếu Question.isActive được set lại true
+    errors: [400 (status không hợp lệ, ví dụ gửi REVIEWED), 401, 404]
+    side_effects:
+      - "Nếu có questionUpdate: lưu snapshot cũ vào question_edit_history TRƯỚC khi update"
+      - "Update Question với questionUpdate (nếu có)"
+      - "Update report hiện tại → status"
+      - "Batch: mọi report PENDING khác cùng questionId → cùng status, mỗi cái bắn REPORT_RESOLVED riêng"
+      - "Nếu status=FIXED và Question.isActive=false trước đó → set isActive=true"
+
+# ============================================================================
+# Ghi chú
+# ============================================================================
+notes:
+  - "REPORT_STATUSES giữ nguyên 4 giá trị trong constant (cho dữ liệu cũ), nhưng
+     endpoint /resolve chỉ chấp nhận FIXED|DISMISSED — không cho ghi lại REVIEWED."
+  - "NotificationType enum thêm: SUBMISSION_APPROVED, SUBMISSION_REJECTED, SUBMISSION_USED
+     (REPORT_RESOLVED đã có sẵn từ Feature 013, dùng lại)."
+  - "Không cần code đồng bộ nội dung câu hỏi cho lịch sử Ôn tập cũ — đã xác minh hệ thống
+     hiện tại không lưu snapshot content ở UserQuestionHistory, nên sửa Question là tự
+     động phản ánh mọi nơi."
