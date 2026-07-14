@@ -95,6 +95,22 @@ export class QuestionReportNotFoundError extends PracticeError {
   }
 }
 
+/**
+ * Bao cao khong con o trang thai PENDING khi resolveReport() co gang xu ly —
+ * chong double-resolve (double-click, retry client, hoac 2 admin xu ly gan nhu
+ * dong thoi cung 1 bao cao). Dung updateMany co dieu kien status:'PENDING' de
+ * "claim" bao cao truoc khi tao snapshot/update Question; neu claim that bai
+ * (bao cao da bi 1 request khac xu ly truoc) thi nem loi nay de rollback transaction.
+ */
+export class ReportNotPendingError extends PracticeError {
+  constructor() {
+    super(
+      'Bao cao nay khong con o trang thai cho xu ly (co the da duoc xu ly truoc do).',
+      'REPORT_NOT_PENDING',
+    );
+  }
+}
+
 /** User chua lam cau hoi nay (khong the xem giai thich). */
 export class QuestionNotAttemptedError extends PracticeError {
   constructor(questionId: string) {

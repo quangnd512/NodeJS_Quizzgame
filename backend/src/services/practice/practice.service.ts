@@ -26,6 +26,7 @@ import {
   QuestionNotInSessionError,
   QuestionReportNotFoundError,
   ReportAlreadySubmittedError,
+  ReportNotPendingError,
   SubjectHasNoQuestionsError,
   SubjectNotRegisteredError,
 } from './practice.errors.js';
@@ -934,9 +935,15 @@ export class PracticeService {
 
   /**
    * Endpoint gộp xử lý báo cáo (thay thế `updateReport` cho luồng admin mới):
-   *   1. Nếu có `questionUpdate`: lưu SNAPSHOT nội dung câu hỏi hiện tại vào
+   *   1. "Claim" report CHÍNH bằng conditional update (status: PENDING -> status mới)
+   *      NGAY ĐẦU transaction (trước cả bước snapshot/update Question) — nếu report
+   *      này bị resolve 2 lần gần như đồng thời (double-click, retry client, hoặc 2
+   *      admin xử lý cùng lúc), chỉ request nào khớp điều kiện `status: 'PENDING'`
+   *      trước mới thành công; request thua cuộc nhận `count=0`, ném lỗi
+   *      `ReportNotPendingError` để transaction rollback ngay — KHÔNG tạo snapshot
+   *      `question_edit_history` thừa, KHÔNG ghi đè Question, KHÔNG gửi thông báo trùng.
+   *   2. Nếu có `questionUpdate`: lưu SNAPSHOT nội dung câu hỏi hiện tại vào
    *      `question_edit_history` TRƯỚC khi ghi đè, rồi cập nhật Question.
-   *   2. Cập nhật report hiện tại → status (chỉ FIXED|DISMISSED — validate ở route qua Zod).
    *   3. Batch: mọi report PENDING KHÁC cùng questionId cũng chuyển sang status
    *      này luôn (1 lần sửa đóng hết mọi báo cáo trùng câu) — chạy trong CÙNG
    *      transaction để tránh race condition nếu 2 báo cáo được xử lý gần như
@@ -957,6 +964,14 @@ export class PracticeService {
     const { batchResolvedCount, reactivated, othersToNotify } = await prisma.$transaction(async (tx) => {
       const currentQuestion = await tx.question.findUnique({ where: { id: report.questionId } });
       if (!currentQuestion) throw new QuestionNotFoundError(report.questionId);
+
+      // Claim report CHÍNH trước khi làm bất kỳ thay đổi nào (snapshot/update Question) —
+      // xem giải thích đầy đủ trong docblock phía trên.
+      const claimed = await tx.questionReport.updateMany({
+        where: { id: reportId, status: 'PENDING' },
+        data: { status },
+      });
+      if (claimed.count === 0) throw new ReportNotPendingError();
 
       if (questionUpdate) {
         // Snapshot TOÀN BỘ field hiện tại của Question — lưu TRƯỚC khi ghi đè.
@@ -1000,8 +1015,6 @@ export class PracticeService {
           },
         });
       }
-
-      await tx.questionReport.update({ where: { id: reportId }, data: { status } });
 
       // Batch: mọi report PENDING khác cùng câu hỏi này cũng đóng theo — 1 lần sửa
       // đóng hết mọi báo cáo trùng lặp, tránh admin phải xử lý thủ công từng cái.

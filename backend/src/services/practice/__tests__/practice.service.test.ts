@@ -31,7 +31,7 @@ vi.mock('../../notification/notification.service.js', () => ({
 import { prisma } from '../../../lib/prisma.js';
 import { notificationService } from '../../notification/notification.service.js';
 import { PracticeService } from '../practice.service.js';
-import { QuestionReportNotFoundError } from '../practice.errors.js';
+import { QuestionReportNotFoundError, ReportNotPendingError } from '../practice.errors.js';
 
 const mock = prisma as unknown as {
   questionReport: {
@@ -161,9 +161,8 @@ describe('PracticeService — Quản lý báo cáo (redesign)', () => {
         question: { findUnique: vi.fn().mockResolvedValue(MOCK_QUESTION), update: vi.fn() },
         questionEditHistory: { create: vi.fn() },
         questionReport: {
-          update: vi.fn().mockResolvedValue({}),
           findMany: vi.fn().mockResolvedValue([]), // không có report PENDING nào khác
-          updateMany: vi.fn(),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }), // claim thành công (còn PENDING)
         },
       };
       mock.$transaction.mockImplementation(async (cb: (tx: typeof txMock) => unknown) => cb(txMock));
@@ -173,10 +172,36 @@ describe('PracticeService — Quản lý báo cáo (redesign)', () => {
       expect(result).toEqual({ id: 'rep-1', status: 'DISMISSED', batchResolvedCount: 0, reactivated: false });
       expect(txMock.questionEditHistory.create).not.toHaveBeenCalled();
       expect(txMock.question.update).not.toHaveBeenCalled();
-      expect(txMock.questionReport.update).toHaveBeenCalledWith({
-        where: { id: 'rep-1' },
+      expect(txMock.questionReport.updateMany).toHaveBeenCalledWith({
+        where: { id: 'rep-1', status: 'PENDING' },
         data: { status: 'DISMISSED' },
       });
+    });
+
+    it('❌ race condition: throw ReportNotPendingError khi report đã bị xử lý bởi request khác (claim updateMany count=0)', async () => {
+      // Report đọc ban đầu (ngoài transaction) vẫn thấy PENDING, nhưng giữa lúc đó có
+      // request khác (double-click, retry client, hoặc 2 admin xử lý gần như đồng thời)
+      // đã claim trước — updateMany điều kiện status:'PENDING' không còn khớp (count=0).
+      mock.questionReport.findUnique.mockResolvedValue(MOCK_REPORT);
+      const txMock = {
+        question: { findUnique: vi.fn().mockResolvedValue(MOCK_QUESTION), update: vi.fn() },
+        questionEditHistory: { create: vi.fn() },
+        questionReport: {
+          findMany: vi.fn(),
+          updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
+      };
+      mock.$transaction.mockImplementation(async (cb: (tx: typeof txMock) => unknown) => cb(txMock));
+
+      await expect(
+        service.resolveReport('rep-1', 'FIXED', { question: 'Câu hỏi đã sửa' }),
+      ).rejects.toThrow(ReportNotPendingError);
+
+      // Claim thất bại phải dừng NGAY — không tạo snapshot thừa, không ghi đè Question,
+      // không chạy tới bước batch-resolve report khác.
+      expect(txMock.questionEditHistory.create).not.toHaveBeenCalled();
+      expect(txMock.question.update).not.toHaveBeenCalled();
+      expect(txMock.questionReport.findMany).not.toHaveBeenCalled();
     });
 
     it('✅ FIXED + questionUpdate: lưu snapshot TRƯỚC khi update Question', async () => {
@@ -191,9 +216,8 @@ describe('PracticeService — Quản lý báo cáo (redesign)', () => {
           create: vi.fn().mockImplementation(() => { callOrder.push('create-snapshot'); return {}; }),
         },
         questionReport: {
-          update: vi.fn().mockResolvedValue({}),
           findMany: vi.fn().mockResolvedValue([]),
-          updateMany: vi.fn(),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         },
       };
       mock.$transaction.mockImplementation(async (cb: (tx: typeof txMock) => unknown) => cb(txMock));
@@ -224,9 +248,8 @@ describe('PracticeService — Quản lý báo cáo (redesign)', () => {
         },
         questionEditHistory: { create: vi.fn() },
         questionReport: {
-          update: vi.fn().mockResolvedValue({}),
           findMany: vi.fn().mockResolvedValue([]),
-          updateMany: vi.fn(),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         },
       };
       mock.$transaction.mockImplementation(async (cb: (tx: typeof txMock) => unknown) => cb(txMock));
@@ -248,9 +271,8 @@ describe('PracticeService — Quản lý báo cáo (redesign)', () => {
         },
         questionEditHistory: { create: vi.fn() },
         questionReport: {
-          update: vi.fn().mockResolvedValue({}),
           findMany: vi.fn().mockResolvedValue([]),
-          updateMany: vi.fn(),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         },
       };
       mock.$transaction.mockImplementation(async (cb: (tx: typeof txMock) => unknown) => cb(txMock));
@@ -271,8 +293,8 @@ describe('PracticeService — Quản lý báo cáo (redesign)', () => {
         question: { findUnique: vi.fn().mockResolvedValue(MOCK_QUESTION), update: vi.fn() },
         questionEditHistory: { create: vi.fn() },
         questionReport: {
-          update: vi.fn().mockResolvedValue({}),
           findMany: vi.fn().mockResolvedValue(otherReports),
+          // Trả count > 0 cho MỌI lần gọi updateMany (lần 1: claim report chính; lần 2: batch report khác).
           updateMany: vi.fn().mockResolvedValue({ count: 2 }),
         },
       };
@@ -283,6 +305,10 @@ describe('PracticeService — Quản lý báo cáo (redesign)', () => {
       const result = await service.resolveReport('rep-1', 'FIXED');
 
       expect(result.batchResolvedCount).toBe(2);
+      expect(txMock.questionReport.updateMany).toHaveBeenCalledWith({
+        where: { id: 'rep-1', status: 'PENDING' },
+        data: { status: 'FIXED' },
+      });
       expect(txMock.questionReport.updateMany).toHaveBeenCalledWith({
         where: { id: { in: ['rep-2', 'rep-3'] } },
         data: { status: 'FIXED' },
