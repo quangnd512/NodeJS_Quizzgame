@@ -71,9 +71,10 @@ const MOCK_SUBMISSION = {
   userId: 'user-1',
   subject: 'TOAN',
   chapter: 'Đại số',
+  questionType: 'MCQ_4',
   questionText: '2 + 2 bằng mấy?',
   options: ['3', '4', '5', '6'],
-  correctOptionIndex: 1,
+  correctAnswer: 1,
   status: 'PENDING',
   adminNote: null,
   questionBankId: null,
@@ -100,9 +101,10 @@ describe('SubmissionService', () => {
 
       const result = await service.createSubmission('user-1', {
         subject: 'TOAN',
+        questionType: 'MCQ_4',
         questionText: '2 + 2 bằng mấy?',
         options: ['3', '4', '5', '6'],
-        correctOptionIndex: 1,
+        correctAnswer: 1,
       });
 
       expect(result.status).toBe('PENDING');
@@ -118,9 +120,10 @@ describe('SubmissionService', () => {
       await expect(
         service.createSubmission('user-1', {
           subject: 'TOAN',
+          questionType: 'MCQ_4',
           questionText: '2 + 2 bằng mấy?',
           options: ['3', '4', '5', '6'],
-          correctOptionIndex: 1,
+          correctAnswer: 1,
         }),
       ).resolves.toBeDefined();
     });
@@ -131,9 +134,10 @@ describe('SubmissionService', () => {
       await expect(
         service.createSubmission('user-1', {
           subject: 'TOAN',
+          questionType: 'MCQ_4',
           questionText: '2 + 2 bằng mấy?',
           options: ['3', '4', '5', '6'],
-          correctOptionIndex: 1,
+          correctAnswer: 1,
         }),
       ).rejects.toThrow(SubmissionRateLimitError);
 

@@ -27,6 +27,7 @@ import {
   QuestionReportNotFoundError,
   ReportAlreadySubmittedError,
   ReportNotPendingError,
+  ReportResubmitConfirmRequiredError,
   SubjectHasNoQuestionsError,
   SubjectNotRegisteredError,
 } from './practice.errors.js';
@@ -43,6 +44,7 @@ import type {
   QuestionPublicDto,
   QuestionReportDto,
   QuestionReportSummary,
+  ReportFilterFacets,
   ReportStatus,
   ResolvableReportStatus,
   ResolveReportQuestionUpdate,
@@ -1122,12 +1124,87 @@ export class PracticeService {
     };
   }
 
-  /** User bao cao cau hoi sai/co van de. */
+  /**
+   * Tra ve cac gia tri loc CON KHA DUNG cho tung dropdown (status/subject/reason)
+   * trong trang Bao cao loi, dung "loc lien dong": moi dropdown duoc tinh dua tren
+   * 2 dieu kien loc CON LAI dang duoc chon (khong tinh theo chinh no) - vi du neu
+   * dang loc status=FIXED thi dropdown "mon hoc" chi hien nhung mon THUC SU co bao
+   * cao FIXED, va dropdown "ly do" cung tuong tu.
+   */
+  async getReportFilterFacets(params: {
+    status?: string;
+    subject?: string;
+    reason?: string;
+  }): Promise<ReportFilterFacets> {
+    // Cau hoi thuoc 1 mon (neu co loc subject) - dung lai cho ca 2 truy van con lai.
+    const questionIdsForSubject = params.subject !== undefined
+      ? (await prisma.question.findMany({ where: { subject: params.subject }, select: { id: true } })).map((q) => q.id)
+      : undefined;
+
+    // 1) Cac status con kha dung, tinh theo subject + reason dang chon (bo qua status).
+    const statusRows = await prisma.questionReport.findMany({
+      where: {
+        ...(params.reason !== undefined && { reason: params.reason }),
+        ...(questionIdsForSubject !== undefined && { questionId: { in: questionIdsForSubject } }),
+      },
+      select: { status: true },
+      distinct: ['status'],
+    });
+
+    // 2) Cac ly do con kha dung, tinh theo subject + status dang chon (bo qua reason).
+    const reasonRows = await prisma.questionReport.findMany({
+      where: {
+        ...(params.status !== undefined && { status: params.status }),
+        ...(questionIdsForSubject !== undefined && { questionId: { in: questionIdsForSubject } }),
+      },
+      select: { reason: true },
+      distinct: ['reason'],
+    });
+
+    // 3) Cac mon hoc con kha dung, tinh theo status + reason dang chon (bo qua subject)
+    // - QuestionReport khong co cot subject truc tiep nen phai JOIN thu cong qua Question.
+    const reportsForSubjects = await prisma.questionReport.findMany({
+      where: {
+        ...(params.status !== undefined && { status: params.status }),
+        ...(params.reason !== undefined && { reason: params.reason }),
+      },
+      select: { questionId: true },
+    });
+    const questionIds = [...new Set(reportsForSubjects.map((r) => r.questionId))];
+    const questionsForSubjects = questionIds.length > 0
+      ? await prisma.question.findMany({
+          where: { id: { in: questionIds } },
+          select: { subject: true },
+          distinct: ['subject'],
+        })
+      : [];
+
+    return {
+      statuses: statusRows.map((r) => r.status),
+      reasons: reasonRows.map((r) => r.reason),
+      subjects: questionsForSubjects.map((q) => q.subject),
+    };
+  }
+
+  /**
+   * User bao cao cau hoi sai/co van de.
+   *
+   * Quy tac bao cao lai 1 cau da tung bao cao:
+   *   - Neu report GAN NHAT cua user cho cau nay con PENDING (chua xu ly)
+   *     -> chan hoan toan (ReportAlreadySubmittedError), tranh spam nhieu report
+   *     trung cho cung 1 van de chua duoc xem xet.
+   *   - Neu report gan nhat DA duoc xu ly xong (FIXED/DISMISSED) va `confirmResubmit`
+   *     chua = true -> yeu cau xac nhan truoc (ReportResubmitConfirmRequiredError),
+   *     de FE hoi lai user "ban co muon bao cao lai khong?".
+   *   - Neu confirmResubmit=true (hoac chua tung bao cao lan nao) -> tao report MOI,
+   *     giu nguyen report cu (khong ghi de/xoa) de admin van xem duoc lich su.
+   */
   async reportQuestion(
     userId: string,
     questionId: string,
     reason: string,
     description?: string,
+    confirmResubmit = false,
   ): Promise<void> {
     const question = await prisma.question.findUnique({ where: { id: questionId } });
     if (!question) throw new QuestionNotFoundError(questionId);
@@ -1138,14 +1215,21 @@ export class PracticeService {
     });
     if (!attempted) throw new QuestionNotAttemptedForReportError(questionId);
 
-    // Kiem tra da bao cao chua (check truoc de tranh write thua)
-    const existing = await prisma.questionReport.findUnique({
-      where: { userId_questionId: { userId, questionId } },
+    // Kiem tra report GAN NHAT cua user cho cau nay (khong con la unique tuyet doi
+    // nua - user co the co nhieu report theo thoi gian, chi 1 report PENDING tai
+    // 1 thoi diem duoc chan boi partial unique index o tang DB).
+    const latest = await prisma.questionReport.findFirst({
+      where: { userId, questionId },
+      orderBy: { createdAt: 'desc' },
     });
-    if (existing) throw new ReportAlreadySubmittedError();
+    if (latest) {
+      if (latest.status === 'PENDING') throw new ReportAlreadySubmittedError();
+      if (!confirmResubmit) throw new ReportResubmitConfirmRequiredError();
+    }
 
     // Catch P2002: truong hop 2 request song song cung vuot qua check tren
-    // → chi 1 create thanh cong, cai kia bi UNIQUE constraint → bao loi ro rang.
+    // → chi 1 create thanh cong (partial unique index tren (userId, questionId)
+    // WHERE status='PENDING'), cai kia bi loi ro rang.
     try {
       await prisma.questionReport.create({
         data: { questionId, userId, reason, description: description ?? null },

@@ -81,10 +81,23 @@ export class QuestionNotInSessionError extends PracticeError {
   }
 }
 
-/** User da bao cao cau hoi nay roi (rang buoc 1 bao cao/user/cau). */
+/** User da bao cao cau hoi nay roi VA bao cao do van dang PENDING (chua xu ly). */
 export class ReportAlreadySubmittedError extends PracticeError {
   constructor() {
     super('Ban da bao cao cau hoi nay roi.', 'REPORT_ALREADY_SUBMITTED');
+  }
+}
+
+/**
+ * User da tung bao cao cau hoi nay va bao cao cu DA duoc xu ly xong (FIXED/DISMISSED),
+ * nhung chua gui kem co "confirmResubmit" -> can hoi xac nhan truoc khi tao bao cao moi.
+ */
+export class ReportResubmitConfirmRequiredError extends PracticeError {
+  constructor() {
+    super(
+      'Ban da bao cao cau hoi nay truoc day (da duoc xu ly). Xac nhan neu muon bao cao lai.',
+      'REPORT_RESUBMIT_CONFIRM_REQUIRED',
+    );
   }
 }
 

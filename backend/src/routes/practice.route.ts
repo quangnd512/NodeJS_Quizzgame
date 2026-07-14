@@ -29,6 +29,9 @@ const completeSchema = z.object({
 const reportSchema = z.object({
   reason: z.enum(REPORT_REASONS),
   description: z.string().max(500).optional(),
+  /** true = hoc sinh da xac nhan muon bao cao lai 1 cau da tung bao cao (report cu
+   *  da FIXED/DISMISSED) — bo qua ReportResubmitConfirmRequiredError. */
+  confirmResubmit: z.boolean().optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -173,12 +176,13 @@ practiceRouter.post(
   validateBody(reportSchema),
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const { reason, description } = req.body as z.infer<typeof reportSchema>;
+      const { reason, description, confirmResubmit } = req.body as z.infer<typeof reportSchema>;
       await practiceService.reportQuestion(
         req.currentUser!.id,
         req.params['id']!,
         reason,
         description,
+        confirmResubmit ?? false,
       );
       res.status(201).json({ message: 'Da gui bao cao thanh cong.' });
     } catch (err) {

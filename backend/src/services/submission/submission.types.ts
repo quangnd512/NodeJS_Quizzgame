@@ -1,9 +1,21 @@
 // Các kiểu dữ liệu (types/interfaces) + hằng số dùng chung cho module
 // "Học sinh đóng góp câu hỏi" (Student Question Submissions).
 
+import type { ExamQuestionType } from '../exam/exam.types.js';
+export { EXAM_QUESTION_TYPES } from '../exam/exam.types.js';
+export type { ExamQuestionType } from '../exam/exam.types.js';
+
 /** Trạng thái xử lý của 1 câu hỏi học sinh gửi. */
 export const SUBMISSION_STATUSES = ['PENDING', 'APPROVED', 'REJECTED'] as const;
 export type SubmissionStatus = (typeof SUBMISSION_STATUSES)[number];
+
+/**
+ * Đáp án đúng theo dạng câu hỏi — dùng chung định dạng với QuestionBank/ExamQuestion:
+ *   - MCQ_4: số nguyên 0-3
+ *   - TRUE_FALSE_4: mảng 4 giá trị boolean
+ *   - FILL_BLANK: mảng >= 1 chuỗi (các đáp án được chấp nhận)
+ */
+export type SubmissionCorrectAnswer = number | boolean[] | string[];
 
 /** Số câu hỏi tối đa 1 học sinh được gửi trong 1 ngày (chống spam). */
 export const SUBMISSION_DAILY_LIMIT = 5;
@@ -26,9 +38,12 @@ export interface SubmissionDto {
   userId: string;
   subject: string;
   chapter: string | null;
+  /** Dạng câu hỏi: MCQ_4 | TRUE_FALSE_4 | FILL_BLANK (giống ExamQuestion/QuestionBank). */
+  questionType: ExamQuestionType;
   questionText: string;
-  options: [string, string, string, string];
-  correctOptionIndex: number;
+  /** null với FILL_BLANK (không có lựa chọn sẵn). */
+  options: string[] | null;
+  correctAnswer: SubmissionCorrectAnswer;
   status: SubmissionStatus;
   /** Ghi chú của admin — bắt buộc khi REJECTED (lý do), tuỳ chọn khi APPROVED. */
   adminNote: string | null;
@@ -44,9 +59,11 @@ export interface SubmissionDto {
 export interface CreateSubmissionInput {
   subject: string;
   chapter?: string;
+  questionType: ExamQuestionType;
   questionText: string;
-  options: [string, string, string, string];
-  correctOptionIndex: number;
+  /** Bắt buộc với MCQ_4/TRUE_FALSE_4, bỏ qua với FILL_BLANK. */
+  options?: string[];
+  correctAnswer: SubmissionCorrectAnswer;
 }
 
 /** Input cập nhật câu hỏi đã gửi — mọi trường đều tuỳ chọn, chỉ áp dụng khi còn PENDING. */
@@ -61,6 +78,13 @@ export interface PaginatedSubmissions {
 /** Cảnh báo trùng lặp — câu hỏi gửi có thể giống 1 câu đã có trong Ngân hàng câu hỏi. */
 export interface DuplicateWarning {
   questionBankId: string;
+  /** Nội dung câu hỏi trùng trong kho — để admin đối chiếu ngay, không cần tự tra ID. */
+  questionText: string;
+  /** Dạng + đáp án của câu trong kho — admin đối chiếu trực tiếp để quyết định có
+   * đúng là trùng hay không, không cần mở riêng trang Ngân hàng câu hỏi. */
+  questionType: ExamQuestionType;
+  options: string[] | null;
+  correctAnswer: SubmissionCorrectAnswer;
   /** Độ tương đồng 0.0 - 1.0 (Jaccard similarity trên tập từ đã chuẩn hoá). */
   similarity: number;
 }

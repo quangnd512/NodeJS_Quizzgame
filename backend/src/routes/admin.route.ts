@@ -201,6 +201,29 @@ adminRouter.get(
 );
 
 // ---------------------------------------------------------------------------
+// GET /api/admin/questions/reports/facets?status=&subject=&reason= — loc lien dong:
+// tra ve cac gia tri con kha dung cho tung dropdown, tinh theo 2 dieu kien loc
+// con lai dang duoc chon. PHAI dang ky truoc /:id/resolve (path tinh truoc path
+// dong) de tranh Express hieu nham "facets" la 1 :id.
+// ---------------------------------------------------------------------------
+
+adminRouter.get(
+  '/questions/reports/facets',
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const status = typeof req.query['status'] === 'string' ? req.query['status'] : undefined;
+      const subject = typeof req.query['subject'] === 'string' ? req.query['subject'] : undefined;
+      const reason = typeof req.query['reason'] === 'string' ? req.query['reason'] : undefined;
+
+      const result = await practiceService.getReportFilterFacets({ status, subject, reason });
+      res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
 // PATCH /api/admin/questions/reports/:id/resolve — xu ly bao cao (gop, thay
 // the endpoint PATCH cu). Chi nhan FIXED|DISMISSED; ho tro sua noi dung cau
 // hoi ngay tai cho (questionUpdate); tu dong dong het cac bao cao PENDING

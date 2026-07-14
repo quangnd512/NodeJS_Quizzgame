@@ -168,6 +168,17 @@ export interface QuestionReportSummary {
   topReportedQuestions: Array<{ questionId: string; count: number }>;
 }
 
+/**
+ * Cac gia tri loc CON KHA DUNG cho tung dimension (status/subject/reason), tinh
+ * theo 2 dimension CON LAI dang duoc chon — dung de lam "loc lien dong": moi
+ * dropdown chi hien lua chon nao thuc su co du lieu khop voi cac loc khac.
+ */
+export interface ReportFilterFacets {
+  statuses: string[];
+  subjects: string[];
+  reasons: string[];
+}
+
 /** Trang thai hop le duoc phep ghi qua endpoint resolve moi — CHI FIXED|DISMISSED. */
 export const RESOLVABLE_REPORT_STATUSES = ['FIXED', 'DISMISSED'] as const;
 export type ResolvableReportStatus = (typeof RESOLVABLE_REPORT_STATUSES)[number];

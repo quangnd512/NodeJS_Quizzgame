@@ -13,6 +13,8 @@ import { pointsService } from '../points/points.service.js';
 import { PointReason } from '../points/points.types.js';
 import { notificationService } from '../notification/notification.service.js';
 import { textSimilarity } from '../../utils/text-similarity.utils.js';
+import { validateQuestionShape } from '../exam/exam.service.js';
+import type { ExamQuestionType } from '../exam/exam.types.js';
 import {
   SubmissionNotFoundError,
   SubmissionNotOwnedError,
@@ -28,6 +30,7 @@ import type {
   PaginatedAdminSubmissions,
   PaginatedSubmissions,
   RejectSubmissionResult,
+  SubmissionCorrectAnswer,
   SubmissionDto,
   SubmissionStatus,
   UpdateSubmissionInput,
@@ -57,9 +60,10 @@ type SubmissionRow = {
   userId: string;
   subject: string;
   chapter: string | null;
+  questionType: string;
   questionText: string;
   options: Prisma.JsonValue;
-  correctOptionIndex: number;
+  correctAnswer: Prisma.JsonValue;
   status: string;
   adminNote: string | null;
   questionBankId: string | null;
@@ -75,9 +79,10 @@ function toDto(row: SubmissionRow): SubmissionDto {
     userId: row.userId,
     subject: row.subject,
     chapter: row.chapter,
+    questionType: row.questionType as ExamQuestionType,
     questionText: row.questionText,
-    options: row.options as [string, string, string, string],
-    correctOptionIndex: row.correctOptionIndex,
+    options: (row.options as string[] | null) ?? null,
+    correctAnswer: row.correctAnswer as SubmissionDto['correctAnswer'],
     status: row.status as SubmissionStatus,
     adminNote: row.adminNote,
     questionBankId: row.questionBankId,
@@ -100,18 +105,24 @@ export class SubmissionService {
   // HỌC SINH
   // ==========================================================================
 
-  /** Tạo mới 1 câu hỏi gửi. Kiểm tra rate limit 5 câu/ngày trước khi tạo. */
+  /**
+   * Tạo mới 1 câu hỏi gửi. Kiểm tra rate limit 5 câu/ngày trước khi tạo, và
+   * validate options/correctAnswer đúng hình dạng theo questionType (dùng chung
+   * `validateQuestionShape` với module Thi thử — cùng 1 quy ước MCQ_4/TRUE_FALSE_4/FILL_BLANK).
+   */
   async createSubmission(userId: string, input: CreateSubmissionInput): Promise<SubmissionDto> {
     await this.assertUnderDailyLimit(userId);
+    validateQuestionShape(input.questionType, input.options ?? null, input.correctAnswer);
 
     const row = await prisma.studentQuestionSubmission.create({
       data: {
         userId,
         subject: input.subject,
         chapter: input.chapter ?? null,
+        questionType: input.questionType,
         questionText: input.questionText,
-        options: input.options as Prisma.InputJsonValue,
-        correctOptionIndex: input.correctOptionIndex,
+        options: (input.options ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+        correctAnswer: input.correctAnswer as Prisma.InputJsonValue,
         status: 'PENDING',
       },
     });
@@ -166,14 +177,28 @@ export class SubmissionService {
     const existing = await this.findOwnedOrThrow(userId, id);
     if (existing.status !== 'PENDING') throw new SubmissionNotPendingError();
 
+    // Neu co thay doi lien quan den dang cau hoi/options/correctAnswer -> validate lai
+    // toan bo theo dang cau hoi MOI (mac dinh giu nguyen gia tri cu cho phan khong doi).
+    if (
+      input.questionType !== undefined ||
+      input.options !== undefined ||
+      input.correctAnswer !== undefined
+    ) {
+      const questionType = (input.questionType ?? existing.questionType) as ExamQuestionType;
+      const options = input.options !== undefined ? input.options : existing.options;
+      const correctAnswer = input.correctAnswer !== undefined ? input.correctAnswer : existing.correctAnswer;
+      validateQuestionShape(questionType, options ?? null, correctAnswer);
+    }
+
     const claimed = await prisma.studentQuestionSubmission.updateMany({
       where: { id, userId, status: 'PENDING' },
       data: {
         ...(input.subject !== undefined && { subject: input.subject }),
         ...(input.chapter !== undefined && { chapter: input.chapter }),
+        ...(input.questionType !== undefined && { questionType: input.questionType }),
         ...(input.questionText !== undefined && { questionText: input.questionText }),
-        ...(input.options !== undefined && { options: input.options as Prisma.InputJsonValue }),
-        ...(input.correctOptionIndex !== undefined && { correctOptionIndex: input.correctOptionIndex }),
+        ...(input.options !== undefined && { options: (input.options ?? Prisma.JsonNull) as Prisma.InputJsonValue }),
+        ...(input.correctAnswer !== undefined && { correctAnswer: input.correctAnswer as Prisma.InputJsonValue }),
       },
     });
     if (claimed.count === 0) throw new SubmissionNotPendingError();
@@ -266,11 +291,11 @@ export class SubmissionService {
           subject: existing.subject,
           chapter: existing.chapter,
           difficulty: DEFAULT_APPROVED_DIFFICULTY,
-          questionType: 'MCQ_4',
+          questionType: existing.questionType,
           points: 1,
           questionText: existing.questionText,
-          options: existing.options as Prisma.InputJsonValue,
-          correctAnswer: existing.correctOptionIndex,
+          options: (existing.options ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          correctAnswer: existing.correctAnswer as Prisma.InputJsonValue,
           isActive: true,
         },
       });
@@ -351,14 +376,24 @@ export class SubmissionService {
     const subjects = [...new Set(rows.map((r) => r.subject))];
     const bankQuestions = await prisma.questionBank.findMany({
       where: { subject: { in: subjects }, isActive: true },
-      select: { id: true, subject: true, questionText: true },
+      select: {
+        id: true, subject: true, questionText: true,
+        questionType: true, options: true, correctAnswer: true,
+      },
     });
 
     // Nhóm câu hỏi trong kho theo môn để tra cứu nhanh khi so khớp từng submission.
-    const bySubject = new Map<string, { id: string; questionText: string }[]>();
+    type BankCandidate = {
+      id: string; questionText: string; questionType: string;
+      options: Prisma.JsonValue; correctAnswer: Prisma.JsonValue;
+    };
+    const bySubject = new Map<string, BankCandidate[]>();
     for (const q of bankQuestions) {
       const list = bySubject.get(q.subject) ?? [];
-      list.push({ id: q.id, questionText: q.questionText });
+      list.push({
+        id: q.id, questionText: q.questionText, questionType: q.questionType,
+        options: q.options, correctAnswer: q.correctAnswer,
+      });
       bySubject.set(q.subject, list);
     }
 
@@ -369,7 +404,16 @@ export class SubmissionService {
         const similarity = textSimilarity(row.questionText, candidate.questionText);
         if (similarity >= SUBMISSION_DUPLICATE_SIMILARITY_THRESHOLD) {
           if (!best || similarity > best.similarity) {
-            best = { questionBankId: candidate.id, similarity };
+            best = {
+              questionBankId: candidate.id,
+              questionText: candidate.questionText,
+              // Kem theo dang cau hoi + dap an cua cau trong kho de admin doi chieu
+              // truc tiep, khong can mo rieng trang Ngan hang cau hoi de tra cuu.
+              questionType: candidate.questionType as ExamQuestionType,
+              options: (candidate.options as string[] | null) ?? null,
+              correctAnswer: candidate.correctAnswer as SubmissionCorrectAnswer,
+              similarity,
+            };
           }
         }
       }

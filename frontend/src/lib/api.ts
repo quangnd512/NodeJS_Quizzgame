@@ -198,10 +198,11 @@ export async function reportQuestion(
   questionId: string,
   reason: 'WRONG_ANSWER' | 'BAD_CONTENT' | 'TYPO' | 'OTHER',
   description?: string,
+  confirmResubmit?: boolean,
 ): Promise<{ message: string }> {
   return request(`/api/practice/questions/${questionId}/report`, token, {
     method: 'POST',
-    body: JSON.stringify({ reason, description }),
+    body: JSON.stringify({ reason, description, confirmResubmit }),
   });
 }
 
@@ -440,18 +441,43 @@ export async function adminGetReportsSummary(secret: string): Promise<ReportsSum
   return adminRequest('/api/admin/questions/reports/summary', secret);
 }
 
+/** Cac gia tri loc con kha dung cho tung dropdown — dung cho "loc lien dong". */
+export interface ReportFilterFacets {
+  statuses: string[];
+  subjects: string[];
+  reasons: string[];
+}
+
+/** GET /api/admin/questions/reports/facets?status=&subject=&reason= */
+export async function adminGetReportFacets(
+  secret: string,
+  params: { status?: string; subject?: string; reason?: string } = {},
+): Promise<ReportFilterFacets> {
+  const query = new URLSearchParams();
+  if (params.status) query.set('status', params.status);
+  if (params.subject) query.set('subject', params.subject);
+  if (params.reason) query.set('reason', params.reason);
+  const qs = query.toString();
+  return adminRequest(`/api/admin/questions/reports/facets${qs ? `?${qs}` : ''}`, secret);
+}
+
 // ─── Hoc sinh dong gop cau hoi (Submissions) ────────────────────────────────
 
 export type SubmissionStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+/** Đáp án đúng theo dạng câu hỏi — giống quy ước ExamQuestion/QuestionBank. */
+export type SubmissionCorrectAnswer = number | boolean[] | string[];
 
 export interface SubmissionDto {
   id: string;
   userId: string;
   subject: string;
   chapter: string | null;
+  questionType: ExamQuestionType;
   questionText: string;
-  options: [string, string, string, string];
-  correctOptionIndex: number;
+  /** null với FILL_BLANK (không có lựa chọn sẵn). */
+  options: string[] | null;
+  correctAnswer: SubmissionCorrectAnswer;
   status: SubmissionStatus;
   adminNote: string | null;
   questionBankId: string | null;
@@ -464,9 +490,10 @@ export interface SubmissionDto {
 export interface CreateSubmissionInput {
   subject: string;
   chapter?: string;
+  questionType: ExamQuestionType;
   questionText: string;
-  options: [string, string, string, string];
-  correctOptionIndex: number;
+  options?: string[];
+  correctAnswer: SubmissionCorrectAnswer;
 }
 
 export type UpdateSubmissionInput = Partial<CreateSubmissionInput>;
@@ -510,6 +537,10 @@ export async function deleteSubmission(sessionToken: string, id: string): Promis
 
 export interface DuplicateWarning {
   questionBankId: string;
+  questionText: string;
+  questionType: ExamQuestionType;
+  options: string[] | null;
+  correctAnswer: SubmissionCorrectAnswer;
   similarity: number;
 }
 

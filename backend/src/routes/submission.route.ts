@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { verifyAppToken } from '../middleware/auth.middleware.js';
 import { validateBody } from '../middleware/validate.middleware.js';
 import { submissionService } from '../services/submission/submission.service.js';
-import { SUBMISSION_STATUSES } from '../services/submission/submission.types.js';
+import { SUBMISSION_STATUSES, EXAM_QUESTION_TYPES } from '../services/submission/submission.types.js';
 import { SUBJECT_CATALOG } from '../services/users/users.types.js';
 
 export const submissionRouter = Router();
@@ -18,12 +18,20 @@ submissionRouter.use(verifyAppToken);
 
 const validSubjectIds = SUBJECT_CATALOG.map((s) => s.id) as [string, ...string[]];
 
+// Zod chi kiem tra "hinh dang tho" (options la mang string, correctAnswer la 1 trong
+// 3 kieu co the) — khop chinh xac giua questionType/options/correctAnswer duoc
+// `validateQuestionShape` (dung chung voi module Thi thu) kiem tra o tang service.
 const createSubmissionSchema = z.object({
   subject: z.enum(validSubjectIds),
   chapter: z.string().max(200).optional(),
+  questionType: z.enum(EXAM_QUESTION_TYPES),
   questionText: z.string().min(5).max(2000),
-  options: z.tuple([z.string().min(1), z.string().min(1), z.string().min(1), z.string().min(1)]),
-  correctOptionIndex: z.number().int().min(0).max(3),
+  options: z.array(z.string().min(1)).length(4).optional(),
+  correctAnswer: z.union([
+    z.number().int().min(0).max(3),
+    z.array(z.boolean()).length(4),
+    z.array(z.string().min(1)).min(1),
+  ]),
 });
 
 const updateSubmissionSchema = createSubmissionSchema.partial();

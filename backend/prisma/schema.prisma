@@ -248,8 +248,12 @@ model QuestionReport {
   status      String   @default("PENDING")
   createdAt   DateTime @default(now())
 
-  /// Moi user chi bao cao 1 lan moi cau hoi.
-  @@unique([userId, questionId])
+  /// User co the bao cao lai 1 cau da tung bao cao NEU report truoc do da duoc xu ly
+  /// xong (FIXED/DISMISSED) - chi chan khi con PENDING. Rang buoc "toi da 1 report
+  /// PENDING / user / cau hoi" duoc ap dung bang PARTIAL UNIQUE INDEX rieng (khong
+  /// the khai bao truc tiep trong Prisma schema) - xem migration
+  /// `20260714000000_report_resubmit_after_resolved`.
+  @@index([userId, questionId])
   @@index([status, createdAt])
   @@map("question_reports")
 }
@@ -365,14 +369,18 @@ model StudentQuestionSubmission {
   /// Ten chuong/chu de (tuy chon).
   chapter            String?
 
+  /// Dang cau hoi: MCQ_4 | TRUE_FALSE_4 | FILL_BLANK (giong ExamQuestion/QuestionBank).
+  questionType       String   @default("MCQ_4")
+
   /// Noi dung cau hoi hoc sinh nhap.
   questionText       String
 
-  /// 4 lua chon dap an dang JSON mang 4 phan tu string.
-  options            Json
+  /// Du lieu lua chon/phat bieu dang JSON (null voi FILL_BLANK) - giong QuestionBank.options.
+  options            Json?
 
-  /// Chi so dap an dung (0-3) do hoc sinh chon.
-  correctOptionIndex Int
+  /// Dap an dung dang JSON (so cho MCQ_4, mang boolean cho TRUE_FALSE_4,
+  /// mang string cho FILL_BLANK) - giong QuestionBank.correctAnswer.
+  correctAnswer      Json
 
   /// Trang thai xu ly: PENDING (cho duyet) | APPROVED (da duyet) | REJECTED (tu choi).
   status             String   @default("PENDING")

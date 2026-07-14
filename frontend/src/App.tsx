@@ -6,7 +6,7 @@ import {
   startPracticeSession, answerQuestion, completeSession, reportQuestion,
   getPracticeHistory, getPracticeStats,
   startExam, submitExam, getExamResult, getActiveExamSession, abandonExam,
-  adminListReports, adminResolveReport, adminGetReportsSummary,
+  adminListReports, adminResolveReport, adminGetReportsSummary, adminGetReportFacets,
   adminListExamPapers, adminGetExamPaperDetail, adminCreateExamPaper, adminUpdateExamPaper,
   adminUpdateExamQuestion, adminDeleteExamQuestion, adminRestoreExamQuestion, adminImportExamQuestions,
   adminAutoFillFromBank,
@@ -24,7 +24,7 @@ import {
 } from './lib/api.js';
 import type {
   UserProfile, StartSessionResult, AnswerResult, CompleteResult,
-  HistoryItem, SubjectStat, QuestionReportDto, ReportsSummary, ResolveReportQuestionUpdate,
+  HistoryItem, SubjectStat, QuestionReportDto, ReportsSummary, ResolveReportQuestionUpdate, ReportFilterFacets,
   StartExamResult, SubmitExamResult, ExamResult, ExamAnswerValue, ExamQuestionType, ExamQuestionPublic, ActiveExamSession as ActiveExamSessionInfo,
   ExamPaperSummary, ExamPaperDetail, ExamImportResultDto,
   QuestionBankItem, QuestionBankUsage,
@@ -33,7 +33,7 @@ import type {
   WrongAnswerItem, WrongAnswerListResponse, RetryResult,
   DashboardStats, AdminUserListItem, AdminUserDetail,
   NotificationItem, NotificationTargetScreen,
-  SubmissionDto, SubmissionStatus, AdminSubmissionListItem,
+  SubmissionDto, SubmissionStatus, AdminSubmissionListItem, SubmissionCorrectAnswer,
 } from './lib/api.js';
 import './App.css';
 
@@ -975,11 +975,11 @@ function PracticeSessionScreen({
     setAnswerBusy(false);
   }
 
-  async function sendReport(reason: typeof REPORT_REASONS[number]['value']) {
+  async function sendReport(reason: typeof REPORT_REASONS[number]['value'], confirmResubmit = false) {
     if (!question) return;
     setReportError('');
     try {
-      await reportQuestion(sessionToken, question.id, reason, reportDesc.trim() || undefined);
+      await reportQuestion(sessionToken, question.id, reason, reportDesc.trim() || undefined, confirmResubmit);
       setReportMessage('Đã gửi báo lỗi');
       setReportSent(true);
       setShowReport(false);
@@ -988,6 +988,14 @@ function PracticeSessionScreen({
         setReportMessage('Bạn đã báo cáo câu này rồi');
         setReportSent(true);
         setShowReport(false);
+        return;
+      }
+      if (err instanceof ApiError && err.code === 'REPORT_RESUBMIT_CONFIRM_REQUIRED') {
+        // Bao cao truoc do da duoc xu ly xong (FIXED/DISMISSED) - hoi xac nhan
+        // truoc khi tao bao cao MOI (khong ghi de bao cao cu).
+        if (confirm('Bạn đã báo cáo câu hỏi này rồi (đã được xử lý). Bạn có muốn báo cáo lại không?')) {
+          void sendReport(reason, true);
+        }
         return;
       }
       if (err instanceof ApiError && err.code === 'QUESTION_NOT_ATTEMPTED_FOR_REPORT') {
@@ -2449,11 +2457,20 @@ function AdminSubmissionsPage({ secret, onLogout }: { secret: string; onLogout: 
                   {SUBJECTS.find((s) => s.id === item.subject)?.name ?? item.subject}
                 </span>
                 {item.duplicateWarning && (
-                  <span className="admin-status-badge" style={{ background: '#fef3c7', color: '#92400e' }}>
+                  <span
+                    className="admin-status-badge"
+                    style={{ background: '#fef3c7', color: '#92400e' }}
+                    title={`Trùng với: "${item.duplicateWarning.questionText}"`}
+                  >
                     ⚠️ Có thể trùng ({Math.round(item.duplicateWarning.similarity * 100)}%)
                   </span>
                 )}
               </div>
+              {item.duplicateWarning && (
+                <p style={{ margin: '.25rem 0 0', fontSize: '.78rem', color: '#92400e' }}>
+                  Trùng với câu trong kho: "{item.duplicateWarning.questionText}"
+                </p>
+              )}
               <p className="admin-report-q">{item.questionText}</p>
               <p className="admin-report-time">{new Date(item.createdAt).toLocaleString('vi-VN')}</p>
               <div className="admin-report-actions">
@@ -2505,20 +2522,22 @@ function AdminSubmissionsPage({ secret, onLogout }: { secret: string; onLogout: 
               {detailItem.chapter ? ` · ${detailItem.chapter}` : ''}
             </p>
             <p style={{ fontWeight: 600 }}>{detailItem.questionText}</p>
-            <ul style={{ paddingLeft: '1.25rem' }}>
-              {detailItem.options.map((opt, i) => (
-                <li key={i} style={{
-                  color: i === detailItem.correctOptionIndex ? '#16a34a' : undefined,
-                  fontWeight: i === detailItem.correctOptionIndex ? 700 : 400,
-                }}>
-                  {String.fromCharCode(65 + i)}. {opt}{i === detailItem.correctOptionIndex && ' ✓'}
-                </li>
-              ))}
-            </ul>
+            <p style={{ fontSize: '.8rem', color: '#64748b', marginTop: '-.5rem', marginBottom: '.5rem' }}>
+              Dạng: {QUESTION_TYPE_LABEL[detailItem.questionType]}
+            </p>
+            <SubmissionAnswerPreview item={detailItem} />
             {detailItem.duplicateWarning && (
-              <p style={{ color: '#92400e', background: '#fef3c7', padding: '.5rem .75rem', borderRadius: 8 }}>
-                ⚠️ Có thể trùng với câu hỏi đã có trong kho (độ tương đồng {Math.round(detailItem.duplicateWarning.similarity * 100)}%).
-              </p>
+              <div style={{ color: '#92400e', background: '#fef3c7', padding: '.5rem .75rem', borderRadius: 8 }}>
+                <p style={{ margin: 0 }}>
+                  ⚠️ Có thể trùng với câu hỏi đã có trong kho (độ tương đồng {Math.round(detailItem.duplicateWarning.similarity * 100)}%):
+                </p>
+                <p style={{ margin: '.35rem 0 0', fontStyle: 'italic', fontWeight: 600 }}>
+                  "{detailItem.duplicateWarning.questionText}"
+                </p>
+                <div style={{ marginTop: '.35rem' }}>
+                  <SubmissionAnswerPreview item={detailItem.duplicateWarning} />
+                </div>
+              </div>
             )}
             <div className="modal-actions">
               {detailItem.status === 'PENDING' && (
@@ -2542,6 +2561,48 @@ function AdminSubmissionsPage({ secret, onLogout }: { secret: string; onLogout: 
   );
 }
 
+/** Hình dạng tối thiểu cần có để hiện đáp án — dùng chung cho SubmissionDto,
+ * AdminSubmissionListItem, và DuplicateWarning (câu trùng trong kho). */
+type AnswerPreviewShape = {
+  questionType: ExamQuestionType;
+  options: string[] | null;
+  correctAnswer: SubmissionCorrectAnswer;
+};
+
+/** Hiện đáp án đúng theo đúng dạng câu hỏi (MCQ_4 / TRUE_FALSE_4 / FILL_BLANK) — dùng
+ * trong modal chi tiết bài học sinh gửi, và cả để hiện câu trùng trong kho. */
+function SubmissionAnswerPreview({ item }: { item: AnswerPreviewShape }) {
+  if (item.questionType === 'MCQ_4' && item.options) {
+    const correct = typeof item.correctAnswer === 'number' ? item.correctAnswer : -1;
+    return (
+      <ul style={{ paddingLeft: '1.25rem' }}>
+        {item.options.map((opt, i) => (
+          <li key={i} style={{ color: i === correct ? '#16a34a' : undefined, fontWeight: i === correct ? 700 : 400 }}>
+            {OPTION_LABELS[i]}. {opt}{i === correct && ' ✓'}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  if (item.questionType === 'TRUE_FALSE_4' && item.options) {
+    const answers = Array.isArray(item.correctAnswer) ? item.correctAnswer as boolean[] : [];
+    return (
+      <ul style={{ paddingLeft: '1.25rem' }}>
+        {item.options.map((opt, i) => (
+          <li key={i}>{OPTION_LABELS[i]}. {opt} — <strong>{answers[i] ? 'Đúng' : 'Sai'}</strong></li>
+        ))}
+      </ul>
+    );
+  }
+  // FILL_BLANK
+  const answers = Array.isArray(item.correctAnswer) ? item.correctAnswer as string[] : [];
+  return (
+    <p style={{ fontSize: '.875rem' }}>
+      Đáp án chấp nhận: <strong>{answers.join(' | ')}</strong>
+    </p>
+  );
+}
+
 // ─── AdminReportsPage — hiện đầy đủ nội dung câu hỏi, sửa tại chỗ ────────────────
 
 function AdminReportsPage({ secret, onLogout }: { secret: string; onLogout: () => void }) {
@@ -2551,6 +2612,7 @@ function AdminReportsPage({ secret, onLogout }: { secret: string; onLogout: () =
   const [statusFilter, setStatusFilter] = useState('PENDING');
   const [subjectFilter, setSubjectFilter] = useState('');
   const [reasonFilter, setReasonFilter] = useState('');
+  const [facets, setFacets] = useState<ReportFilterFacets | null>(null);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -2562,7 +2624,7 @@ function AdminReportsPage({ secret, onLogout }: { secret: string; onLogout: () =
     setLoading(true);
     setError('');
     try {
-      const [s, r] = await Promise.all([
+      const [s, r, f] = await Promise.all([
         adminGetReportsSummary(secret),
         adminListReports(secret, {
           status: statusFilter || undefined,
@@ -2571,10 +2633,18 @@ function AdminReportsPage({ secret, onLogout }: { secret: string; onLogout: () =
           page,
           limit: ADMIN_PAGE_SIZE,
         }),
+        // Loc lien dong: tinh cac gia tri con kha dung cho tung dropdown dua tren
+        // 2 dieu kien loc con lai (khong tinh theo chinh dropdown do).
+        adminGetReportFacets(secret, {
+          status: statusFilter || undefined,
+          subject: subjectFilter || undefined,
+          reason: reasonFilter || undefined,
+        }),
       ]);
       setSummary(s);
       setItems(r.items);
       setTotal(r.total);
+      setFacets(f);
     } catch (err) {
       if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
         onLogout();
@@ -2640,9 +2710,9 @@ function AdminReportsPage({ secret, onLogout }: { secret: string; onLogout: () =
           onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
         >
           <option value="">Tất cả trạng thái</option>
-          <option value="PENDING">Chờ xử lý</option>
-          <option value="FIXED">Đã sửa</option>
-          <option value="DISMISSED">Đã bỏ qua</option>
+          {(['PENDING', 'FIXED', 'DISMISSED'] as const)
+            .filter((s) => !facets || facets.statuses.includes(s) || s === statusFilter)
+            .map((s) => <option key={s} value={s}>{REPORT_STATUS_LABEL[s] ?? s}</option>)}
         </select>
         <select
           className="field-input"
@@ -2650,7 +2720,9 @@ function AdminReportsPage({ secret, onLogout }: { secret: string; onLogout: () =
           onChange={(e) => { setSubjectFilter(e.target.value); setPage(1); }}
         >
           <option value="">Tất cả môn</option>
-          {SUBJECTS.map((s) => <option key={s.id} value={s.id}>{s.emoji} {s.name}</option>)}
+          {SUBJECTS
+            .filter((s) => !facets || facets.subjects.includes(s.id) || s.id === subjectFilter)
+            .map((s) => <option key={s.id} value={s.id}>{s.emoji} {s.name}</option>)}
         </select>
         <select
           className="field-input"
@@ -2658,7 +2730,9 @@ function AdminReportsPage({ secret, onLogout }: { secret: string; onLogout: () =
           onChange={(e) => { setReasonFilter(e.target.value); setPage(1); }}
         >
           <option value="">Tất cả lý do</option>
-          {REPORT_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+          {REPORT_REASONS
+            .filter((r) => !facets || facets.reasons.includes(r.value) || r.value === reasonFilter)
+            .map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
         </select>
       </div>
 
@@ -4918,16 +4992,26 @@ function SubmissionFormFields({
   onCancel?: () => void;
 }) {
   const [subject, setSubject] = useState(initial?.subject ?? '');
-  const [chapter, setChapter] = useState(initial?.chapter ?? '');
+  const [questionType, setQuestionType] = useState<ExamQuestionType>(initial?.questionType ?? 'MCQ_4');
   const [questionText, setQuestionText] = useState(initial?.questionText ?? '');
   const [options, setOptions] = useState<[string, string, string, string]>(
-    initial?.options ?? ['', '', '', ''],
+    (initial?.options && initial.options.length === 4 ? initial.options : ['', '', '', '']) as
+      [string, string, string, string],
   );
-  const [correctOptionIndex, setCorrectOptionIndex] = useState<number | null>(
-    initial?.correctOptionIndex ?? null,
+  const [mcqCorrect, setMcqCorrect] = useState<number | null>(
+    initial?.questionType === 'MCQ_4' && typeof initial.correctAnswer === 'number' ? initial.correctAnswer : null,
+  );
+  const [tfCorrect, setTfCorrect] = useState<boolean[]>(
+    initial?.questionType === 'TRUE_FALSE_4' && Array.isArray(initial.correctAnswer)
+      ? (initial.correctAnswer as boolean[]) : [true, true, true, true],
+  );
+  const [fillAnswers, setFillAnswers] = useState(
+    initial?.questionType === 'FILL_BLANK' && Array.isArray(initial.correctAnswer)
+      ? (initial.correctAnswer as string[]).join(' | ') : '',
   );
   const [busy, setBusy] = useState(false);
   const [validationError, setValidationError] = useState('');
+  const [rateLimitModal, setRateLimitModal] = useState('');
 
   function updateOption(i: number, value: string) {
     setOptions((prev) => {
@@ -4937,39 +5021,58 @@ function SubmissionFormFields({
     });
   }
 
-  function validate(): string {
-    if (!subject) return 'Vui lòng chọn môn học.';
-    if (questionText.trim().length < 5) return 'Nội dung câu hỏi quá ngắn (tối thiểu 5 ký tự).';
-    if (options.some((o) => !o.trim())) return 'Vui lòng nhập đủ 4 đáp án.';
-    if (correctOptionIndex === null) return 'Vui lòng chọn đáp án đúng.';
-    return '';
+  function resetFormFields() {
+    setSubject(''); setQuestionType('MCQ_4'); setQuestionText('');
+    setOptions(['', '', '', '']); setMcqCorrect(null);
+    setTfCorrect([true, true, true, true]); setFillAnswers('');
   }
 
   async function handleSubmit() {
-    const validationMsg = validate();
-    if (validationMsg) { setValidationError(validationMsg); return; }
+    if (!subject) { setValidationError('Vui lòng chọn môn học.'); return; }
+    if (questionText.trim().length < 5) {
+      setValidationError('Nội dung câu hỏi quá ngắn (tối thiểu 5 ký tự).'); return;
+    }
+
+    let correctAnswer: SubmissionCorrectAnswer;
+    let sendOptions: string[] | undefined;
+    if (questionType === 'MCQ_4') {
+      const opts = options.map((o) => o.trim());
+      if (opts.some((o) => !o)) { setValidationError('Vui lòng nhập đủ 4 đáp án.'); return; }
+      if (mcqCorrect === null) { setValidationError('Vui lòng chọn đáp án đúng.'); return; }
+      sendOptions = opts;
+      correctAnswer = mcqCorrect;
+    } else if (questionType === 'TRUE_FALSE_4') {
+      const opts = options.map((o) => o.trim());
+      if (opts.some((o) => !o)) { setValidationError('Vui lòng nhập đủ 4 phát biểu.'); return; }
+      sendOptions = opts;
+      correctAnswer = tfCorrect;
+    } else {
+      const answers = fillAnswers.split('|').map((a) => a.trim()).filter(Boolean);
+      if (answers.length === 0) { setValidationError('Vui lòng nhập ít nhất 1 đáp án.'); return; }
+      correctAnswer = answers;
+    }
+
     setValidationError('');
     setBusy(true);
     try {
       const payload = {
         subject,
-        chapter: chapter.trim() || undefined,
+        questionType,
         questionText: questionText.trim(),
-        options: options.map((o) => o.trim()) as [string, string, string, string],
-        correctOptionIndex: correctOptionIndex!,
+        options: sendOptions,
+        correctAnswer,
       };
       if (mode === 'create') {
         await createSubmission(sessionToken, payload);
       } else if (initial) {
         await updateSubmission(sessionToken, initial.id, payload);
       }
-      if (mode === 'create') {
-        setSubject(''); setChapter(''); setQuestionText('');
-        setOptions(['', '', '', '']); setCorrectOptionIndex(null);
-      }
+      if (mode === 'create') resetFormFields();
       onDone();
     } catch (err) {
-      if (err instanceof ApiError && (err.status === 400 || err.status === 409)) {
+      if (err instanceof ApiError && err.code === 'SUBMISSION_RATE_LIMIT_EXCEEDED') {
+        setRateLimitModal(err.message);
+      } else if (err instanceof ApiError && (err.status === 400 || err.status === 409)) {
         setValidationError(err.message);
       } else {
         onError(err);
@@ -4983,7 +5086,7 @@ function SubmissionFormFields({
     <div style={{ background: '#fff', borderRadius: 12, padding: '1rem', border: '1px solid #e2e8f0' }}>
       {mode === 'create' && (
         <p style={{ margin: '0 0 1rem', fontSize: '.85rem', color: '#64748b' }}>
-          Gửi câu hỏi trắc nghiệm để đóng góp vào ngân hàng câu hỏi. Câu hỏi được duyệt sẽ thưởng{' '}
+          Gửi câu hỏi để đóng góp vào ngân hàng câu hỏi. Câu hỏi được duyệt sẽ thưởng{' '}
           <strong>30 điểm</strong>, mỗi lần được dùng trong 1 đề thi thật sẽ thưởng thêm{' '}
           <strong>5 điểm</strong> (tối đa 100 điểm/câu). Tối đa 5 câu/ngày.
         </p>
@@ -4996,13 +5099,16 @@ function SubmissionFormFields({
         </select>
       </label>
       <label className="form-field">
-        <span className="field-label">Chương/chủ đề (tuỳ chọn)</span>
-        <input
+        <span className="field-label">Dạng câu hỏi</span>
+        <select
           className="field-input"
-          value={chapter}
-          onChange={(e) => setChapter(e.target.value)}
-          placeholder="VD: Hàm số"
-        />
+          value={questionType}
+          onChange={(e) => setQuestionType(e.target.value as ExamQuestionType)}
+        >
+          <option value="MCQ_4">Trắc nghiệm 4 đáp án</option>
+          <option value="TRUE_FALSE_4">Đúng/Sai (4 ý)</option>
+          <option value="FILL_BLANK">Điền đáp án</option>
+        </select>
       </label>
       <label className="form-field">
         <span className="field-label">Nội dung câu hỏi</span>
@@ -5014,24 +5120,56 @@ function SubmissionFormFields({
           placeholder="Nhập nội dung câu hỏi..."
         />
       </label>
-      <span className="field-label" style={{ display: 'block', marginTop: '.5rem' }}>4 đáp án (chọn ô tròn cho đáp án đúng)</span>
-      {options.map((opt, i) => (
-        <label key={i} className="form-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '.5rem' }}>
-          <input
-            type="radio"
-            name="correctOption"
-            checked={correctOptionIndex === i}
-            onChange={() => setCorrectOptionIndex(i)}
-          />
+      {(questionType === 'MCQ_4' || questionType === 'TRUE_FALSE_4') && (
+        <>
+          <span className="field-label" style={{ display: 'block', marginTop: '.5rem' }}>
+            {questionType === 'MCQ_4' ? '4 đáp án (chọn ô tròn cho đáp án đúng)' : '4 phát biểu (chọn Đúng/Sai cho từng ý)'}
+          </span>
+          {options.map((opt, i) => (
+            <div key={i} className="form-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '.5rem' }}>
+              {questionType === 'MCQ_4' ? (
+                <input
+                  type="radio"
+                  name="correctOption"
+                  checked={mcqCorrect === i}
+                  onChange={() => setMcqCorrect(i)}
+                />
+              ) : (
+                <div className="exam-tf-toggle">
+                  <button type="button"
+                    className={`exam-tf-btn ${tfCorrect[i] ? 'active-true' : ''}`}
+                    onClick={() => setTfCorrect((t) => { const next = [...t]; next[i] = true; return next; })}>
+                    Đúng
+                  </button>
+                  <button type="button"
+                    className={`exam-tf-btn ${!tfCorrect[i] ? 'active-false' : ''}`}
+                    onClick={() => setTfCorrect((t) => { const next = [...t]; next[i] = false; return next; })}>
+                    Sai
+                  </button>
+                </div>
+              )}
+              <input
+                className="field-input"
+                style={{ flex: 1 }}
+                value={opt}
+                onChange={(e) => updateOption(i, e.target.value)}
+                placeholder={questionType === 'MCQ_4' ? `Đáp án ${OPTION_LABELS[i]}` : `Phát biểu ${OPTION_LABELS[i]}`}
+              />
+            </div>
+          ))}
+        </>
+      )}
+      {questionType === 'FILL_BLANK' && (
+        <label className="form-field">
+          <span className="field-label">Đáp án chấp nhận (phân tách bởi "|")</span>
           <input
             className="field-input"
-            style={{ flex: 1 }}
-            value={opt}
-            onChange={(e) => updateOption(i, e.target.value)}
-            placeholder={`Đáp án ${String.fromCharCode(65 + i)}`}
+            value={fillAnswers}
+            placeholder="Hà Nội | Ha Noi"
+            onChange={(e) => setFillAnswers(e.target.value)}
           />
         </label>
-      ))}
+      )}
       {validationError && <p className="report-error">{validationError}</p>}
       <div style={{ display: 'flex', gap: '.5rem', marginTop: '.75rem' }}>
         <button className="btn-primary btn-lg" disabled={busy} onClick={() => void handleSubmit()}>
@@ -5041,6 +5179,19 @@ function SubmissionFormFields({
           <button className="btn-secondary btn-lg" disabled={busy} onClick={onCancel}>Huỷ</button>
         )}
       </div>
+
+      {/* Modal riêng cho lỗi vượt rate limit 5 câu/ngày — nổi bật hơn lỗi validate thường */}
+      {rateLimitModal && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" onClick={() => setRateLimitModal('')}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 400 }}>
+            <h3 className="modal-title">⏳ Đã đạt giới hạn gửi câu hỏi</h3>
+            <p>{rateLimitModal}</p>
+            <div className="modal-actions">
+              <button className="btn-primary" onClick={() => setRateLimitModal('')}>Đã hiểu</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
