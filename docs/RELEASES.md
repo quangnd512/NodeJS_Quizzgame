@@ -4,6 +4,44 @@
 
 ---
 
+## v1.12.0 — 2026-07-15
+
+### Quản lý câu hỏi — Học sinh đóng góp câu hỏi + Thiết kế lại báo cáo (Feature 014)
+
+**Branch:** `feature/question-management-hub`
+
+#### Added
+
+- **Học sinh đóng góp câu hỏi (Submissions)**: học sinh gửi câu hỏi (tối đa 5 câu/ngày, hiện dạng modal khi vượt) → admin duyệt (vào ngân hàng câu hỏi + thưởng **30 điểm**) hoặc từ chối (kèm lý do bắt buộc). Hỗ trợ 3 dạng câu hỏi: MCQ_4/TRUE_FALSE_4/FILL_BLANK (giống module Thi thử)
+- **Điểm thưởng "usage"**: mỗi lần câu hỏi (đã duyệt) được admin chủ động thêm vào 1 đề thi thật (`from-bank`), học sinh nhận thêm **+5 điểm/lần**, tối đa **100 điểm/câu** (chống lost-update bằng Compare-And-Swap)
+- **Cảnh báo trùng lặp** khi gửi câu hỏi — so khớp Jaccard similarity với câu ACTIVE cùng môn trong kho (ngưỡng 60%), hiện kèm đầy đủ nội dung câu trong kho để admin đối chiếu trực tiếp
+- **3 loại thông báo mới**: `SUBMISSION_APPROVED`, `SUBMISSION_REJECTED`, `SUBMISSION_USED`
+- **Trang "✍️ Gửi câu hỏi"** (học sinh) — form gửi câu mới + danh sách "Câu đã gửi" (xem trạng thái, sửa/xoá khi còn PENDING)
+- **Trang Admin "Câu hỏi"** (gộp tab mới) — 2 sub-tab: "Bài học sinh gửi" và "Báo cáo lỗi", kèm badge tổng số việc chờ xử lý
+- **Report Redesign**: `GET /api/admin/questions/reports` trả kèm nội dung câu hỏi đầy đủ; endpoint gộp `PATCH /api/admin/questions/reports/:id/resolve` (sửa nội dung câu hỏi ngay tại chỗ, tự đóng batch mọi báo cáo PENDING khác cùng câu, tự kích hoạt lại câu nếu đang auto-hide)
+- **Lọc liên động 3 dropdown** (status/subject/reason) ở trang Báo cáo lỗi — endpoint mới `GET /api/admin/questions/reports/facets`
+- **Báo cáo lại sau khi đã xử lý**: học sinh có thể báo cáo lại 1 câu sau khi report cũ đã FIXED/DISMISSED (cần xác nhận qua `confirmResubmit`) — ràng buộc "tối đa 1 report PENDING/user/câu" chuyển sang partial unique index
+- **Bảng `question_edit_history`** — lưu snapshot nội dung câu hỏi trước mỗi lần admin sửa qua luồng resolve báo cáo
+
+#### Changed
+
+- ⚠️ **Breaking**: `PATCH /api/admin/questions/reports/:id` (cũ) đã bị **xoá**, thay bằng `PATCH /api/admin/questions/reports/:id/resolve`
+- ⚠️ **Breaking**: `GET /api/admin/questions/reports/summary` đổi field `pending`→`pendingReports`, `reviewed`→`pendingQuestions`
+- ⚠️ **Đổi hành vi auto-hide**: `status=FIXED` giờ **tự động** set `isActive=true` nếu câu đang bị auto-hide
+
+#### Fixed
+
+- Race condition khi 2 admin cùng duyệt 1 submission (claim-pattern `updateMany` điều kiện `status=PENDING`)
+- Race condition khi học sinh sửa/xoá đúng lúc admin vừa xử lý xong submission
+- Lost update trên điểm "usage" khi 2 `addFromBank` chạy song song cùng 1 câu (Compare-And-Swap có retry)
+- Race condition double-resolve trong `resolveReport()` (phát hiện ở vòng review S8 lần 2 — cùng lớp lỗi với 3 mục trên nhưng bị bỏ sót ban đầu) — thêm claim-pattern + `ReportNotPendingError` (409)
+
+**Migration cần chạy trên production:**
+- `npx prisma migrate deploy` — áp dụng 3 migration mới: `add_student_submissions_and_edit_history`, `submission_question_types`, `report_resubmit_after_resolved` (migration cuối dùng raw SQL cho partial unique index có điều kiện, có backfill trước khi set NOT NULL — an toàn cho dữ liệu hiện có)
+- Không có biến môi trường mới cần thêm
+
+---
+
 ## v1.11.0 — 2026-07-13
 
 ### Notifications — Thông báo hệ thống (Feature 013)
