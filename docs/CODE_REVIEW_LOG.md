@@ -817,3 +817,108 @@ Fail-closed ở `checkRateLimit` là quyết định bảo mật đúng. Sentine
 - `docs/api/drafts/notifications.yaml` — cập nhật status REPORT_RESOLVED
 - `docs/TEST_CASES.md` — thêm 24 test cases Feature 013
 - `docs/CODE_REVIEW_LOG.md` — file này
+
+---
+
+## Review: Feature 014 — Quản lý câu hỏi (Học sinh đóng góp câu hỏi + Report Redesign)
+
+**Ngày**: 2026-07-13
+**Reviewer**: S3-SoatLoi
+**Branch**: `feature/question-management-hub`
+**Files thay đổi**: 17 files backend, 3 files frontend (S2) + 3 file backend sửa/thêm bởi S3
+
+### Tiêu chí 8 điểm
+
+| # | Tiêu chí | Kết quả | Ghi chú |
+|---|----------|---------|---------|
+| 1 | Atomic transaction | ✅ Pass | `approveSubmission`, `resolveReport`, `addFromBank`, `deleteQuestion` đều bọc `$transaction` đúng chỗ (tạo QuestionBank + cập nhật submission cùng 1 transaction; snapshot + update Question + batch-resolve report cùng 1 transaction) |
+| 2 | Race condition | 🔴 3 lỗi tìm thấy, đã sửa (xem bên dưới) | Đây là trọng tâm review vì tính năng có cộng điểm (30đ approve, 5đ/lần dùng, trần 100đ) |
+| 3 | Error handling | ✅ Pass | Custom error class đúng pattern (`SubmissionError` kế thừa, `code` + `ERROR_CODE_TO_HTTP_STATUS`); mọi fire-and-forget có try/catch + `console.error` riêng cho từng bước (không để 1 lỗi chặn bước còn lại) |
+| 4 | Input validation | ✅ Pass | Zod validate đầy đủ ở mọi route mới (subject theo `SUBJECT_CATALOG`, options tuple 4 phần tử, correctOptionIndex 0-3, note bắt buộc khi reject, status resolve chỉ nhận FIXED\|DISMISSED); không có raw SQL với input người dùng |
+| 5 | N+1 / Index | ✅ Pass (1 ghi chú nhẹ) | `computeDuplicateWarnings` 1 query duy nhất cho toàn bộ candidates rồi so khớp in-memory (không N+1 DB); `joinReportsWithQuestions` cũng 1 query gộp. Index mới `[userId,status,createdAt]` phục vụ tốt truy vấn học sinh + rate-limit, nhưng `listSubmissionsAdmin` (lọc theo status, không có userId) sẽ không tận dụng được index này — chấp nhận được vì khối lượng dữ liệu nhỏ (rate limit 5 câu/ngày/học sinh), không thêm migration mới để tránh rủi ro trùng với vấn đề "drift cosmetic" đã ghi nhận ở bảng notifications (theo lưu ý của S2) |
+| 6 | TypeScript `any` | ✅ Pass | Rà toàn bộ diff (backend + frontend) — không có `any` nào |
+| 7 | Edge cases | ⚠️ Ghi nhận SAI ở vòng đầu, đã sửa ở vòng làm lại (xem mục "Làm lại lần 1" bên dưới) | Rỗng (rows.length===0 trong computeDuplicateWarnings/joinReportsWithQuestions), question bị xoá khi JOIN report (bỏ qua an toàn), trần usage 100đ (min() đúng), rate limit biên (4 vs 5) đều ĐÚNG. Riêng dòng "report đã bị resolve trước đó" ghi nhận NHẦM — lúc đó tôi kiểm tra hành vi của `updateReport()` cũ (vẫn giữ nội bộ) chứ không phải `resolveReport()` mới (hàm THẬT SỰ được endpoint dùng) — `resolveReport()` lúc đó KHÔNG có guard này. S8 phát hiện và trả lại, xem chi tiết bên dưới. |
+| 8 | API contract | ✅ Pass | Đối chiếu từng endpoint với `docs/api/drafts/quan-ly-cau-hoi.yaml`: method/path/request/response/error codes đều khớp (kể cả HTTP status 404/403/409/400 map đúng trong `app.ts`) |
+
+### 🔴 Lỗi Race Condition tìm thấy & đã sửa
+
+| # | Vị trí | Mô tả lỗi | Hậu quả nếu không sửa | Cách sửa |
+|---|--------|-----------|------------------------|----------|
+| 1 | `question-bank.service.ts` — `fireUsagePointsTrigger` | Đọc `usagePointsEarned` rồi ghi đè bằng `update` thường (không điều kiện) — lost update nếu 2 lần `addFromBank` cho CÙNG 1 câu hỏi chạy gần như đồng thời | `usagePointsEarned` bị ghi thiếu so với thực tế → trần 100đ/câu bị vô hiệu hoá dần theo thời gian (học sinh có thể nhận vượt quá 100đ usage cho 1 câu) | Đổi sang COMPARE-AND-SWAP: `updateMany` với điều kiện `where: { id, usagePointsEarned: <giá trị vừa đọc> }`; nếu `count=0` (bị người khác ghi trước) thì đọc lại giá trị mới và thử lại, tối đa 5 lần. Tách thành hàm riêng `awardUsagePointsForSubmission` |
+| 2 | `submission.service.ts` — `approveSubmission` | Check `status==='PENDING'` NGOÀI transaction rồi mới tạo QuestionBank + update — 2 admin duyệt cùng 1 submission gần như đồng thời có thể cùng vượt qua check, cùng chạy transaction | Tạo **2 bản ghi QuestionBank trùng lặp** cho 1 câu hỏi + cộng 30đ + gửi thông báo APPROVED **2 lần** | Thêm bước "claim" đầu transaction: `updateMany({ where: { id, status: 'PENDING' }, data: { status: 'APPROVED' } })`, nếu `count===0` throw `SubmissionNotPendingError` ngay, chỉ tạo QuestionBank khi claim thành công |
+| 3 | `submission.service.ts` — `rejectSubmission`, `updateSubmission`, `deleteSubmission` | Cùng pattern check-rồi-ghi không nguyên tử: reject có thể chạy trùng với approve; học sinh sửa/xoá đúng lúc admin vừa duyệt xong | Từ chối/sửa/xoá "đè" lên 1 submission đã được xử lý xong (đã có QuestionBank/thông báo gắn với nó) → dữ liệu không nhất quán, thông báo trùng | Đổi `update`/`delete` (theo id đơn) sang `updateMany`/`deleteMany` với điều kiện `status: 'PENDING'` (+ `userId` cho 2 hàm học sinh), throw `SubmissionNotPendingError` nếu `count===0` |
+
+### Kết quả test tự động
+
+- **Unit test**: 137/137 PASS (117 của S2 + 20 mới của S3: 5 test race-condition submission, 5 test CAS usage-points question-bank — file test MỚI HOÀN TOÀN vì trước đó chưa có, 10 test text-similarity.utils — cũng file test mới)
+- **Build**: PASS (Backend `tsc` sạch, Frontend `tsc -b && vite build` sạch)
+- **Lint**: ⚠️ Không chạy được — `eslint` bị treo vô thời hạn trong sandbox này (đã thử 3 lần độc lập, kể cả khi tắt sandbox và chỉ lint 2 file, vẫn treo >10 phút không dùng CPU — kết luận là giới hạn môi trường, không phải lỗi code). Bù lại: `tsconfig.app.json`/`tsconfig.node.json` frontend đã bật `noUnusedLocals`+`noUnusedParameters` và build sạch (bắt được phần lớn lỗi mà lint hay báo); rà thủ công toàn bộ diff xác nhận không có `any`, import thừa, hay vi phạm quy ước `eslint-disable` đã dùng đúng chỗ (khớp pattern `react-hooks/exhaustive-deps` đã dùng ở các trang admin khác)
+- **npm audit --audit-level=high**: Backend 13 vulnerabilities (1 low, 9 moderate, 3 high — `xlsx`, `firebase-admin`/`google-gax` transitive deps), Frontend 1 moderate (`protobufjs`) — xác nhận `package.json`/`package-lock.json` **không đổi** trên branch này (không thêm dependency mới), toàn bộ là rủi ro nền tồn tại từ trước, không liên quan Feature 014
+
+### Ghi chú xác nhận các câu hỏi S2 đặt ra (mục "LƯU Ý CHO SESSION 3")
+
+1. **Difficulty mặc định = 2 khi duyệt câu học sinh gửi**: Hợp lý — admin có thể sửa lại sau qua trang Ngân hàng câu hỏi hiện có, đúng phạm vi tính năng.
+2. **Usage points chỉ hook vào `addFromBank`, không áp dụng `autoFillFromBank`**: Đúng theo TASK 5 (S1 chỉ định addFromBank — thao tác admin CHỦ ĐỘNG chọn câu, khác với autoFill là random). Chấp nhận được.
+3. **`updateReport()` cũ giữ nguyên trong practice.service.ts, chỉ gỡ route HTTP**: Hợp lý — không phải nợ kỹ thuật che giấu, có lý do rõ ràng (smoke-test cũ + dữ liệu REVIEWED cũ vẫn cần), đã có comment giải thích tại chỗ.
+4. **Migration áp dụng thủ công (`prisma migrate diff` + `db execute` + `migrate resolve`)**: Đã đối chiếu `migration.sql` khớp hoàn toàn với `schema.prisma` (2 bảng mới + enum +3 giá trị + FK + index), `prisma migrate status` báo "up to date". Chấp nhận được, có giải thích rõ trong commit d011674.
+5. Chưa có frontend test suite — đúng pattern hiện tại của cả repo (chỉ backend vitest). Không yêu cầu bổ sung.
+
+### Files S3 đã sửa/thêm thêm
+
+- `backend/src/services/submission/submission.service.ts` — sửa race condition (approve/reject/update/delete)
+- `backend/src/services/submission/__tests__/submission.service.test.ts` — cập nhật mock + thêm 5 test race-condition + 1 test boundary rate-limit
+- `backend/src/services/exam/question-bank.service.ts` — sửa race condition CAS cho usage points trigger
+- `backend/src/services/exam/__tests__/question-bank.service.test.ts` — file test MỚI (5 test, trước đó service này chưa từng có test)
+- `backend/src/utils/__tests__/text-similarity.utils.test.ts` — file test MỚI (10 test)
+- `docs/TEST_CASES.md` — thêm 31 test case Feature 014
+- `docs/CODE_REVIEW_LOG.md` — file này
+
+---
+
+### Làm lại lần 1 — race condition sót lại trong `resolveReport()` (phát hiện bởi S8)
+
+**Ngày**: 2026-07-14/15
+**Reviewer**: S3-SoatLoi (theo yêu cầu làm lại từ S8-GiamSat)
+**Branch**: `feature/question-management-hub`
+
+**Lỗi S8 phát hiện**: `resolveReport()` (`practice.service.ts` dòng ~951) — endpoint MỚI thay thế
+toàn bộ luồng xử lý báo cáo cũ — cập nhật report CHÍNH bằng `tx.questionReport.update({ where: {
+id: reportId }, data: { status } })`, một `update` THƯỜNG không điều kiện, trong khi phần "batch
+đóng các report PENDING KHÁC cùng câu" lại đã đúng. Đây CHÍNH LÀ lớp race condition tôi vừa tìm và
+sửa ở 2 chỗ khác trong cùng PR này (`approveSubmission`, `rejectSubmission`/`updateSubmission`/
+`deleteSubmission`) nhưng đã bỏ sót ở hàm này. Gọi resolve 2 lần liên tiếp trên cùng 1 report
+(double-click, retry client, hoặc 2 admin xử lý gần như đồng thời) không báo lỗi, chạy lại toàn
+bộ: tạo thêm 1 `question_edit_history` thừa, có thể ghi đè Question (lost update), gửi thêm 1
+thông báo REPORT_RESOLVED trùng lặp.
+
+Tôi cũng ghi nhận sai trong review log vòng đầu (dòng "report đã bị resolve trước đó ✅") — do
+nhầm với hành vi gate-thông-báo của hàm `updateReport()` cũ (khác hàm, chỉ dùng nội bộ), không
+phải hành vi thật của `resolveReport()`.
+
+**Đã sửa**:
+1. Thêm `ReportNotPendingError extends PracticeError` (HTTP 409, mã `REPORT_NOT_PENDING`) trong
+   `practice.errors.ts`, theo đúng convention của `SubmissionNotPendingError`.
+2. Map `REPORT_NOT_PENDING: 409` vào `ERROR_CODE_TO_HTTP_STATUS` trong `app.ts`.
+3. Trong `resolveReport()`: thêm bước "claim" report CHÍNH bằng `tx.questionReport.updateMany({
+   where: { id: reportId, status: 'PENDING' }, data: { status } })` NGAY SAU khi đọc
+   `currentQuestion`, TRƯỚC bước tạo snapshot/update Question. Nếu `claimed.count === 0` → throw
+   `ReportNotPendingError` để rollback toàn bộ transaction ngay — không tạo snapshot/update
+   Question/batch-resolve report khác cho lần gọi thua cuộc. Xoá dòng `tx.questionReport.update`
+   đứng riêng cũ (không cần nữa vì claim đã làm luôn việc đó).
+4. Bổ sung 1 test case mới trong `practice.service.test.ts` (`describe('resolveReport')`): mock
+   `tx.questionReport.updateMany` (claim) trả `{ count: 0 }` → assert throw `ReportNotPendingError`,
+   VÀ assert `tx.question.update`/`tx.questionEditHistory.create`/`tx.questionReport.findMany`
+   (bước batch) đều KHÔNG được gọi — xác nhận dừng đúng ngay từ bước claim.
+5. Cập nhật 5 test case cũ trong cùng `describe` để khớp claim pattern mới (mock `updateMany` trả
+   `{ count: 1 }` thay vì mock `update` riêng).
+
+**Kết quả test tự động (sau khi sửa)**: 138/138 PASS (137 trước đó + 1 test mới; 5 test cũ được
+sửa lại mock, không phải test mới thêm). Build sạch (BE `tsc`).
+
+**Files sửa thêm ở vòng làm lại này**:
+- `backend/src/services/practice/practice.errors.ts` — thêm `ReportNotPendingError`
+- `backend/src/app.ts` — map `REPORT_NOT_PENDING: 409`
+- `backend/src/services/practice/practice.service.ts` — claim pattern trong `resolveReport()`
+- `backend/src/services/practice/__tests__/practice.service.test.ts` — 1 test mới + sửa 5 test cũ
+- `docs/TEST_CASES.md` — thêm 1 test case
+- `docs/CODE_REVIEW_LOG.md` — sửa dòng ghi nhận sai (Edge cases) + mục này

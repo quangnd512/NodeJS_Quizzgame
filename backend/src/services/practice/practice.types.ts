@@ -120,7 +120,19 @@ export interface CreateQuestionInput {
 /** Input cap nhat cau hoi (admin) - moi truong deu tuy chon. */
 export type UpdateQuestionInput = Partial<CreateQuestionInput>;
 
-/** Bao cao cau hoi (danh cho admin xem). */
+/** Noi dung cau hoi day du kem theo 1 bao cao (JOIN tu bang questions). */
+export interface QuestionReportQuestionDto {
+  subject: string;
+  chapter: string | null;
+  difficulty: number;
+  question: string;
+  options: string[];
+  correctAnswer: number;
+  explanation: string | null;
+  isActive: boolean;
+}
+
+/** Bao cao cau hoi (danh cho admin xem) — kem day du noi dung cau hoi, khong chi ma UUID. */
 export interface QuestionReportDto {
   id: string;
   questionId: string;
@@ -129,16 +141,67 @@ export interface QuestionReportDto {
   description: string | null;
   status: string;
   createdAt: Date;
+  question: QuestionReportQuestionDto;
 }
 
-/** Tong hop thong ke bao cao cau hoi (GET /api/admin/questions/reports/summary). */
+/** Bo loc danh sach bao cao cau hoi (admin). */
+export interface ListReportsParams {
+  status?: string;
+  subject?: string;
+  reason?: string;
+  page?: number;
+  limit?: number;
+}
+
+/**
+ * Tong hop thong ke bao cao cau hoi (GET /api/admin/questions/reports/summary).
+ * Tach ro 2 so lieu de tranh nham lan:
+ *   - pendingReports:  tong so DONG bao cao dang PENDING (1 cau co the co nhieu bao cao)
+ *   - pendingQuestions: so CAU HOI KHAC NHAU dang co it nhat 1 bao cao PENDING
+ */
 export interface QuestionReportSummary {
-  pending: number;
-  reviewed: number;
+  pendingReports: number;
+  pendingQuestions: number;
   fixed: number;
   dismissed: number;
-  /** Top 10 cau hoi bi bao cao nhieu nhat (moi trang thai). */
+  /** Top 10 cau hoi bi bao cao nhieu nhat (moi trang thai, moi thoi diem). */
   topReportedQuestions: Array<{ questionId: string; count: number }>;
+}
+
+/**
+ * Cac gia tri loc CON KHA DUNG cho tung dimension (status/subject/reason), tinh
+ * theo 2 dimension CON LAI dang duoc chon — dung de lam "loc lien dong": moi
+ * dropdown chi hien lua chon nao thuc su co du lieu khop voi cac loc khac.
+ */
+export interface ReportFilterFacets {
+  statuses: string[];
+  subjects: string[];
+  reasons: string[];
+}
+
+/** Trang thai hop le duoc phep ghi qua endpoint resolve moi — CHI FIXED|DISMISSED. */
+export const RESOLVABLE_REPORT_STATUSES = ['FIXED', 'DISMISSED'] as const;
+export type ResolvableReportStatus = (typeof RESOLVABLE_REPORT_STATUSES)[number];
+
+/** Du lieu cap nhat noi dung cau hoi kem theo luc resolve bao cao (tuy chon). */
+export interface ResolveReportQuestionUpdate {
+  subject?: string;
+  chapter?: string | null;
+  difficulty?: number;
+  question?: string;
+  options?: [string, string, string, string];
+  correctAnswer?: number;
+  explanation?: string | null;
+}
+
+/** Ket qua resolve 1 bao cao (PATCH /api/admin/questions/reports/:id/resolve). */
+export interface ResolveReportResult {
+  id: string;
+  status: ResolvableReportStatus;
+  /** So bao cao PENDING khac cung questionId cung duoc dong theo (khong tinh chinh no). */
+  batchResolvedCount: number;
+  /** true neu Question.isActive duoc set lai true (truoc do dang bi auto-hide). */
+  reactivated: boolean;
 }
 
 /** Ly do bao cao cau hoi — gia tri hop le. */

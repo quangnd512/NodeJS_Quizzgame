@@ -62,6 +62,8 @@ export const PointReason = {
   TRANSFER_IN: 'TRANSFER_IN', // Diem di chuyen vao (ben nhan trong transferPoints)
   REWARDED_VIDEO_BONUS: 'REWARDED_VIDEO_BONUS', // Thuong xem video quang cao
   ADMIN_ADJUSTMENT: 'ADMIN_ADJUSTMENT', // Admin dieu chinh thu cong (ho tro/khieu nai)
+  SUBMISSION_APPROVED: 'SUBMISSION_APPROVED', // Thuong 30 diem khi cau hoi hoc sinh gui duoc admin duyet
+  SUBMISSION_USED: 'SUBMISSION_USED', // Thuong them diem moi lan cau hoi (da duyet) duoc dung trong 1 de thi (toi da 100d/cau)
 } as const;
 
 export type PointReasonValue = (typeof PointReason)[keyof typeof PointReason];

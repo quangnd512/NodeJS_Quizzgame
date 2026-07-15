@@ -1,17 +1,25 @@
 openapi: 3.0.3
 info:
   title: QuizzGame API — Practice, Thi thử, Admin, Ngân hàng câu hỏi & Leaderboard
-  version: "1.4.0"
+  version: "1.5.0"
   description: >-
     Contract cho module Ôn tập (Practice), module Thi thử (Exam/Mock Exam),
     các endpoint Admin liên quan (quản lý câu hỏi, xử lý báo cáo câu hỏi,
     quản lý đề thi thử), Ngân hàng câu hỏi (Question Bank),
-    Bảng xếp hạng (Leaderboard) và Ảnh đại diện (Avatar).
+    Bảng xếp hạng (Leaderboard), Ảnh đại diện (Avatar), Thông báo
+    (Notifications) và Học sinh đóng góp câu hỏi (Submissions).
     Khớp với `docs/FEATURE_LOG.md` Section 4 (Practice Module), Section 5
     (Admin Dashboard), Section 6 (Exam Module), Section 7 (Ngân hàng câu hỏi),
-    Section 8 (Leaderboard & Avatar).
+    Section 8 (Leaderboard & Avatar), Section 13 (Notifications), Section 14
+    (Quản lý câu hỏi — Submissions + Report Redesign).
 
     Các endpoint Auth, Onboarding, Points chưa được mô tả trong file này.
+
+    ⚠️ **v1.5.0 — Breaking change**: `PATCH /api/admin/questions/reports/{id}`
+    (cũ) đã bị XOÁ, thay bằng `PATCH /api/admin/questions/reports/{id}/resolve`
+    (chỉ nhận `FIXED`/`DISMISSED`, không còn `REVIEWED`). Response của
+    `GET /api/admin/questions/reports/summary` đổi field `pending`→`pendingReports`,
+    `reviewed`→`pendingQuestions` (ý nghĩa khác hẳn). Xem chi tiết ở từng endpoint.
 
 servers:
   - url: http://localhost:4000
@@ -34,6 +42,12 @@ tags:
     description: Tiến độ học tập — tổng quan, streak, lịch sử thi (session token)
   - name: WrongAnswer
     description: Ôn câu sai — danh sách câu sai chưa hết hạn và làm lại (session token)
+  - name: Notifications
+    description: Thông báo hệ thống — danh sách, đếm chưa đọc, đánh dấu đã đọc (session token)
+  - name: Submissions
+    description: >-
+      Học sinh đóng góp câu hỏi — gửi/sửa/xoá câu hỏi (session token) và
+      duyệt/từ chối phía admin (X-Admin-Secret)
 
 security: []
 
@@ -848,10 +862,15 @@ paths:
   /api/admin/questions/reports:
     get:
       tags: [Admin]
-      summary: Danh sách báo cáo câu hỏi
+      summary: Danh sách báo cáo câu hỏi (kèm đầy đủ nội dung câu hỏi)
       description: >-
-        Được dùng bởi Admin Dashboard (`/#admin`) để hiển thị danh sách báo
-        cáo, có lọc theo trạng thái và phân trang 20/trang.
+        Được dùng bởi Admin Dashboard (`/#admin` → tab "Câu hỏi" → "Báo cáo
+        lỗi") để hiển thị danh sách báo cáo, có lọc theo trạng thái/môn/lý do
+        và phân trang 20/trang. **Thay đổi từ v1.5.0**: mỗi item giờ JOIN kèm
+        đầy đủ nội dung câu hỏi (`question`) — trước đây chỉ trả `questionId`
+        dạng UUID thô, admin phải tra cứu riêng. Báo cáo nào trỏ tới câu hỏi
+        không còn tồn tại (hiếm — hệ thống không hard-delete `Question`) sẽ bị
+        lọc khỏi kết quả.
       security: [{ AdminSecret: [] }]
       parameters:
         - name: status
@@ -862,6 +881,19 @@ paths:
             vì lỗi 400 (xem `docs/FEATURE_LOG.md` Section 5).
           schema:
             $ref: '#/components/schemas/ReportStatus'
+        - name: subject
+          in: query
+          description: >-
+            Mới ở v1.5.0. Lọc theo môn học của câu hỏi bị báo cáo (`QuestionReport`
+            không có cột `subject` trực tiếp — server tự tra `questionId` khớp
+            môn trước khi lọc).
+          schema:
+            $ref: '#/components/schemas/SubjectId'
+        - name: reason
+          in: query
+          description: Mới ở v1.5.0. Lọc theo lý do báo cáo.
+          schema:
+            $ref: '#/components/schemas/ReportReason'
         - name: page
           in: query
           schema: { type: integer, default: 1 }
@@ -889,6 +921,15 @@ paths:
                     description: 'Dap an C moi la dung vi...'
                     status: PENDING
                     createdAt: '2026-06-12T10:00:00.000Z'
+                    question:
+                      subject: TOAN
+                      chapter: 'Hàm số'
+                      difficulty: 2
+                      question: 'Đạo hàm của hàm số y = x^2 là gì?'
+                      options: ["y' = x", "y' = 2x", "y' = x^2", "y' = 2"]
+                      correctAnswer: 0
+                      explanation: null
+                      isActive: true
                 total: 12
         '401':
           $ref: '#/components/responses/AdminUnauthorized'
@@ -898,10 +939,13 @@ paths:
       tags: [Admin]
       summary: Tổng hợp thống kê báo cáo (4 thẻ số liệu trên Admin Dashboard)
       description: >-
-        ⚠️ **Breaking change (2026-06-12):** response shape đổi từ dạng lồng
-        `{ byStatus: { PENDING, REVIEWED, FIXED, DISMISSED }, topReportedQuestions }`
-        sang dạng flatten `{ pending, reviewed, fixed, dismissed,
-        topReportedQuestions }`. Shape cũ không còn được trả về.
+        ⚠️ **Breaking change (v1.5.0):** field `pending`/`reviewed` đổi thành
+        `pendingReports`/`pendingQuestions` — KHÔNG phải đổi tên đơn thuần,
+        ý nghĩa khác hẳn: `pendingReports` là tổng số DÒNG báo cáo đang PENDING
+        (1 câu có thể có nhiều báo cáo trùng), còn `pendingQuestions` là số CÂU
+        HỎI KHÁC NHAU đang có ít nhất 1 báo cáo PENDING. Trước đó (v1.4.0)
+        `reviewed` đếm báo cáo trạng thái REVIEWED — trạng thái này không còn
+        được ghi mới qua API (xem `/api/admin/questions/reports/{id}/resolve`).
       security: [{ AdminSecret: [] }]
       responses:
         '200':
@@ -911,8 +955,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/QuestionReportSummary'
               example:
-                pending: 12
-                reviewed: 5
+                pendingReports: 12
+                pendingQuestions: 8
                 fixed: 3
                 dismissed: 2
                 topReportedQuestions:
@@ -923,14 +967,23 @@ paths:
         '401':
           $ref: '#/components/responses/AdminUnauthorized'
 
-  /api/admin/questions/reports/{id}:
+  /api/admin/questions/reports/{id}/resolve:
     patch:
       tags: [Admin]
-      summary: Cập nhật trạng thái 1 báo cáo
+      summary: Xử lý 1 báo cáo — đánh dấu đã sửa hoặc bỏ qua (thay thế endpoint PATCH cũ)
       description: >-
-        Có thể trigger auto-hide: nếu sau khi đổi trạng thái, câu hỏi liên
-        quan có ≥ `AUTO_HIDE_REPORT_THRESHOLD` (5) báo cáo `PENDING`, server
-        tự set `question.isActive = false` và trả `autoHidden: true`.
+        ⚠️ **Breaking change (v1.5.0)**: THAY THẾ hoàn toàn
+        `PATCH /api/admin/questions/reports/{id}` cũ (đã bị xoá khỏi router).
+        Chỉ chấp nhận `status: FIXED|DISMISSED` (không còn ghi được `REVIEWED`).
+        Hỗ trợ sửa nội dung câu hỏi ngay tại chỗ qua `questionUpdate` (tuỳ
+        chọn) — nếu có, server lưu SNAPSHOT nội dung câu hỏi TRƯỚC khi ghi đè
+        vào `question_edit_history`. Tự động đóng luôn (batch) mọi báo cáo
+        `PENDING` KHÁC cùng `questionId` trong CÙNG 1 transaction. Nếu
+        `status=FIXED` và câu hỏi đang bị ẩn tự động (`isActive=false` do vượt
+        `AUTO_HIDE_REPORT_THRESHOLD`), server tự set lại `isActive=true`.
+        Sau khi commit: gửi thông báo `REPORT_RESOLVED` (fire-and-forget) cho
+        TỪNG người đã báo cáo — báo cáo chính + mọi báo cáo batch khác, mỗi
+        người 1 thông báo riêng.
       security: [{ AdminSecret: [] }]
       parameters:
         - $ref: '#/components/parameters/IdPathParam'
@@ -943,28 +996,35 @@ paths:
               required: [status]
               properties:
                 status:
-                  $ref: '#/components/schemas/ReportStatus'
-            example:
-              status: FIXED
+                  $ref: '#/components/schemas/ResolvableReportStatus'
+                questionUpdate:
+                  $ref: '#/components/schemas/ResolveReportQuestionUpdate'
+                  description: >-
+                    Tuỳ chọn — chỉ gửi khi `status=FIXED` và có sửa nội dung.
+                    Mọi field đều tuỳ chọn (chỉ gửi field thực sự thay đổi).
+            examples:
+              dismiss:
+                summary: Bỏ qua, không sửa nội dung
+                value: { status: DISMISSED }
+              fixWithEdit:
+                summary: Đánh dấu đã sửa, kèm sửa đáp án đúng
+                value:
+                  status: FIXED
+                  questionUpdate: { correctAnswer: 1 }
       responses:
         '200':
-          description: Báo cáo sau khi cập nhật
+          description: Kết quả xử lý báo cáo
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  id: { type: string, format: uuid }
-                  status: { $ref: '#/components/schemas/ReportStatus' }
-                  autoHidden:
-                    type: boolean
-                    description: true nếu câu hỏi liên quan vừa bị tự động ẩn
+                $ref: '#/components/schemas/ResolveReportResult'
               example:
                 id: 7c1f0e7a-7e3b-4a3a-9b6e-9b6c1a2b3c4d
                 status: FIXED
-                autoHidden: false
+                batchResolvedCount: 2
+                reactivated: true
         '400':
-          description: '`status` không thuộc PENDING|REVIEWED|FIXED|DISMISSED'
+          description: '`status` không thuộc FIXED|DISMISSED (vd gửi REVIEWED), hoặc `questionUpdate` sai định dạng'
           content:
             application/json:
               schema:
@@ -974,14 +1034,311 @@ paths:
                 message: 'Du lieu khong hop le'
         '401':
           $ref: '#/components/responses/AdminUnauthorized'
-        '500':
-          description: >-
-            `id` không tồn tại (Prisma P2025 → middleware lỗi tập trung trả
-            500 thay vì 404 — pre-existing, xem `docs/FEATURE_LOG.md` Section 5)
+        '404':
+          description: Không tìm thấy báo cáo (QUESTION_REPORT_NOT_FOUND)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: QUESTION_REPORT_NOT_FOUND
+                message: "Khong tim thay bao cao '7c1f0e7a-...'."
+
+  # ───────────────── Học sinh đóng góp câu hỏi (Submissions) ─────────────────
+  /api/submissions:
+    post:
+      tags: [Submissions]
+      summary: Gửi câu hỏi trắc nghiệm mới để đóng góp vào ngân hàng câu hỏi
+      description: >-
+        Tối đa `SUBMISSION_DAILY_LIMIT` (5) câu/ngày/học sinh (đếm theo UTC).
+        Câu hỏi gửi ở trạng thái `PENDING` cho tới khi admin duyệt hoặc từ chối.
+      security: [{ SessionToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSubmissionInput'
+            example:
+              subject: TOAN
+              chapter: 'Hàm số'
+              questionText: 'Đạo hàm của hàm số y = x^2 là gì?'
+              options: ["y' = x", "y' = 2x", "y' = x^2", "y' = 2"]
+              correctOptionIndex: 1
+      responses:
+        '201':
+          description: Câu hỏi đã được ghi nhận, chờ duyệt
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  status: { type: string, enum: [PENDING] }
+                  createdAt: { type: string, format: date-time }
+              example:
+                id: c1a2b3c4-1111-4a3a-9b6e-9b6c1a2b3c4d
+                status: PENDING
+                createdAt: '2026-07-13T08:30:00.000Z'
+        '400':
+          description: Thiếu field / `correctOptionIndex` ngoài 0-3 / môn không hợp lệ (Zod), hoặc vượt rate limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                validation:
+                  value: { error: INVALID_REQUEST_BODY, message: 'Du lieu khong hop le' }
+                rateLimit:
+                  value:
+                    error: SUBMISSION_RATE_LIMIT_EXCEEDED
+                    message: 'Ban da gui toi da 5 cau hoi trong hom nay. Vui long thu lai vao ngay mai.'
+        '401':
+          description: Thiếu hoặc sai session token
+
+    get:
+      tags: [Submissions]
+      summary: Danh sách câu hỏi đã gửi của học sinh hiện tại
+      security: [{ SessionToken: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/SubmissionStatus' }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Danh sách câu đã gửi (mới nhất trước)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/SubmissionDto' }
+                  total: { type: integer }
+        '401':
+          description: Thiếu hoặc sai session token
+
+  /api/submissions/{id}:
+    get:
+      tags: [Submissions]
+      summary: Chi tiết 1 câu hỏi đã gửi — chỉ chủ sở hữu
+      security: [{ SessionToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      responses:
+        '200':
+          description: Chi tiết câu hỏi đã gửi (kèm `adminNote` nếu REJECTED)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubmissionDto' }
+        '401':
+          description: Thiếu hoặc sai session token
+        '403':
+          description: Câu hỏi gửi không thuộc về user hiện tại (SUBMISSION_NOT_OWNED)
+        '404':
+          description: Không tìm thấy (SUBMISSION_NOT_FOUND)
+
+    put:
+      tags: [Submissions]
+      summary: Sửa 1 câu hỏi đã gửi — chỉ khi còn PENDING, chỉ chủ sở hữu
+      description: >-
+        Dùng `updateMany` với điều kiện `status=PENDING` để chống race
+        condition — nếu admin vừa duyệt/từ chối đúng lúc học sinh sửa, trả
+        409 thay vì âm thầm ghi đè lên submission đã xử lý.
+      security: [{ SessionToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSubmissionInput'
+      responses:
+        '200':
+          description: Câu hỏi sau khi sửa
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubmissionDto' }
+        '400':
+          description: Dữ liệu không hợp lệ (Zod)
+        '401':
+          description: Thiếu hoặc sai session token
+        '403':
+          description: Câu hỏi gửi không thuộc về user hiện tại (SUBMISSION_NOT_OWNED)
+        '404':
+          description: Không tìm thấy (SUBMISSION_NOT_FOUND)
+        '409':
+          description: Không còn ở trạng thái PENDING (SUBMISSION_NOT_PENDING)
+
+    delete:
+      tags: [Submissions]
+      summary: Xoá 1 câu hỏi đã gửi — chỉ khi còn PENDING, chỉ chủ sở hữu
+      description: Cùng cơ chế chống race condition (`deleteMany` có điều kiện) như PUT.
+      security: [{ SessionToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      responses:
+        '200':
+          description: Đã xoá
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: 'Da xoa cau hoi gui thanh cong.' }
+        '401':
+          description: Thiếu hoặc sai session token
+        '403':
+          description: Câu hỏi gửi không thuộc về user hiện tại (SUBMISSION_NOT_OWNED)
+        '404':
+          description: Không tìm thấy (SUBMISSION_NOT_FOUND)
+        '409':
+          description: Không còn ở trạng thái PENDING (SUBMISSION_NOT_PENDING)
+
+  /api/admin/submissions:
+    get:
+      tags: [Submissions]
+      summary: Danh sách câu hỏi học sinh gửi (mọi học sinh) — kèm cảnh báo trùng lặp
+      description: >-
+        Mỗi item kèm `duplicateWarning` (chỉ cảnh báo, không chặn duyệt) — so
+        khớp Jaccard similarity thô giữa `questionText` và các câu ACTIVE cùng
+        môn trong Ngân hàng câu hỏi, ngưỡng `SUBMISSION_DUPLICATE_SIMILARITY_THRESHOLD`
+        (0.6).
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/SubmissionStatus' }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Danh sách câu học sinh gửi
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminSubmissionListItem' }
+                  total: { type: integer }
+              example:
+                items:
+                  - id: c1a2b3c4-1111-4a3a-9b6e-9b6c1a2b3c4d
+                    userId: 9f8e7d6c-2222-4a3a-9b6e-9b6c1a2b3c4d
+                    subject: TOAN
+                    chapter: 'Hàm số'
+                    questionText: 'Đạo hàm của hàm số y = x^2 là gì?'
+                    options: ["y' = x", "y' = 2x", "y' = x^2", "y' = 2"]
+                    correctOptionIndex: 1
+                    status: PENDING
+                    adminNote: null
+                    questionBankId: null
+                    usageCount: 0
+                    usagePointsEarned: 0
+                    createdAt: '2026-07-13T08:30:00.000Z'
+                    updatedAt: '2026-07-13T08:30:00.000Z'
+                    duplicateWarning:
+                      questionBankId: f9e8d7c6-3333-4a3a-9b6e-9b6c1a2b3c4d
+                      similarity: 0.72
+                total: 1
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+
+  /api/admin/submissions/{id}/approve:
+    post:
+      tags: [Submissions]
+      summary: Duyệt 1 câu hỏi học sinh gửi
+      description: >-
+        Trong 1 transaction: "claim" submission bằng `updateMany` điều kiện
+        `status=PENDING` (chống 2 admin duyệt trùng), tạo bản ghi
+        `QuestionBank` (`questionType=MCQ_4`, `difficulty=2` mặc định,
+        `isActive=true`), gắn `questionBankId` vào submission. Sau khi commit
+        (fire-and-forget, không block response): cộng
+        `SUBMISSION_APPROVE_POINTS` (30đ) cho học sinh + gửi thông báo
+        `SUBMISSION_APPROVED`.
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      responses:
+        '200':
+          description: Đã duyệt
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  status: { type: string, enum: [APPROVED] }
+                  questionBankId: { type: string, format: uuid }
+              example:
+                id: c1a2b3c4-1111-4a3a-9b6e-9b6c1a2b3c4d
+                status: APPROVED
+                questionBankId: f9e8d7c6-3333-4a3a-9b6e-9b6c1a2b3c4d
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+        '404':
+          description: Không tìm thấy (SUBMISSION_NOT_FOUND)
+        '409':
+          description: >-
+            Không còn ở trạng thái PENDING (SUBMISSION_NOT_PENDING) — đã bị
+            admin khác xử lý hoặc học sinh vừa sửa/xoá
+
+  /api/admin/submissions/{id}/reject:
+    post:
+      tags: [Submissions]
+      summary: Từ chối 1 câu hỏi học sinh gửi — bắt buộc kèm lý do
+      description: >-
+        Fire-and-forget sau khi commit: gửi thông báo `SUBMISSION_REJECTED`
+        cho học sinh, `body` = `note`.
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [note]
+              properties:
+                note: { type: string, minLength: 1, maxLength: 500 }
+            example:
+              note: 'Câu hỏi trùng với câu đã có trong kho.'
+      responses:
+        '200':
+          description: Đã từ chối
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  status: { type: string, enum: [REJECTED] }
+              example:
+                id: c1a2b3c4-1111-4a3a-9b6e-9b6c1a2b3c4d
+                status: REJECTED
+        '400':
+          description: Thiếu/rỗng `note` (SUBMISSION_REJECT_NOTE_REQUIRED)
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+        '404':
+          description: Không tìm thấy (SUBMISSION_NOT_FOUND)
+        '409':
+          description: Không còn ở trạng thái PENDING (SUBMISSION_NOT_PENDING)
 
   # ───────────────── Admin: đề thi thử (Exam Papers) ─────────────────
   /api/admin/exam-papers:
@@ -1771,6 +2128,25 @@ components:
           nullable: true
           description: Mô tả thêm, không bắt buộc
 
+    QuestionReportQuestionDto:
+      type: object
+      description: >-
+        Mới ở v1.5.0 — nội dung đầy đủ câu hỏi kèm theo 1 báo cáo (JOIN thủ
+        công từ bảng `questions`, không phải Prisma relation chính thức).
+      properties:
+        subject: { $ref: '#/components/schemas/SubjectId' }
+        chapter: { type: string, nullable: true }
+        difficulty: { type: integer, enum: [1, 2, 3] }
+        question: { type: string }
+        options:
+          type: array
+          items: { type: string }
+          minItems: 4
+          maxItems: 4
+        correctAnswer: { type: integer, minimum: 0, maximum: 3 }
+        explanation: { type: string, nullable: true }
+        isActive: { type: boolean }
+
     QuestionReportDto:
       type: object
       properties:
@@ -1781,15 +2157,23 @@ components:
         description: { type: string, nullable: true }
         status: { $ref: '#/components/schemas/ReportStatus' }
         createdAt: { type: string, format: date-time }
+        question:
+          $ref: '#/components/schemas/QuestionReportQuestionDto'
+          description: Mới ở v1.5.0 — trước đó chỉ có `questionId` dạng UUID thô.
 
     QuestionReportSummary:
       type: object
       description: >-
-        Response của GET /api/admin/questions/reports/summary
-        (shape mới — flatten, thay cho `{ byStatus, topReportedQuestions }` cũ)
+        Response của GET /api/admin/questions/reports/summary. **v1.5.0**:
+        đổi field `pending`→`pendingReports`, `reviewed`→`pendingQuestions`
+        (ý nghĩa khác hẳn, xem mô tả từng field).
       properties:
-        pending: { type: integer }
-        reviewed: { type: integer }
+        pendingReports:
+          type: integer
+          description: Tổng số DÒNG báo cáo đang PENDING (1 câu có thể có nhiều báo cáo)
+        pendingQuestions:
+          type: integer
+          description: Số CÂU HỎI KHÁC NHAU đang có ít nhất 1 báo cáo PENDING
         fixed: { type: integer }
         dismissed: { type: integer }
         topReportedQuestions:
@@ -1800,6 +2184,118 @@ components:
             properties:
               questionId: { type: string, format: uuid }
               count: { type: integer }
+
+    ResolvableReportStatus:
+      type: string
+      description: >-
+        Trạng thái hợp lệ được phép ghi qua `PATCH .../resolve` — CHỈ 2 giá
+        trị này (không cho ghi lại `REVIEWED` như `ReportStatus` cũ).
+      enum: [FIXED, DISMISSED]
+
+    ResolveReportQuestionUpdate:
+      type: object
+      description: Dữ liệu sửa nội dung câu hỏi kèm theo lúc resolve báo cáo — mọi field tuỳ chọn.
+      properties:
+        subject: { $ref: '#/components/schemas/SubjectId' }
+        chapter: { type: string, maxLength: 200, nullable: true }
+        difficulty: { type: integer, enum: [1, 2, 3] }
+        question: { type: string, minLength: 5, maxLength: 2000 }
+        options:
+          type: array
+          items: { type: string, minLength: 1 }
+          minItems: 4
+          maxItems: 4
+        correctAnswer: { type: integer, minimum: 0, maximum: 3 }
+        explanation: { type: string, maxLength: 2000, nullable: true }
+
+    ResolveReportResult:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/ResolvableReportStatus' }
+        batchResolvedCount:
+          type: integer
+          description: Số báo cáo PENDING khác cùng questionId cũng được đóng theo (không tính chính nó)
+        reactivated:
+          type: boolean
+          description: true nếu Question.isActive được set lại true (trước đó đang bị auto-hide)
+
+    # ───────────────── Học sinh đóng góp câu hỏi (Submissions) ─────────────────
+    SubmissionStatus:
+      type: string
+      enum: [PENDING, APPROVED, REJECTED]
+
+    CreateSubmissionInput:
+      type: object
+      required: [subject, questionText, options, correctOptionIndex]
+      properties:
+        subject: { $ref: '#/components/schemas/SubjectId' }
+        chapter: { type: string, maxLength: 200 }
+        questionText: { type: string, minLength: 5, maxLength: 2000 }
+        options:
+          type: array
+          items: { type: string, minLength: 1 }
+          minItems: 4
+          maxItems: 4
+        correctOptionIndex: { type: integer, minimum: 0, maximum: 3 }
+
+    UpdateSubmissionInput:
+      allOf:
+        - $ref: '#/components/schemas/CreateSubmissionInput'
+      description: Tất cả field đều tùy chọn (partial update), chỉ áp dụng khi submission còn PENDING.
+
+    SubmissionDto:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        subject: { $ref: '#/components/schemas/SubjectId' }
+        chapter: { type: string, nullable: true }
+        questionText: { type: string }
+        options:
+          type: array
+          items: { type: string }
+          minItems: 4
+          maxItems: 4
+        correctOptionIndex: { type: integer, minimum: 0, maximum: 3 }
+        status: { $ref: '#/components/schemas/SubmissionStatus' }
+        adminNote:
+          type: string
+          nullable: true
+          description: Bắt buộc khi REJECTED (lý do), tuỳ chọn khi APPROVED
+        questionBankId:
+          type: string
+          format: uuid
+          nullable: true
+          description: ID bản ghi Ngân hàng câu hỏi được tạo ra sau khi duyệt (null nếu chưa duyệt)
+        usageCount:
+          type: integer
+          description: Số lần câu hỏi (đã duyệt) được thêm vào 1 đề thi thật
+        usagePointsEarned:
+          type: integer
+          description: Tổng điểm "usage" đã nhận, tối đa 100 (SUBMISSION_USAGE_POINTS_CAP)
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    DuplicateWarning:
+      type: object
+      description: Cảnh báo câu hỏi gửi có thể trùng với 1 câu đã có trong Ngân hàng câu hỏi — CHỈ cảnh báo, không chặn duyệt.
+      properties:
+        questionBankId: { type: string, format: uuid }
+        similarity:
+          type: number
+          description: Độ tương đồng Jaccard trên tập từ đã chuẩn hoá, 0.0–1.0
+          minimum: 0
+          maximum: 1
+
+    AdminSubmissionListItem:
+      allOf:
+        - $ref: '#/components/schemas/SubmissionDto'
+        - type: object
+          properties:
+            duplicateWarning:
+              $ref: '#/components/schemas/DuplicateWarning'
+              nullable: true
 
     # ───────────────────────── Exam (Thi thử) ─────────────────────────
     ExamQuestionType:
@@ -2396,6 +2892,15 @@ components:
     post:
       tags: [QuestionBank, Admin]
       summary: Thêm nhiều câu từ kho vào đề thi (batch, skip duplicate)
+      description: >-
+        **Side effect mới (v1.5.0, Feature 014)**: sau khi commit, với mỗi câu
+        vừa thêm bắt nguồn từ 1 `StudentQuestionSubmission` đã `APPROVED`,
+        server cộng thêm điểm "usage" cho học sinh gửi câu đó (fire-and-forget,
+        dùng Compare-And-Swap để tránh cộng thiếu khi nhiều request chạy song
+        song) — `min(SUBMISSION_USAGE_POINTS_PER_USE=5, 100 - đã_nhận)` điểm,
+        tăng `usageCount`, gửi thông báo `SUBMISSION_USED`. KHÔNG áp dụng cho
+        endpoint `auto-fill` bên dưới (chỉ trigger khi admin chủ động chọn câu
+        qua `from-bank`).
       security: [{ AdminSecret: [] }]
       parameters:
         - name: id

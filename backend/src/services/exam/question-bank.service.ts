@@ -8,6 +8,10 @@ import { isValidSubjectId } from '../users/users.types.js';
 import { validateQuestionShape } from './exam.service.js';
 import { ExamPaperNotFoundError } from './exam.errors.js';
 import { QuestionBankNotFoundError, QuestionBankDeleteBlockedError } from './question-bank.errors.js';
+import { pointsService } from '../points/points.service.js';
+import { PointReason } from '../points/points.types.js';
+import { notificationService } from '../notification/notification.service.js';
+import { SUBMISSION_USAGE_POINTS_CAP, SUBMISSION_USAGE_POINTS_PER_USE } from '../submission/submission.types.js';
 import type {
   AddFromBankInput,
   AddFromBankResult,
@@ -279,7 +283,7 @@ export class QuestionBankService {
 
     // Boc toan bo luong "kiem tra trung + insert" trong 1 transaction de dam bao
     // atomic: neu createMany that bai giua chung, khong co cau nao duoc them mot phan.
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       // Lay cac cau hoi trong kho theo IDs duoc yeu cau
       const bankQuestions = await tx.questionBank.findMany({
         where: { id: { in: input.questionBankIds }, isActive: true },
@@ -319,8 +323,103 @@ export class QuestionBankService {
 
       const skipped = input.questionBankIds.length - toInsert.length;
 
-      return { added: toInsert.length, skipped };
+      return { added: toInsert.length, skipped, insertedBankIds: toInsert.map((q) => q.id) };
     });
+
+    // [Fire-and-forget] Cau nao trong so vua them bat nguon tu 1 StudentQuestionSubmission
+    // da duyet thi cong them diem "usage" cho hoc sinh — khong block response admin.
+    if (result.insertedBankIds.length > 0) {
+      void this.fireUsagePointsTrigger(result.insertedBankIds);
+    }
+
+    return { added: result.added, skipped: result.skipped };
+  }
+
+  /**
+   * [Fire-and-forget] Sau khi 1+ cau hoi tu kho duoc them vao de thi: voi moi cau
+   * (theo questionBankId) neu bat nguon tu 1 StudentQuestionSubmission da APPROVED
+   * va chua dat toi da 100 diem usage, cong them min(5, 100 - da_nhan) diem cho
+   * hoc sinh, tang usageCount, va gui thong bao SUBMISSION_USED.
+   */
+  private async fireUsagePointsTrigger(bankIds: string[]): Promise<void> {
+    try {
+      const submissions = await prisma.studentQuestionSubmission.findMany({
+        where: { questionBankId: { in: bankIds }, status: 'APPROVED' },
+      });
+
+      for (const sub of submissions) {
+        await this.awardUsagePointsForSubmission(sub.id);
+      }
+    } catch (err) {
+      console.error('[QuestionBankService] fireUsagePointsTrigger error:', err);
+    }
+  }
+
+  /**
+   * Cong diem "usage" cho 1 submission theo kieu COMPARE-AND-SWAP (doc gia tri cu,
+   * roi ghi CO DIEU KIEN dung gia tri cu do lam dieu kien WHERE).
+   *
+   * VI SAO CAN CAS: neu chi doc `usagePointsEarned` roi tinh `newTotal = cu + delta`
+   * va ghi de bang `update` thuong, 2 lan goi gan nhu dong thoi (vi du: cung 1 cau
+   * hoi trong kho duoc them vao 2 de thi khac nhau trong 2 request song song) co the
+   * cung doc duoc 1 gia tri cu, roi lan ghi sau "de len" lan ghi truoc (lost update).
+   * Hau qua: `usagePointsEarned` bi ghi THIEU so voi thuc te, khien lan cong diem
+   * tiep theo tinh sai phan con lai duoi tran 100d/cau — vo hieu hoa tran usage cap.
+   * `pointsService.addPoints` (co optimistic lock rieng) van cong dung diem thuc te
+   * cho user, nhung so lieu theo doi tran usage se bi lech neu khong co CAS o day.
+   *
+   * `updateMany` voi dieu kien `usagePointsEarned: <gia tri vua doc>` dam bao chi 1
+   * trong so cac lan goi dong thoi thanh cong (count=1); cac lan con lai nhan
+   * count=0 va thu lai voi gia tri moi nhat, toi da `MAX_CAS_RETRY` lan.
+   */
+  private async awardUsagePointsForSubmission(submissionId: string): Promise<void> {
+    const MAX_CAS_RETRY = 5;
+
+    for (let attempt = 0; attempt < MAX_CAS_RETRY; attempt++) {
+      const sub = await prisma.studentQuestionSubmission.findUnique({ where: { id: submissionId } });
+      // Submission co the da bi xoa hoac doi trang thai giua chung — bo qua an toan.
+      if (!sub || sub.status !== 'APPROVED') return;
+
+      const pointsToAdd = Math.min(
+        SUBMISSION_USAGE_POINTS_PER_USE,
+        SUBMISSION_USAGE_POINTS_CAP - sub.usagePointsEarned,
+      );
+      if (pointsToAdd <= 0) return; // da dat toi da 100 diem usage — khong cong them
+
+      const newTotal = sub.usagePointsEarned + pointsToAdd;
+      const claimed = await prisma.studentQuestionSubmission.updateMany({
+        where: { id: submissionId, usagePointsEarned: sub.usagePointsEarned },
+        data: { usageCount: { increment: 1 }, usagePointsEarned: newTotal },
+      });
+      if (claimed.count === 0) continue; // xung dot voi 1 lan ghi khac — doc lai va thu lai
+
+      try {
+        await pointsService.addPoints(sub.userId, pointsToAdd, PointReason.SUBMISSION_USED, {
+          submissionId: sub.id,
+          questionBankId: sub.questionBankId,
+        });
+      } catch (err) {
+        console.error('[QuestionBankService] fireUsagePointsTrigger addPoints error:', err);
+      }
+
+      try {
+        await notificationService.createNotification({
+          userId: sub.userId,
+          type: 'SUBMISSION_USED',
+          title: '📝 Câu hỏi của bạn được dùng trong đề thi!',
+          body: `Câu hỏi bạn đóng góp vừa được thêm vào 1 đề thi. Bạn nhận được +${pointsToAdd} điểm.`,
+          targetScreen: null,
+          metadata: { submissionId: sub.id, pointsAwarded: pointsToAdd, totalUsagePoints: newTotal },
+        });
+      } catch (err) {
+        console.error('[QuestionBankService] fireUsagePointsTrigger notify error:', err);
+      }
+      return;
+    }
+
+    console.error(
+      `[QuestionBankService] awardUsagePointsForSubmission: het ${MAX_CAS_RETRY} lan thu CAS cho submission ${submissionId}, bo qua lan cong diem nay.`,
+    );
   }
 
   // -------------------------------------------------------------------------

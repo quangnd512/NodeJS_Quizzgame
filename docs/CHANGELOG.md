@@ -5,6 +5,42 @@
 
 ---
 
+## [Unreleased] — Quản lý câu hỏi — Học sinh đóng góp câu hỏi + Report Redesign (Feature 014)
+
+**Branch:** `feature/question-management-hub`
+**Ngày:** 2026-07-13
+
+### Added
+
+- **Học sinh đóng góp câu hỏi (Submissions)**: học sinh gửi câu hỏi trắc nghiệm 4 đáp án (tối đa 5 câu/ngày) → admin duyệt (vào ngân hàng câu hỏi + thưởng **30 điểm**) hoặc từ chối (kèm lý do bắt buộc)
+- **Điểm thưởng "usage"**: mỗi lần câu hỏi (đã duyệt) được admin chủ động thêm vào 1 đề thi thật (`from-bank`), học sinh nhận thêm **+5 điểm/lần**, tối đa **100 điểm/câu**
+- **Cảnh báo trùng lặp** (chỉ cảnh báo, không chặn duyệt): so khớp Jaccard similarity thô giữa câu học sinh gửi và các câu ACTIVE cùng môn trong kho, ngưỡng 60%
+- **3 loại thông báo mới**: `SUBMISSION_APPROVED`, `SUBMISSION_REJECTED`, `SUBMISSION_USED`
+- **Trang "✍️ Gửi câu hỏi"** (học sinh) — form gửi câu mới + danh sách "Câu đã gửi" (xem trạng thái, sửa/xoá khi còn PENDING)
+- **Trang Admin "Câu hỏi"** (gộp tab mới) — 2 sub-tab: "Bài học sinh gửi" (duyệt/từ chối, xem cảnh báo trùng lặp) và "Báo cáo lỗi" (mục dưới), kèm badge tổng số việc chờ xử lý
+- **7 API endpoint mới**: `POST/GET /api/submissions`, `GET/PUT/DELETE /api/submissions/:id`, `GET /api/admin/submissions`, `POST /api/admin/submissions/:id/approve`, `POST /api/admin/submissions/:id/reject`
+- **Report Redesign — JOIN đầy đủ nội dung câu hỏi**: `GET /api/admin/questions/reports` giờ trả kèm nội dung câu hỏi đầy đủ (`question`), không chỉ `questionId` thô; thêm lọc theo `subject`/`reason`
+- **Report Redesign — endpoint gộp `resolve`**: `PATCH /api/admin/questions/reports/:id/resolve` xử lý 1 báo cáo (`FIXED`/`DISMISSED`), hỗ trợ sửa nội dung câu hỏi ngay tại chỗ (`questionUpdate`), tự động đóng theo mọi báo cáo `PENDING` khác cùng câu hỏi (batch), tự kích hoạt lại câu hỏi nếu đang bị auto-hide
+- **Bảng `question_edit_history`**: lưu snapshot nội dung câu hỏi trước mỗi lần admin sửa qua luồng resolve báo cáo
+- **Form "Sửa & Đánh dấu đã sửa"** (Admin) — sửa nội dung câu hỏi ngay trong trang xử lý báo cáo, không cần chuyển sang trang Ngân hàng câu hỏi
+- **`text-similarity.utils.ts`** — `normalizeText()` + `textSimilarity()` (Jaccard similarity trên tập từ đã chuẩn hoá, bỏ dấu tiếng Việt)
+
+### Changed
+
+- ⚠️ **Breaking**: `PATCH /api/admin/questions/reports/:id` (cũ) đã bị **xoá**, thay bằng `PATCH /api/admin/questions/reports/:id/resolve` — chỉ nhận `FIXED`/`DISMISSED` (không còn `REVIEWED`)
+- ⚠️ **Breaking**: `GET /api/admin/questions/reports/summary` đổi field `pending`→`pendingReports`, `reviewed`→`pendingQuestions` (ý nghĩa khác hẳn: số dòng báo cáo vs số câu hỏi khác nhau)
+- ⚠️ **Đổi hành vi auto-hide**: trước đây xử lý xong báo cáo KHÔNG tự hiện lại câu hỏi bị ẩn (phải khôi phục thủ công); từ nay `status=FIXED` sẽ **tự động** set `isActive=true` nếu câu đang bị auto-hide
+- Tab Admin Dashboard "Báo cáo câu hỏi" đổi tên/vị trí thành sub-tab "Báo cáo lỗi" bên trong tab cha "Câu hỏi" (cùng chỗ với "Bài học sinh gửi")
+- `question-bank.service.ts` `addFromBank()` — thêm side-effect fire-and-forget cộng điểm usage (Compare-And-Swap, không áp dụng cho `auto-fill`)
+
+### Fixed (phát hiện trong review S3, trước khi merge)
+
+- Race condition khi 2 admin cùng duyệt 1 submission — có thể tạo 2 bản ghi Ngân hàng câu hỏi trùng lặp + thưởng điểm 2 lần → sửa bằng "claim" pattern (`updateMany` điều kiện `status=PENDING`)
+- Race condition khi học sinh sửa/xoá đúng lúc admin vừa xử lý xong submission → đổi `update`/`delete` đơn thành `updateMany`/`deleteMany` có điều kiện
+- Lost update trên điểm "usage" khi 2 `addFromBank` chạy song song cho cùng 1 câu hỏi (có thể vô hiệu hoá trần 100đ/câu) → sửa bằng Compare-And-Swap có retry
+
+---
+
 ## [v1.11.0] — Notifications — Thông báo hệ thống (Feature 013)
 
 **Branch:** `feature/notifications` (đã merge vào `master`)

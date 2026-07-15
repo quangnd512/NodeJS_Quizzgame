@@ -81,10 +81,46 @@ export class QuestionNotInSessionError extends PracticeError {
   }
 }
 
-/** User da bao cao cau hoi nay roi (rang buoc 1 bao cao/user/cau). */
+/** User da bao cao cau hoi nay roi VA bao cao do van dang PENDING (chua xu ly). */
 export class ReportAlreadySubmittedError extends PracticeError {
   constructor() {
     super('Ban da bao cao cau hoi nay roi.', 'REPORT_ALREADY_SUBMITTED');
+  }
+}
+
+/**
+ * User da tung bao cao cau hoi nay va bao cao cu DA duoc xu ly xong (FIXED/DISMISSED),
+ * nhung chua gui kem co "confirmResubmit" -> can hoi xac nhan truoc khi tao bao cao moi.
+ */
+export class ReportResubmitConfirmRequiredError extends PracticeError {
+  constructor() {
+    super(
+      'Ban da bao cao cau hoi nay truoc day (da duoc xu ly). Xac nhan neu muon bao cao lai.',
+      'REPORT_RESUBMIT_CONFIRM_REQUIRED',
+    );
+  }
+}
+
+/** Khong tim thay bao cao cau hoi theo ID (dung cho endpoint resolve). */
+export class QuestionReportNotFoundError extends PracticeError {
+  constructor(reportId: string) {
+    super(`Khong tim thay bao cao '${reportId}'.`, 'QUESTION_REPORT_NOT_FOUND');
+  }
+}
+
+/**
+ * Bao cao khong con o trang thai PENDING khi resolveReport() co gang xu ly —
+ * chong double-resolve (double-click, retry client, hoac 2 admin xu ly gan nhu
+ * dong thoi cung 1 bao cao). Dung updateMany co dieu kien status:'PENDING' de
+ * "claim" bao cao truoc khi tao snapshot/update Question; neu claim that bai
+ * (bao cao da bi 1 request khac xu ly truoc) thi nem loi nay de rollback transaction.
+ */
+export class ReportNotPendingError extends PracticeError {
+  constructor() {
+    super(
+      'Bao cao nay khong con o trang thai cho xu ly (co the da duoc xu ly truoc do).',
+      'REPORT_NOT_PENDING',
+    );
   }
 }
 

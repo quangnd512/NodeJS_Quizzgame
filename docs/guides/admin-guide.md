@@ -20,6 +20,8 @@
 10. [Ôn câu sai — Lưu ý cho Admin](#10-ôn-câu-sai--lưu-ý-cho-admin)
 11. [Tab Dashboard — Bảng tổng quan hệ thống](#11-tab-dashboard--bảng-tổng-quan-hệ-thống)
 12. [Tab Người dùng — Quản lý tài khoản](#12-tab-người-dùng--quản-lý-tài-khoản)
+13. [Thông báo hệ thống — Feature 013](#13-thông-báo-hệ-thống--feature-013)
+14. [Học sinh đóng góp câu hỏi — Feature 014](#14-học-sinh-đóng-góp-câu-hỏi--feature-014)
 
 ---
 
@@ -263,17 +265,25 @@ Người dùng có thể báo cáo câu hỏi sai/có vấn đề — nhưng **c
 API trả `403 QUESTION_NOT_ATTEMPTED_FOR_REPORT`). Hệ thống tự động ẩn câu khi
 nhận **≥ 5 báo cáo PENDING**.
 
-### 4.1 Xem danh sách báo cáo
+> ⚠️ **Đã thiết kế lại toàn bộ luồng này (Feature 014, 2026-07-13)** — nếu bạn
+> quen với luồng cũ (3 nút Đã xem/Đã sửa/Bỏ qua, chỉ có `questionId` thô),
+> đọc kỹ mục này vì hành vi đã đổi khá nhiều, kể cả cách xử lý auto-hide.
+
+### 4.1 Xem danh sách báo cáo (kèm đầy đủ nội dung câu hỏi)
 
 ```bash
 # Tất cả báo cáo đang chờ xử lý
 GET /api/admin/questions/reports?status=PENDING
 
+# Lọc theo môn học và lý do báo cáo (mới)
+GET /api/admin/questions/reports?subject=TOAN&reason=WRONG_ANSWER
+
 # Tất cả báo cáo, trang 1
 GET /api/admin/questions/reports
 ```
 
-**Response mẫu:**
+**Response mẫu** — từ nay JOIN sẵn nội dung câu hỏi (`question`), không cần
+tra cứu riêng bằng `questionId` như trước:
 ```json
 {
   "items": [
@@ -284,12 +294,25 @@ GET /api/admin/questions/reports
       "reason": "WRONG_ANSWER",
       "description": "Đáp án C mới là đúng vì...",
       "status": "PENDING",
-      "createdAt": "2026-06-09T10:00:00.000Z"
+      "createdAt": "2026-06-09T10:00:00.000Z",
+      "question": {
+        "subject": "TOAN",
+        "chapter": "Hàm số",
+        "difficulty": 2,
+        "question": "Đạo hàm của y = x^2 là?",
+        "options": ["y'=x", "y'=2x", "y'=x^2", "y'=2"],
+        "correctAnswer": 0,
+        "explanation": null,
+        "isActive": true
+      }
     }
   ],
   "total": 12
 }
 ```
+
+> Báo cáo nào trỏ tới câu hỏi không còn tồn tại (rất hiếm, hệ thống không
+> hard-delete câu hỏi) sẽ tự động bị lọc khỏi kết quả — không gây lỗi trang.
 
 ---
 
@@ -302,8 +325,8 @@ GET /api/admin/questions/reports/summary
 **Response mẫu:**
 ```json
 {
-  "pending": 12,
-  "reviewed": 5,
+  "pendingReports": 12,
+  "pendingQuestions": 8,
   "fixed": 3,
   "dismissed": 2,
   "topReportedQuestions": [
@@ -313,44 +336,93 @@ GET /api/admin/questions/reports/summary
 }
 ```
 
-> ⚠️ **Đã đổi response shape (2026-06-12):** trước đây là dạng lồng
-> `{ byStatus: { PENDING, REVIEWED, FIXED, DISMISSED }, topReportedQuestions }`.
-> Shape cũ **không còn được trả về** — đọc trực tiếp `pending`, `reviewed`,
-> `fixed`, `dismissed` ở root object.
+> ⚠️ **Đã đổi field (Feature 014, 2026-07-13):** `pending`→`pendingReports`,
+> `reviewed`→`pendingQuestions` — **không phải đổi tên đơn thuần, ý nghĩa khác
+> hẳn**:
+> - `pendingReports` = tổng số **dòng báo cáo** đang PENDING (1 câu có thể bị
+>   báo cáo nhiều lần bởi nhiều học sinh khác nhau).
+> - `pendingQuestions` = số **câu hỏi khác nhau** đang có ít nhất 1 báo cáo
+>   PENDING (dùng để biết thực sự có bao nhiêu câu cần xem xét).
+>
+> Trước đó `reviewed` đếm báo cáo trạng thái `REVIEWED` — trạng thái này
+> **không còn được ghi mới** qua API (xem mục 4.3), chỉ còn tồn tại ở dữ liệu
+> lịch sử trước Feature 014.
 
 **Quy trình xử lý báo cáo được khuyến nghị:**
 1. Xem `topReportedQuestions` để ưu tiên câu bị báo cáo nhiều nhất.
-2. Lấy `questionId` → gọi `GET /api/admin/questions?subject=&difficulty=` để
-   tra thông tin đầy đủ, hoặc dùng Prisma Studio.
-3. Đánh giá nội dung báo cáo, quyết định hành động.
+2. Đọc trực tiếp field `question` trong từng item ở mục 4.1 — không cần tra
+   cứu riêng bằng `questionId` nữa.
+3. Đánh giá nội dung báo cáo, quyết định hành động: sửa câu hay bỏ qua.
 
 ---
 
-### 4.3 Cập nhật trạng thái báo cáo
+### 4.3 Xử lý 1 báo cáo — resolve (thay thế "cập nhật trạng thái" cũ)
 
-Sau khi kiểm tra báo cáo, cập nhật trạng thái:
+⚠️ **Breaking change:** Endpoint cũ `PATCH /api/admin/questions/reports/:id`
+đã bị **xoá hoàn toàn**. Dùng endpoint mới:
 
 ```bash
-PATCH /api/admin/questions/reports/:reportId
+PATCH /api/admin/questions/reports/:reportId/resolve
 X-Admin-Secret: <secret>
 Content-Type: application/json
 
-{ "status": "REVIEWED" }
+# Chỉ bỏ qua, không sửa nội dung câu hỏi
+{ "status": "DISMISSED" }
 ```
 
-**Trạng thái hợp lệ:**
+```bash
+# Đánh dấu đã sửa, kèm sửa luôn nội dung câu hỏi (chỉ gửi field thực sự đổi)
+{
+  "status": "FIXED",
+  "questionUpdate": { "correctAnswer": 1 }
+}
+```
+
+**Trạng thái hợp lệ — chỉ còn 2 giá trị:**
 
 | Trạng thái | Ý nghĩa |
 |-----------|---------|
-| `PENDING` | Chờ xử lý (mặc định khi tạo) |
-| `REVIEWED` | Đã xem xét, chưa hành động |
-| `FIXED` | Đã sửa câu hỏi |
+| `FIXED` | Đã sửa câu hỏi (có thể kèm sửa nội dung ngay trong cùng request) |
 | `DISMISSED` | Bác bỏ báo cáo (báo cáo không hợp lệ) |
 
-> **Lưu ý:** Cập nhật sang `REVIEWED`, `FIXED`, hoặc `DISMISSED` làm giảm số
-> lượng báo cáo PENDING. Nếu đang có 5 PENDING → auto-ẩn câu → sau khi xử lý
-> đổi status xuống còn < 5 PENDING, câu hỏi **vẫn ẩn** (không tự động hiện lại).
-> Cần thủ công khôi phục `isActive = true` nếu muốn dùng lại câu đó.
+> `PENDING` và `REVIEWED` vẫn tồn tại trong dữ liệu/enum cũ nhưng **không còn
+> ghi được** qua endpoint này — gửi `status: "REVIEWED"` sẽ bị từ chối với
+> `400 INVALID_REQUEST_BODY`.
+
+**Response mẫu:**
+```json
+{
+  "id": "report-uuid",
+  "status": "FIXED",
+  "batchResolvedCount": 2,
+  "reactivated": true
+}
+```
+
+- `batchResolvedCount`: số báo cáo `PENDING` **khác** cùng `questionId` cũng
+  được tự động đóng theo trong cùng lần xử lý này (không cần admin xử lý thủ
+  công từng cái) — mỗi học sinh liên quan (kể cả các báo cáo batch) đều nhận
+  1 thông báo `REPORT_RESOLVED` riêng.
+- `reactivated`: `true` nếu câu hỏi trước đó đang bị auto-hide (`isActive=false`
+  do vượt ngưỡng 5 báo cáo PENDING) và vừa được **tự động hiện lại**.
+
+> ⚠️ **Đã đổi hành vi auto-hide (quan trọng nếu bạn quen luồng cũ):** Trước
+> đây xử lý xong báo cáo **KHÔNG** tự hiện lại câu hỏi bị ẩn — admin phải tự
+> khôi phục `isActive=true` thủ công. **Từ Feature 014**: nếu `status=FIXED`
+> và câu hỏi đang bị ẩn, hệ thống **tự động** set `isActive=true` lại —
+> không cần thao tác thủ công nữa. Nếu bấm `DISMISSED`, câu hỏi **vẫn ẩn**
+> (dismissed nghĩa là báo cáo không hợp lệ, không phải đã khắc phục).
+
+**Sửa nội dung câu hỏi (`questionUpdate`) hoạt động thế nào:**
+- Mọi field trong `questionUpdate` đều tuỳ chọn — chỉ gửi field thực sự thay
+  đổi (`subject`, `chapter`, `difficulty`, `question`, `options`,
+  `correctAnswer`, `explanation`).
+- Trước khi ghi đè, hệ thống **lưu snapshot toàn bộ nội dung câu hỏi hiện tại**
+  vào bảng `question_edit_history` (tra cứu qua Prisma Studio nếu cần xem lại
+  lịch sử sửa của 1 câu — chưa có API/giao diện xem lịch sử này).
+- Không cần lo về lịch sử luyện tập cũ của học sinh: hệ thống không lưu
+  snapshot nội dung câu hỏi ở lịch sử làm bài, nên sửa câu hỏi sẽ tự động
+  phản ánh ở mọi nơi hiển thị câu đó (kể cả bài làm cũ).
 
 ---
 
@@ -386,38 +458,68 @@ là giá trị `ADMIN_SECRET` trong `backend/.env`:
 
 ### 5.3 Trang quản lý báo cáo
 
-Sau khi đăng nhập, màn hình hiển thị:
+> ⚠️ **Vị trí đã đổi (Feature 014):** Trước đây đây là 1 tab riêng tên "Báo
+> cáo câu hỏi" ở ngay đầu trang. Từ nay nó là **sub-tab "Báo cáo lỗi"** bên
+> trong tab cha **"Câu hỏi"** (tab cha còn có sub-tab "Bài học sinh gửi" —
+> xem mục 14). Nội dung/API bên dưới không đổi vị trí truy cập, chỉ đổi cách
+> điều hướng tới.
 
-- **4 thẻ thống kê** ở đầu trang: *Chờ xử lý* / *Đã xem* / *Đã sửa* / *Đã bỏ
-  qua* — lấy từ `GET /api/admin/questions/reports/summary` (xem mục 4.2).
-- **Bộ lọc trạng thái** (dropdown "Tất cả trạng thái" / `PENDING` / `REVIEWED`
-  / `FIXED` / `DISMISSED`) — đổi filter sẽ load lại danh sách từ trang 1.
-- **Danh sách báo cáo**, mỗi dòng gồm: nhãn trạng thái, lý do báo cáo, mã câu
-  hỏi (`questionId`), mô tả (nếu có), thời gian gửi, và 3 nút hành động **Đã
-  xem** / **Đã sửa** / **Bỏ qua**.
+Sau khi đăng nhập → bấm tab **"Câu hỏi"** → sub-tab **"Báo cáo lỗi"**, màn
+hình hiển thị:
+
+- **4 thẻ thống kê** ở đầu trang: *Báo cáo chờ xử lý* (`pendingReports`) /
+  *Câu hỏi bị báo cáo* (`pendingQuestions`) / *Đã sửa* / *Đã bỏ qua* — lấy từ
+  `GET /api/admin/questions/reports/summary` (xem mục 4.2, đã đổi field so
+  với trước).
+- **3 bộ lọc** (mới): trạng thái (`PENDING`/`FIXED`/`DISMISSED` — không còn
+  `REVIEWED`), môn học, lý do báo cáo — đổi filter sẽ load lại danh sách từ
+  trang 1.
+- **Danh sách báo cáo**, mỗi dòng giờ hiển thị **đầy đủ nội dung câu hỏi**
+  (không chỉ mã UUID như trước): nhãn trạng thái, lý do, môn học, badge "Đang
+  bị ẩn" nếu câu đang auto-hide, nội dung câu hỏi + 4 đáp án (đáp án đúng tô
+  xanh đậm), ghi chú của học sinh (nếu có), thời gian gửi.
+- Mỗi báo cáo `PENDING` có 2 nút: **"✏️ Sửa & Đánh dấu đã sửa"** và **"Bỏ
+  qua"** (không còn nút "Đã xem" — trạng thái `REVIEWED` đã bị loại khỏi
+  luồng thao tác).
 - **Phân trang** 20 báo cáo/trang ở cuối danh sách.
 
-**Đổi trạng thái 1 báo cáo:**
-1. Nhấn nút trạng thái mong muốn (ví dụ **Đã sửa**) trên dòng báo cáo.
-2. Hệ thống gọi `PATCH /api/admin/questions/reports/:id` (xem mục 4.3) và tải
-   lại cả 4 thẻ thống kê + danh sách.
-3. Nếu thao tác này khiến câu hỏi liên quan đạt ≥ 5 báo cáo `PENDING`, một
-   banner màu xanh sẽ hiện: **"Câu hỏi liên quan đã bị tự động ẩn do vượt
-   ngưỡng báo cáo."** — xem mục 4.3 để khôi phục thủ công nếu cần.
+**Bỏ qua 1 báo cáo:**
+1. Nhấn **"Bỏ qua"** trên dòng báo cáo.
+2. Hệ thống gọi `PATCH /api/admin/questions/reports/:id/resolve` với
+   `status: DISMISSED` (xem mục 4.3) và tải lại cả 4 thẻ thống kê + danh sách.
+3. Câu hỏi liên quan (nếu đang bị auto-hide) **vẫn ẩn** — "Bỏ qua" chỉ đóng
+   báo cáo, không phải xác nhận đã khắc phục.
+
+**Sửa & đánh dấu đã sửa 1 báo cáo (form sửa tại chỗ — mới):**
+1. Nhấn **"✏️ Sửa & Đánh dấu đã sửa"** — dòng báo cáo mở rộng thành form đầy
+   đủ, pre-fill sẵn nội dung câu hỏi hiện tại (môn, chương, độ khó, nội dung,
+   4 đáp án + radio chọn đáp án đúng, giải thích).
+2. Sửa các field cần thiết (có thể không sửa gì, chỉ để đánh dấu đã xử lý).
+3. Nhấn **"Lưu & Đánh dấu đã sửa"** → gọi
+   `PATCH /api/admin/questions/reports/:id/resolve` với `status: FIXED` +
+   `questionUpdate` (chỉ gồm field thực sự thay đổi).
+4. Nếu câu hỏi liên quan đang bị auto-hide, hệ thống **tự động hiện lại**
+   (`isActive=true`) — thông báo xác nhận sẽ ghi rõ điều này. **Không cần
+   thao tác thủ công như trước** (xem mục 4.3).
+5. Nếu còn báo cáo `PENDING` khác trùng câu hỏi này, chúng cũng tự động được
+   đóng theo (`batchResolvedCount` > 0) — thông báo xác nhận sẽ ghi rõ số
+   lượng.
 
 ### 5.4 Khi nào dùng Dashboard, khi nào dùng API trực tiếp?
 
 | Tình huống | Dùng |
 |------------|------|
-| Xử lý báo cáo hàng ngày, xem nhanh thống kê | Dashboard (`/#admin`) |
-| Import/sửa hàng loạt câu hỏi, debug, script tự động | API trực tiếp (mục 3, 4) |
+| Xử lý báo cáo / duyệt câu học sinh gửi hàng ngày, xem nhanh thống kê | Dashboard (`/#admin`) |
+| Import/sửa hàng loạt câu hỏi, debug, script tự động | API trực tiếp (mục 3, 4, 14) |
 | Tạo/sửa đề thi thử, thêm câu hỏi, import Excel | Dashboard tab "Đề thi thử" (mục 5.5) hoặc API trực tiếp (mục 7) |
 
 ### 5.5 Tab "Đề thi thử" (Quản lý đề thi thử)
 
-Sau khi đăng nhập (mục 5.2), Admin Dashboard có **2 tab** ở đầu trang: **"Báo
-cáo câu hỏi"** (mục 5.3) và **"Đề thi thử"** (mới). Tab "Đề thi thử" dùng các
-API ở mục 7.
+> Admin Dashboard hiện có 5 tab ở đầu trang: **Dashboard** (mục 11), **Người
+> dùng** (mục 12), **Câu hỏi** (gộp "Bài học sinh gửi" + "Báo cáo lỗi" — mục
+> 5.3 và 14, có badge đỏ hiện tổng số việc chờ xử lý), **Đề thi thử** (mục
+> này), **Ngân hàng câu hỏi** (mục 8). Mục này mô tả riêng tab "Đề thi thử",
+> dùng các API ở mục 7.
 
 **Danh sách đề thi (`AdminExamPaperListPage`):**
 - Bộ lọc theo môn học (dropdown — để trống = xem tất cả môn).
@@ -1430,15 +1532,30 @@ SELECT type, COUNT(*) FROM notifications WHERE "isRead" = false GROUP BY type;
 | `STREAK_MILESTONE` | Học sinh hoàn thành phiên ôn luyện đầu tiên trong ngày đạt mốc 7/14/30/60/100 ngày liên tiếp | `practice.service.completeSession()` |
 | `RANK_UP` | Hạng leaderboard tăng sau khi nộp bài thi | `exam.service.submitExam()` |
 | `RANK_DOWN` | Hạng leaderboard giảm sau khi nộp bài thi | `exam.service.submitExam()` |
-| `REPORT_RESOLVED` | Admin chuyển trạng thái báo cáo câu hỏi từ PENDING sang bất kỳ trạng thái nào khác | `practice.service.updateReport()` |
+| `REPORT_RESOLVED` | Admin xử lý báo cáo câu hỏi (FIXED/DISMISSED) — kể cả khi bị đóng theo batch cùng 1 câu | `practice.service.resolveReport()` (từ Feature 014, xem mục 4.3) |
 | `NEW_EXAM_PAPER` | Admin bật active cho đề thi (`isActive: false → true`) | `exam.service.updateExamPaper()` |
+| `SUBMISSION_APPROVED` | Admin duyệt câu hỏi học sinh gửi | `submission.service.approveSubmission()` (Feature 014, xem mục 14) |
+| `SUBMISSION_REJECTED` | Admin từ chối câu hỏi học sinh gửi (kèm lý do trong `body`) | `submission.service.rejectSubmission()` (Feature 014, xem mục 14) |
+| `SUBMISSION_USED` | Câu hỏi học sinh gửi (đã duyệt) được admin thêm vào 1 đề thi thật | `question-bank.service.fireUsagePointsTrigger()` (Feature 014, xem mục 14) |
 
 ### 13.3 Hành động admin ảnh hưởng đến thông báo
 
-**Duyệt báo cáo câu hỏi:**
-- Khi admin xử lý báo cáo câu hỏi (chuyển từ PENDING sang REVIEWED / FIXED / DISMISSED), học sinh gửi báo cáo sẽ tự động nhận thông báo `REPORT_RESOLVED`
+**Xử lý báo cáo câu hỏi:**
+- Khi admin resolve báo cáo (mục 4.3, `status: FIXED` hoặc `DISMISSED`), mọi
+  học sinh liên quan (báo cáo chính + các báo cáo batch cùng câu hỏi) tự động
+  nhận thông báo `REPORT_RESOLVED` — mỗi người 1 thông báo riêng
 - Thông báo gửi kèm trích đoạn câu hỏi và trạng thái mới
+- ⚠️ Từ Feature 014, endpoint resolve **không còn nhận `REVIEWED`** — chỉ
+  `FIXED`/`DISMISSED` mới trigger được thông báo này qua API mới
 - Không có cách tắt thông báo này cho từng báo cáo riêng lẻ
+
+**Duyệt/từ chối câu hỏi học sinh gửi (Feature 014, xem mục 14):**
+- Duyệt (`POST /api/admin/submissions/:id/approve`) → học sinh nhận
+  `SUBMISSION_APPROVED` + cộng 30 điểm
+- Từ chối (`POST /api/admin/submissions/:id/reject`) → học sinh nhận
+  `SUBMISSION_REJECTED`, nội dung thông báo chính là `note` admin nhập
+- Thêm câu hỏi (đã duyệt) vào đề thi qua `from-bank` → học sinh gửi câu đó
+  nhận `SUBMISSION_USED` + cộng thêm điểm (tối đa 100đ/câu, xem mục 14.4)
 
 **Bật active đề thi mới:**
 - Khi admin chuyển đề thi từ `isActive: false` → `true`, tất cả học sinh đã từng học môn đó sẽ nhận thông báo `NEW_EXAM_PAPER`
@@ -1462,3 +1579,143 @@ DELETE FROM notifications WHERE id = '<notificationId>';
 -- Hoặc xóa toàn bộ của 1 user
 DELETE FROM notifications WHERE "userId" = '<userId>';
 ```
+
+---
+
+## 14. Học sinh đóng góp câu hỏi — Feature 014
+
+Học sinh có thể chủ động gửi câu hỏi trắc nghiệm để đóng góp vào Ngân hàng
+câu hỏi. Admin duyệt/từ chối qua tab **"Câu hỏi"** → sub-tab **"Bài học sinh
+gửi"** (cùng chỗ với "Báo cáo lỗi" — mục 5.3), hoặc gọi API trực tiếp.
+
+### 14.1 Xem danh sách câu hỏi học sinh gửi
+
+```bash
+# Chỉ xem câu đang chờ duyệt (mặc định của giao diện web)
+GET /api/admin/submissions?status=PENDING
+X-Admin-Secret: <secret>
+```
+
+**Response mẫu** — mỗi item kèm `duplicateWarning` (chỉ cảnh báo, KHÔNG chặn
+duyệt):
+```json
+{
+  "items": [
+    {
+      "id": "sub-uuid",
+      "userId": "user-uuid",
+      "subject": "TOAN",
+      "chapter": "Hàm số",
+      "questionText": "Đạo hàm của hàm số y = x^2 là gì?",
+      "options": ["y' = x", "y' = 2x", "y' = x^2", "y' = 2"],
+      "correctOptionIndex": 1,
+      "status": "PENDING",
+      "adminNote": null,
+      "questionBankId": null,
+      "usageCount": 0,
+      "usagePointsEarned": 0,
+      "createdAt": "2026-07-13T08:30:00.000Z",
+      "updatedAt": "2026-07-13T08:30:00.000Z",
+      "duplicateWarning": {
+        "questionBankId": "bank-uuid",
+        "similarity": 0.72
+      }
+    }
+  ],
+  "total": 1
+}
+```
+
+> **`duplicateWarning`** chỉ xuất hiện khi độ tương đồng (so khớp từ đã
+> chuẩn hoá, không phân biệt hoa/thường/dấu) với 1 câu ACTIVE cùng môn trong
+> kho đạt ≥ 0.6 (60%). Trên giao diện web, item có cảnh báo sẽ hiện badge
+> vàng **"⚠️ Có thể trùng (X%)"**. Đây là thuật toán so khớp thô (Jaccard
+> trên tập từ) — **không** phát hiện được câu diễn đạt khác nhưng cùng ý
+> nghĩa; admin nên tự đọc kỹ nội dung trước khi quyết định.
+
+### 14.2 Duyệt câu hỏi
+
+```bash
+POST /api/admin/submissions/:id/approve
+X-Admin-Secret: <secret>
+```
+
+**Response:** `{ "id": "sub-uuid", "status": "APPROVED", "questionBankId": "bank-uuid" }`
+
+**Điều gì xảy ra khi duyệt:**
+1. Tạo ngay 1 bản ghi mới trong Ngân hàng câu hỏi (`isActive=true`, dạng
+   `MCQ_4`) từ đúng nội dung học sinh gửi.
+2. **Độ khó mặc định = Trung bình (2)** — học sinh không tự chấm độ khó khi
+   gửi. Admin có thể vào tab **"Ngân hàng câu hỏi"** (mục 8) để sửa lại độ
+   khó/chương/nội dung sau khi duyệt nếu cần.
+3. Học sinh nhận ngay **+30 điểm** (`SUBMISSION_APPROVE_POINTS`) và thông báo
+   `SUBMISSION_APPROVED`.
+
+> Trên giao diện web, nhấn nút **"✅ Duyệt"** trên dòng câu hỏi (hoặc trong
+> modal "Xem chi tiết") sẽ gọi endpoint này.
+
+### 14.3 Từ chối câu hỏi
+
+```bash
+POST /api/admin/submissions/:id/reject
+X-Admin-Secret: <secret>
+Content-Type: application/json
+
+{ "note": "Câu hỏi trùng với câu đã có trong kho." }
+```
+
+- **`note` là bắt buộc** — thiếu hoặc để trống sẽ bị từ chối với
+  `400 SUBMISSION_REJECT_NOTE_REQUIRED`. Nội dung `note` sẽ hiển thị trực
+  tiếp cho học sinh (cả trong trang "Câu đã gửi" và trong nội dung thông báo
+  `SUBMISSION_REJECTED`) — viết rõ ràng, lịch sự, giải thích lý do cụ thể.
+- Trên giao diện web: nhấn **"❌ Từ chối"** → nhập lý do vào ô xuất hiện →
+  nhấn **"Gửi"**.
+
+### 14.4 Điểm thưởng khi câu hỏi được dùng trong đề thi
+
+Sau khi 1 câu hỏi đã duyệt được admin **chủ động chọn** để thêm vào 1 đề thi
+thật (tab "Đề thi thử" → form thêm câu từ kho, `POST
+/api/admin/exam-papers/:id/questions/from-bank` — mục 7), hệ thống tự động:
+
+1. Cộng thêm **5 điểm** (`SUBMISSION_USAGE_POINTS_PER_USE`) cho học sinh đã
+   gửi câu đó, tối đa **100 điểm/câu** (`SUBMISSION_USAGE_POINTS_CAP`) —
+   dùng đủ 20 lần là đạt trần, các lần sau không cộng thêm nữa.
+2. Tăng `usageCount` của submission gốc.
+3. Gửi thông báo `SUBMISSION_USED` cho học sinh.
+
+> ⚠️ **Chỉ áp dụng khi dùng nút/API "Thêm từ kho" (`from-bank`)** — nếu admin
+> dùng **"Tự động lấy N câu ngẫu nhiên"** (`auto-fill`, mục 7), điểm usage
+> **KHÔNG** được cộng (đây là quyết định thiết kế có chủ đích: `auto-fill`
+> chọn ngẫu nhiên, không phải hành động admin "chủ động" ghi nhận công lao
+> câu hỏi cụ thể).
+
+### 14.5 Rate limit gửi câu hỏi (phía học sinh)
+
+Mỗi học sinh chỉ được gửi tối đa **5 câu/ngày** (tính theo UTC, không phải
+giờ Việt Nam) — không cần admin cấu hình gì, chống spam mặc định. Nếu học
+sinh báo bị chặn dù thấy chưa gửi 5 câu "hôm nay" theo giờ VN, giải thích
+mốc reset là 07:00 sáng giờ VN (00:00 UTC), không phải 00:00 giờ VN.
+
+### 14.6 Xử lý sự cố — Bài học sinh gửi
+
+**Duyệt/từ chối báo lỗi 409 (SUBMISSION_NOT_PENDING)**
+→ Submission đã bị xử lý (bởi admin khác, hoặc học sinh vừa tự sửa/xoá) đúng
+lúc bạn đang thao tác — đây là cơ chế chống race condition có chủ đích
+(xem `docs/FEATURE_LOG.md` Section 14 mục "Ghi chú kỹ thuật"), không phải
+lỗi hệ thống. Bấm làm mới danh sách và kiểm tra trạng thái hiện tại trước khi
+thử lại.
+
+**Học sinh báo đã được duyệt nhưng không thấy cộng điểm**
+→ Việc cộng điểm + gửi thông báo chạy **fire-and-forget** (không block
+response duyệt) — nếu request duyệt trả về thành công nhưng bước cộng điểm
+lỗi (hiếm, có `try/catch` riêng + log `console.error`), điểm sẽ **không**
+được cộng dù submission đã chuyển `APPROVED`. Kiểm tra log backend tìm dòng
+`[SubmissionService] fireApprovedRewards addPoints error`; nếu có, cộng điểm
+thủ công qua `pointsService` hoặc script debug.
+
+**Cảnh báo trùng lặp (`duplicateWarning`) không xuất hiện dù câu rõ ràng
+giống câu đã có**
+→ Thuật toán chỉ so khớp câu ACTIVE **cùng môn học** trong kho, ngưỡng 60%.
+Nếu câu diễn đạt khác nhiều (đổi thứ tự từ, dùng từ đồng nghĩa), similarity
+có thể dưới ngưỡng — đây là hạn chế đã biết của thuật toán so khớp thô, cần
+admin tự đọc kỹ, không dựa hoàn toàn vào cảnh báo tự động.

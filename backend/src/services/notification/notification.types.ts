@@ -14,6 +14,9 @@ export type NotificationMetadata =
   | { rankBefore: number; rankAfter: number; subject: string | null }        // RANK_UP / RANK_DOWN
   | { reportId: string; status: string; questionPreview: string }            // REPORT_RESOLVED
   | { subject: string; examPaperTitle: string }                              // NEW_EXAM_PAPER
+  | { submissionId: string; questionBankId: string; pointsAwarded: number }  // SUBMISSION_APPROVED
+  | { submissionId: string; note: string }                                   // SUBMISSION_REJECTED
+  | { submissionId: string; pointsAwarded: number; totalUsagePoints: number } // SUBMISSION_USED
   | Record<string, unknown>;
 
 /// Item thông báo trả về cho frontend.

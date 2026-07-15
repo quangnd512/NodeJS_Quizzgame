@@ -24,7 +24,10 @@ import {
   QuestionNotAttemptedForReportError,
   QuestionNotFoundError,
   QuestionNotInSessionError,
+  QuestionReportNotFoundError,
   ReportAlreadySubmittedError,
+  ReportNotPendingError,
+  ReportResubmitConfirmRequiredError,
   SubjectHasNoQuestionsError,
   SubjectNotRegisteredError,
 } from './practice.errors.js';
@@ -34,13 +37,18 @@ import type {
   CompleteSessionResponse,
   CreateQuestionInput,
   HistoryItem,
+  ListReportsParams,
   PaginatedHistory,
   PracticeStats,
   QuestionFullDto,
   QuestionPublicDto,
   QuestionReportDto,
   QuestionReportSummary,
+  ReportFilterFacets,
   ReportStatus,
+  ResolvableReportStatus,
+  ResolveReportQuestionUpdate,
+  ResolveReportResult,
   SessionDetailResponse,
   StartSessionResponse,
   UpdateQuestionInput,
@@ -803,20 +811,31 @@ export class PracticeService {
     return { items: items.map(toFullDto), total, page, limit };
   }
 
-  /** Lay danh sach bao cao cau hoi, phan trang. */
-  async listReports(params: {
-    status?: string;
-    page?: number;
-    limit?: number;
-  }): Promise<{ items: QuestionReportDto[]; total: number }> {
+  /**
+   * Lay danh sach bao cao cau hoi, phan trang, kem JOIN day du noi dung cau hoi
+   * (khong chi tra ve questionId thô) — loc duoc theo status/subject/reason.
+   */
+  async listReports(params: ListReportsParams): Promise<{ items: QuestionReportDto[]; total: number }> {
     const page = Math.max(1, params.page ?? 1);
     const limit = Math.min(100, params.limit ?? 20);
 
     const where: Prisma.QuestionReportWhereInput = {
       ...(params.status !== undefined && { status: params.status }),
+      ...(params.reason !== undefined && { reason: params.reason }),
     };
 
-    const [items, total] = await Promise.all([
+    // Loc theo subject: QuestionReport khong co cot subject truc tiep (khong co
+    // Prisma relation chinh thuc toi Question) -> tim truoc cac questionId khop
+    // subject, roi loc report theo questionId trong tap do.
+    if (params.subject !== undefined) {
+      const matchingQuestions = await prisma.question.findMany({
+        where: { subject: params.subject },
+        select: { id: true },
+      });
+      where.questionId = { in: matchingQuestions.map((q) => q.id) };
+    }
+
+    const [reports, total] = await Promise.all([
       prisma.questionReport.findMany({
         where,
         orderBy: { createdAt: 'desc' },
@@ -826,7 +845,58 @@ export class PracticeService {
       prisma.questionReport.count({ where }),
     ]);
 
+    const items = await this.joinReportsWithQuestions(reports);
     return { items, total };
+  }
+
+  /**
+   * "JOIN" thu cong danh sach bao cao voi noi dung cau hoi tuong ung (khong co
+   * Prisma relation chinh thuc giua QuestionReport <-> Question trong schema).
+   * Bao cao nao co questionId khong con ton tai (truong hop hiem, Question hien
+   * tai khong bao gio hard-delete) se bi bo qua khoi ket qua thay vi lam sap he thong.
+   */
+  private async joinReportsWithQuestions(
+    reports: Array<{
+      id: string;
+      questionId: string;
+      userId: string;
+      reason: string;
+      description: string | null;
+      status: string;
+      createdAt: Date;
+    }>,
+  ): Promise<QuestionReportDto[]> {
+    if (reports.length === 0) return [];
+
+    const questionIds = [...new Set(reports.map((r) => r.questionId))];
+    const questions = await prisma.question.findMany({ where: { id: { in: questionIds } } });
+    const questionMap = new Map(questions.map((q) => [q.id, q]));
+
+    const items: QuestionReportDto[] = [];
+    for (const r of reports) {
+      const q = questionMap.get(r.questionId);
+      if (!q) continue; // cau hoi khong con ton tai — bo qua, khong lam sap request
+      items.push({
+        id: r.id,
+        questionId: r.questionId,
+        userId: r.userId,
+        reason: r.reason,
+        description: r.description,
+        status: r.status,
+        createdAt: r.createdAt,
+        question: {
+          subject: q.subject,
+          chapter: q.chapter,
+          difficulty: q.difficulty,
+          question: q.question,
+          options: q.options as string[],
+          correctAnswer: q.correctAnswer,
+          explanation: q.explanation,
+          isActive: q.isActive,
+        },
+      });
+    }
+    return items;
   }
 
   /**
@@ -865,6 +935,119 @@ export class PracticeService {
     return { id: report.id, status: report.status, autoHidden };
   }
 
+  /**
+   * Endpoint gộp xử lý báo cáo (thay thế `updateReport` cho luồng admin mới):
+   *   1. "Claim" report CHÍNH bằng conditional update (status: PENDING -> status mới)
+   *      NGAY ĐẦU transaction (trước cả bước snapshot/update Question) — nếu report
+   *      này bị resolve 2 lần gần như đồng thời (double-click, retry client, hoặc 2
+   *      admin xử lý cùng lúc), chỉ request nào khớp điều kiện `status: 'PENDING'`
+   *      trước mới thành công; request thua cuộc nhận `count=0`, ném lỗi
+   *      `ReportNotPendingError` để transaction rollback ngay — KHÔNG tạo snapshot
+   *      `question_edit_history` thừa, KHÔNG ghi đè Question, KHÔNG gửi thông báo trùng.
+   *   2. Nếu có `questionUpdate`: lưu SNAPSHOT nội dung câu hỏi hiện tại vào
+   *      `question_edit_history` TRƯỚC khi ghi đè, rồi cập nhật Question.
+   *   3. Batch: mọi report PENDING KHÁC cùng questionId cũng chuyển sang status
+   *      này luôn (1 lần sửa đóng hết mọi báo cáo trùng câu) — chạy trong CÙNG
+   *      transaction để tránh race condition nếu 2 báo cáo được xử lý gần như
+   *      đồng thời.
+   *   4. Nếu status=FIXED và Question đang bị auto-hide (isActive=false) →
+   *      set lại isActive=true (không cần đợi báo cáo nào khác).
+   *   5. [Fire-and-forget] Gửi thông báo REPORT_RESOLVED cho TỪNG người đã báo
+   *      cáo (báo cáo chính + mọi báo cáo batch khác), mỗi người 1 thông báo riêng.
+   */
+  async resolveReport(
+    reportId: string,
+    status: ResolvableReportStatus,
+    questionUpdate?: ResolveReportQuestionUpdate,
+  ): Promise<ResolveReportResult> {
+    const report = await prisma.questionReport.findUnique({ where: { id: reportId } });
+    if (!report) throw new QuestionReportNotFoundError(reportId);
+
+    const { batchResolvedCount, reactivated, othersToNotify } = await prisma.$transaction(async (tx) => {
+      const currentQuestion = await tx.question.findUnique({ where: { id: report.questionId } });
+      if (!currentQuestion) throw new QuestionNotFoundError(report.questionId);
+
+      // Claim report CHÍNH trước khi làm bất kỳ thay đổi nào (snapshot/update Question) —
+      // xem giải thích đầy đủ trong docblock phía trên.
+      const claimed = await tx.questionReport.updateMany({
+        where: { id: reportId, status: 'PENDING' },
+        data: { status },
+      });
+      if (claimed.count === 0) throw new ReportNotPendingError();
+
+      if (questionUpdate) {
+        // Snapshot TOÀN BỘ field hiện tại của Question — lưu TRƯỚC khi ghi đè.
+        await tx.questionEditHistory.create({
+          data: {
+            questionId: currentQuestion.id,
+            reportId,
+            beforeData: {
+              subject: currentQuestion.subject,
+              chapter: currentQuestion.chapter,
+              difficulty: currentQuestion.difficulty,
+              question: currentQuestion.question,
+              options: currentQuestion.options,
+              correctAnswer: currentQuestion.correctAnswer,
+              explanation: currentQuestion.explanation,
+              examYear: currentQuestion.examYear,
+              examCode: currentQuestion.examCode,
+              isActive: currentQuestion.isActive,
+            } as Prisma.InputJsonValue,
+          },
+        });
+      }
+
+      // Chỉ re-activate khi FIXED và câu đang bị ẩn (auto-hide do vượt ngưỡng báo cáo).
+      const shouldReactivate = status === 'FIXED' && currentQuestion.isActive === false;
+
+      if (questionUpdate || shouldReactivate) {
+        await tx.question.update({
+          where: { id: currentQuestion.id },
+          data: {
+            ...(questionUpdate?.subject !== undefined && { subject: questionUpdate.subject }),
+            ...(questionUpdate?.chapter !== undefined && { chapter: questionUpdate.chapter }),
+            ...(questionUpdate?.difficulty !== undefined && { difficulty: questionUpdate.difficulty }),
+            ...(questionUpdate?.question !== undefined && { question: questionUpdate.question }),
+            ...(questionUpdate?.options !== undefined && {
+              options: questionUpdate.options as Prisma.InputJsonValue,
+            }),
+            ...(questionUpdate?.correctAnswer !== undefined && { correctAnswer: questionUpdate.correctAnswer }),
+            ...(questionUpdate?.explanation !== undefined && { explanation: questionUpdate.explanation }),
+            ...(shouldReactivate && { isActive: true }),
+          },
+        });
+      }
+
+      // Batch: mọi report PENDING khác cùng câu hỏi này cũng đóng theo — 1 lần sửa
+      // đóng hết mọi báo cáo trùng lặp, tránh admin phải xử lý thủ công từng cái.
+      const others = await tx.questionReport.findMany({
+        where: { questionId: report.questionId, status: 'PENDING', id: { not: reportId } },
+        select: { id: true, userId: true },
+      });
+      if (others.length > 0) {
+        await tx.questionReport.updateMany({
+          where: { id: { in: others.map((o) => o.id) } },
+          data: { status },
+        });
+      }
+
+      return { batchResolvedCount: others.length, reactivated: shouldReactivate, othersToNotify: others };
+    });
+
+    // [Fire-and-forget] Notify từng người báo cáo riêng — báo cáo chính + các báo cáo
+    // batch khác — giữ nguyên hành vi "mỗi user 1 thông báo" của hàm có sẵn.
+    if (report.userId) {
+      void this.fireReportResolvedNotification(report.userId, reportId, status, report.questionId);
+    }
+    for (const other of othersToNotify) {
+      if (other.userId) {
+        void this.fireReportResolvedNotification(other.userId, other.id, status, report.questionId);
+      }
+    }
+
+    return { id: reportId, status, batchResolvedCount, reactivated };
+  }
+
   /** [Fire-and-forget] Gửi thông báo REPORT_RESOLVED khi admin xử lý báo cáo. */
   private async fireReportResolvedNotification(
     userId: string,
@@ -898,10 +1081,17 @@ export class PracticeService {
     }
   }
 
-  /** Tong hop thong ke bao cao: so luong theo trang thai, top cau bi bao cao nhieu nhat. */
+  /**
+   * Tong hop thong ke bao cao — tach ro 2 so lieu de tranh nham lan:
+   *   - pendingReports:   tong so DONG bao cao dang PENDING
+   *   - pendingQuestions: so CAU HOI KHAC NHAU dang co it nhat 1 bao cao PENDING
+   *     (dung groupBy thay vi COUNT DISTINCT truc tiep — Prisma khong ho tro
+   *     count-distinct tren 1 truong don le qua API chuan).
+   */
   async getReportsSummary(): Promise<QuestionReportSummary> {
-    const [statusGroups, topReported] = await Promise.all([
+    const [statusGroups, pendingQuestionGroups, topReported] = await Promise.all([
       prisma.questionReport.groupBy({ by: ['status'], _count: { id: true } }),
+      prisma.questionReport.groupBy({ by: ['questionId'], where: { status: 'PENDING' } }),
       prisma.questionReport.groupBy({
         by: ['questionId'],
         _count: { id: true },
@@ -923,8 +1113,8 @@ export class PracticeService {
     }
 
     return {
-      pending: counts.PENDING,
-      reviewed: counts.REVIEWED,
+      pendingReports: counts.PENDING,
+      pendingQuestions: pendingQuestionGroups.length,
       fixed: counts.FIXED,
       dismissed: counts.DISMISSED,
       topReportedQuestions: topReported.map((r) => ({
@@ -934,12 +1124,87 @@ export class PracticeService {
     };
   }
 
-  /** User bao cao cau hoi sai/co van de. */
+  /**
+   * Tra ve cac gia tri loc CON KHA DUNG cho tung dropdown (status/subject/reason)
+   * trong trang Bao cao loi, dung "loc lien dong": moi dropdown duoc tinh dua tren
+   * 2 dieu kien loc CON LAI dang duoc chon (khong tinh theo chinh no) - vi du neu
+   * dang loc status=FIXED thi dropdown "mon hoc" chi hien nhung mon THUC SU co bao
+   * cao FIXED, va dropdown "ly do" cung tuong tu.
+   */
+  async getReportFilterFacets(params: {
+    status?: string;
+    subject?: string;
+    reason?: string;
+  }): Promise<ReportFilterFacets> {
+    // Cau hoi thuoc 1 mon (neu co loc subject) - dung lai cho ca 2 truy van con lai.
+    const questionIdsForSubject = params.subject !== undefined
+      ? (await prisma.question.findMany({ where: { subject: params.subject }, select: { id: true } })).map((q) => q.id)
+      : undefined;
+
+    // 1) Cac status con kha dung, tinh theo subject + reason dang chon (bo qua status).
+    const statusRows = await prisma.questionReport.findMany({
+      where: {
+        ...(params.reason !== undefined && { reason: params.reason }),
+        ...(questionIdsForSubject !== undefined && { questionId: { in: questionIdsForSubject } }),
+      },
+      select: { status: true },
+      distinct: ['status'],
+    });
+
+    // 2) Cac ly do con kha dung, tinh theo subject + status dang chon (bo qua reason).
+    const reasonRows = await prisma.questionReport.findMany({
+      where: {
+        ...(params.status !== undefined && { status: params.status }),
+        ...(questionIdsForSubject !== undefined && { questionId: { in: questionIdsForSubject } }),
+      },
+      select: { reason: true },
+      distinct: ['reason'],
+    });
+
+    // 3) Cac mon hoc con kha dung, tinh theo status + reason dang chon (bo qua subject)
+    // - QuestionReport khong co cot subject truc tiep nen phai JOIN thu cong qua Question.
+    const reportsForSubjects = await prisma.questionReport.findMany({
+      where: {
+        ...(params.status !== undefined && { status: params.status }),
+        ...(params.reason !== undefined && { reason: params.reason }),
+      },
+      select: { questionId: true },
+    });
+    const questionIds = [...new Set(reportsForSubjects.map((r) => r.questionId))];
+    const questionsForSubjects = questionIds.length > 0
+      ? await prisma.question.findMany({
+          where: { id: { in: questionIds } },
+          select: { subject: true },
+          distinct: ['subject'],
+        })
+      : [];
+
+    return {
+      statuses: statusRows.map((r) => r.status),
+      reasons: reasonRows.map((r) => r.reason),
+      subjects: questionsForSubjects.map((q) => q.subject),
+    };
+  }
+
+  /**
+   * User bao cao cau hoi sai/co van de.
+   *
+   * Quy tac bao cao lai 1 cau da tung bao cao:
+   *   - Neu report GAN NHAT cua user cho cau nay con PENDING (chua xu ly)
+   *     -> chan hoan toan (ReportAlreadySubmittedError), tranh spam nhieu report
+   *     trung cho cung 1 van de chua duoc xem xet.
+   *   - Neu report gan nhat DA duoc xu ly xong (FIXED/DISMISSED) va `confirmResubmit`
+   *     chua = true -> yeu cau xac nhan truoc (ReportResubmitConfirmRequiredError),
+   *     de FE hoi lai user "ban co muon bao cao lai khong?".
+   *   - Neu confirmResubmit=true (hoac chua tung bao cao lan nao) -> tao report MOI,
+   *     giu nguyen report cu (khong ghi de/xoa) de admin van xem duoc lich su.
+   */
   async reportQuestion(
     userId: string,
     questionId: string,
     reason: string,
     description?: string,
+    confirmResubmit = false,
   ): Promise<void> {
     const question = await prisma.question.findUnique({ where: { id: questionId } });
     if (!question) throw new QuestionNotFoundError(questionId);
@@ -950,14 +1215,21 @@ export class PracticeService {
     });
     if (!attempted) throw new QuestionNotAttemptedForReportError(questionId);
 
-    // Kiem tra da bao cao chua (check truoc de tranh write thua)
-    const existing = await prisma.questionReport.findUnique({
-      where: { userId_questionId: { userId, questionId } },
+    // Kiem tra report GAN NHAT cua user cho cau nay (khong con la unique tuyet doi
+    // nua - user co the co nhieu report theo thoi gian, chi 1 report PENDING tai
+    // 1 thoi diem duoc chan boi partial unique index o tang DB).
+    const latest = await prisma.questionReport.findFirst({
+      where: { userId, questionId },
+      orderBy: { createdAt: 'desc' },
     });
-    if (existing) throw new ReportAlreadySubmittedError();
+    if (latest) {
+      if (latest.status === 'PENDING') throw new ReportAlreadySubmittedError();
+      if (!confirmResubmit) throw new ReportResubmitConfirmRequiredError();
+    }
 
     // Catch P2002: truong hop 2 request song song cung vuot qua check tren
-    // → chi 1 create thanh cong, cai kia bi UNIQUE constraint → bao loi ro rang.
+    // → chi 1 create thanh cong (partial unique index tren (userId, questionId)
+    // WHERE status='PENDING'), cai kia bi loi ro rang.
     try {
       await prisma.questionReport.create({
         data: { questionId, userId, reason, description: description ?? null },

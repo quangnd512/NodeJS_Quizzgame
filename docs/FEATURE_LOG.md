@@ -6549,3 +6549,454 @@ Khi app mở lần đầu, `prevUnreadRef.current = -1` (chưa poll). Poll đầ
 | 1 | prevUnreadRef=0 → toast ngay khi mở app | Đổi thành -1 (sentinel "chưa poll") |
 | 2 | N lần INSERT trong NEW_EXAM_PAPER | Đổi sang createMany bulk |
 | 3 | setLoading() trong useEffect body vi phạm lint | Khởi tạo useState(true) |
+
+---
+
+## 14. Quản lý câu hỏi — Học sinh đóng góp câu hỏi + Thiết kế lại luồng xử lý báo cáo câu hỏi
+
+**Trạng thái:** ✅ Hoàn thành
+**Ngày hoàn thành:** 2026-07-13
+**Branch / commit liên quan:** `feature/question-management-hub` (commit chính: `d011674`, `8fdb36f`, `cf4d50d`, `dfd051f`, `3f34530`, fix race condition: `ffba1a0`)
+
+---
+
+### Tổng quan
+
+#### Vấn đề cần giải quyết
+
+Tính năng gộp 2 nhu cầu liên quan tới "câu hỏi" trong hệ thống:
+
+1. **Học sinh đóng góp câu hỏi**: Trước đây chỉ admin mới tạo được câu hỏi (qua Ngân hàng câu hỏi). Học sinh không có cách nào chủ động đóng góp nội dung, dù nhiều em có câu hỏi hay muốn chia sẻ. Cần một luồng: học sinh gửi → admin duyệt → vào kho + thưởng điểm.
+2. **Luồng xử lý báo cáo câu hỏi lỗi thời**: Trang admin cũ chỉ hiện `questionId` dạng UUID thô (admin phải tra cứu riêng mới biết nội dung câu hỏi), có 4 trạng thái rời rạc (PENDING/REVIEWED/FIXED/DISMISSED) nhưng không cho sửa nội dung câu hỏi ngay tại chỗ, và số liệu tổng hợp `pending`/`reviewed` dễ gây hiểu lầm (không rõ là đếm theo dòng báo cáo hay theo câu hỏi).
+
+#### Giải pháp được chọn
+
+**Phần A — Học sinh đóng góp câu hỏi (Submissions):**
+- Học sinh gửi câu hỏi theo 1 trong 3 dạng — MCQ_4 / TRUE_FALSE_4 / FILL_BLANK, dùng chung `validateQuestionShape()` với module Thi thử (`StudentQuestionSubmission`, status `PENDING`), tối đa 5 câu/ngày.
+- Học sinh có thể xem/sửa/xoá câu của mình khi còn `PENDING`.
+- Admin duyệt (`APPROVED` → tạo `QuestionBank` entry theo đúng dạng câu hỏi đã gửi + thưởng 30 điểm) hoặc từ chối (`REJECTED` kèm lý do bắt buộc).
+- Khi câu hỏi đã duyệt được admin **chủ động** thêm vào 1 đề thi thật (`addFromBank`), học sinh nhận thêm 5 điểm/lần, tối đa 100 điểm/câu.
+- Cảnh báo trùng lặp (không chặn): so khớp Jaccard similarity thô giữa câu gửi và các câu ACTIVE cùng môn trong kho, kèm hiển thị đầy đủ nội dung + đáp án của câu nghi trùng (không chỉ % tương đồng) để admin đối chiếu tại chỗ.
+- Lỗi vượt rate-limit 5 câu/ngày hiển thị dạng modal riêng (khác các lỗi validate thường hiện inline).
+
+> ⚠️ Cập nhật sau vòng test thủ công của S5 (xem mục "Cập nhật sau vòng test thủ công của S5" cuối phần này): bản đầu tiên chỉ hỗ trợ MCQ_4 4-đáp-án, cột lưu đáp án đúng là `correctOptionIndex` (Int). Đã đổi sang 3 dạng câu hỏi + cột `correctAnswer` (Json).
+
+**Phần B — Report Redesign:**
+- `GET /api/admin/questions/reports` JOIN thủ công với bảng `questions` → trả đầy đủ nội dung câu hỏi (không chỉ ID), thêm lọc theo `subject`/`reason`.
+- Thu gọn hành động admin: chỉ còn `FIXED` (đánh dấu đã sửa, có thể kèm sửa nội dung câu hỏi ngay tại form) và `DISMISSED` (bỏ qua) — bỏ hẳn `REVIEWED` khỏi luồng thao tác (giá trị cũ vẫn giữ trong constant cho dữ liệu lịch sử).
+- Endpoint gộp `PATCH /api/admin/questions/reports/:id/resolve`: 1 lần xử lý tự động đóng luôn mọi báo cáo `PENDING` khác cùng câu hỏi (batch), lưu snapshot nội dung cũ vào `question_edit_history` nếu có sửa, tự kích hoạt lại (`isActive=true`) câu hỏi nếu trước đó bị auto-hide.
+- `GET /api/admin/questions/reports/summary` tách rõ `pendingReports` (số dòng báo cáo) vs `pendingQuestions` (số câu hỏi khác nhau đang có báo cáo).
+- `GET /api/admin/questions/reports/facets` — lọc liên động (faceted filtering): mỗi dropdown (status/subject/reason) chỉ hiện giá trị thực sự khớp với 2 điều kiện lọc còn lại đang chọn.
+- Học sinh được phép báo cáo LẠI 1 câu đã từng báo cáo, nếu báo cáo trước đó đã xử lý xong (FIXED/DISMISSED) — kèm xác nhận trước khi gửi lại.
+- Trang Admin gộp "Bài học sinh gửi" + "Báo cáo lỗi" vào 1 tab cha **"Câu hỏi"** (trước đây 2 việc này không tồn tại chung 1 chỗ), có badge tổng số việc chờ xử lý.
+
+---
+
+### Phương án kỹ thuật được lựa chọn và lý do
+
+#### 1. Rate limit 5 câu/ngày bằng COUNT query, không dùng Redis
+
+**Phương án đã chọn:** `prisma.studentQuestionSubmission.count({ where: { userId, createdAt: { gte: startOfTodayUtc() } } })` mỗi lần tạo mới.
+
+**Lý do:** Khối lượng ghi rất thấp (tối đa 5 lần/học sinh/ngày), không đáng để thêm Redis key mới — pattern khác với rate limit luyện tập (Feature 011) vốn cần chặn nhanh trong 1 phiên hoạt động liên tục.
+
+#### 2. "Claim" pattern chống race condition khi admin duyệt/từ chối
+
+**Vấn đề:** 2 admin có thể cùng bấm duyệt/từ chối 1 submission gần như đồng thời (hoặc 1 người duyệt đúng lúc học sinh đang sửa/xoá).
+
+**Giải pháp:** Mọi thao tác ghi trên submission đều dùng `updateMany`/`deleteMany` với điều kiện `status: 'PENDING'` làm "claim" — chỉ request nào khớp điều kiện trước mới thành công (`count===1`), các request còn lại nhận `count===0` và ném lỗi `SubmissionNotPendingError` thay vì âm thầm ghi đè. Áp dụng cho: `approveSubmission`, `rejectSubmission`, `updateSubmission`, `deleteSubmission`.
+
+> Đây là lỗi S3 tìm thấy khi review (xem "Ghi chú kỹ thuật" bên dưới) — bản đầu tiên của S2 chỉ check status rồi ghi thường (TOCTOU).
+
+#### 3. Compare-And-Swap (CAS) cho điểm "usage" — chống lost update
+
+**Vấn đề:** 1 câu hỏi trong kho (bắt nguồn từ submission) có thể được thêm vào 2 đề thi khác nhau gần như đồng thời (2 request `addFromBank` song song) → nếu đọc `usagePointsEarned` rồi ghi đè bằng `update` thường, request sau có thể "đè" lên request trước (lost update), khiến tổng điểm ghi nhận thấp hơn thực tế và vô hiệu hoá dần trần 100đ/câu.
+
+**Giải pháp:** `awardUsagePointsForSubmission` đọc giá trị hiện tại rồi ghi bằng `updateMany({ where: { id, usagePointsEarned: <giá trị vừa đọc> } })` — chỉ 1 trong các lần ghi đồng thời thành công; các lần còn lại đọc lại giá trị mới nhất và thử lại, tối đa 5 lần (`MAX_CAS_RETRY`).
+
+#### 4. `computeDuplicateWarnings` — 1 query cho toàn trang, so khớp in-memory
+
+**Phương án đã chọn:** Lấy toàn bộ câu hỏi ACTIVE cùng môn (1 lần `findMany`), rồi so khớp Jaccard similarity trong bộ nhớ cho từng submission trong trang hiện tại.
+
+**Phương án bị loại:** Query riêng cho từng submission (N+1).
+
+**Lý do:** Khối lượng dữ liệu nhỏ (kho câu hỏi 1 môn thường vài trăm câu, trang admin tối đa 100 item) — so khớp in-memory rẻ hơn nhiều so với N query DB.
+
+#### 5. `joinReportsWithQuestions` — JOIN thủ công thay vì thêm Prisma relation
+
+**Lý do:** `QuestionReport` không có relation chính thức tới `Question` trong schema hiện tại (thiết kế cũ). Thay vì thêm migration relation (rủi ro hơn, phải sửa constraint dữ liệu cũ), chọn cách JOIN thủ công: lấy toàn bộ `questionId` duy nhất trong trang, `findMany` 1 lần, ráp bằng `Map` trong bộ nhớ. Báo cáo nào trỏ tới câu hỏi không còn tồn tại (rất hiếm — hệ thống không hard-delete `Question`) sẽ bị bỏ qua an toàn thay vì làm sập request.
+
+#### 6. Giữ `updateReport()` cũ nội bộ, chỉ gỡ route HTTP
+
+**Lý do:** `updateReport()` (nhận cả 4 trạng thái kể cả `REVIEWED`) vẫn được dùng bởi `smoke-test-question-reports.ts` và có thể còn dữ liệu lịch sử ở trạng thái `REVIEWED`. Route mới `resolveReport()` (chỉ nhận `FIXED`/`DISMISSED`) thay thế hoàn toàn ở tầng HTTP (route cũ `PATCH /api/admin/questions/reports/:id` đã bị xoá), nhưng hàm cũ không bị xoá khỏi service để tránh phá vỡ script nội bộ — đây là quyết định có chủ đích, không phải nợ kỹ thuật bị bỏ sót (đã xác nhận lại trong review S3).
+
+---
+
+### Data Model
+
+#### Bảng `student_question_submissions`
+
+| Field | Type | Mô tả |
+|-------|------|-------|
+| `id` | `TEXT` PK | UUID tự sinh |
+| `userId` | `TEXT` FK → `users.id` (cascade delete) | Học sinh gửi câu hỏi |
+| `subject` | `TEXT` | Mã môn học (khớp `SUBJECT_CATALOG`) |
+| `chapter` | `TEXT` nullable | Chương/chủ đề (tuỳ chọn) — **đã bỏ khỏi form gửi** sau vòng test S5, cột vẫn còn trong DB (luôn `null` cho submission mới) |
+| `questionType` | `TEXT` | `MCQ_4` \| `TRUE_FALSE_4` \| `FILL_BLANK` (thêm sau vòng test S5, migration `20260713100000`) |
+| `questionText` | `TEXT` | Nội dung câu hỏi |
+| `options` | `JSONB` nullable | Mảng đáp án dạng string; `null` khi `questionType=FILL_BLANK` |
+| `correctAnswer` | `JSONB` | Đáp án đúng — hình dạng phụ thuộc `questionType` (đổi từ `correctOptionIndex: Int` sau vòng test S5, dùng chung `validateQuestionShape()` với module Thi thử) |
+| `status` | `TEXT` default `PENDING` | `PENDING` \| `APPROVED` \| `REJECTED` |
+| `adminNote` | `TEXT` nullable | Bắt buộc khi `REJECTED` (lý do), tuỳ chọn khi `APPROVED` |
+| `questionBankId` | `TEXT` nullable FK → `question_bank.id` | Bản ghi kho được tạo ra sau khi duyệt |
+| `usageCount` | `INT` default `0` | Số lần câu hỏi (đã duyệt) được thêm vào 1 đề thi thật |
+| `usagePointsEarned` | `INT` default `0` | Tổng điểm "usage" đã nhận, tối đa 100 |
+| `createdAt` / `updatedAt` | `TIMESTAMP` | |
+
+**Index:** `(userId, status, createdAt)` — phục vụ danh sách theo học sinh + đếm rate limit; `(questionBankId)` — tra cứu ngược từ kho câu hỏi về submission gốc (dùng trong usage points trigger).
+
+#### Bảng `question_edit_history`
+
+| Field | Type | Mô tả |
+|-------|------|-------|
+| `id` | `TEXT` PK | UUID tự sinh |
+| `questionId` | `TEXT` | ID câu hỏi bị sửa (bảng `questions`) |
+| `reportId` | `TEXT` nullable | Báo cáo dẫn tới lần sửa này (null nếu sửa không qua luồng báo cáo) |
+| `beforeData` | `JSONB` | Snapshot TOÀN BỘ field của `Question` TRƯỚC khi sửa |
+| `createdAt` | `TIMESTAMP` | |
+
+**Index:** `(questionId, createdAt)` — truy vấn lịch sử sửa theo từng câu hỏi, mới nhất trước.
+
+#### Enum `NotificationType` (+3 giá trị mới)
+
+| Giá trị | Khi nào trigger |
+|---------|----------------|
+| `SUBMISSION_APPROVED` | Câu hỏi học sinh gửi được admin duyệt |
+| `SUBMISSION_REJECTED` | Câu hỏi học sinh gửi bị admin từ chối (kèm lý do trong `body`) |
+| `SUBMISSION_USED` | Câu hỏi (đã duyệt) được dùng trong 1 đề thi thật |
+
+#### Hằng số quan trọng (`submission.types.ts`)
+
+| Hằng số | Giá trị | Ý nghĩa |
+|---------|---------|---------|
+| `SUBMISSION_DAILY_LIMIT` | 5 | Số câu tối đa 1 học sinh gửi trong 1 ngày (UTC) |
+| `SUBMISSION_APPROVE_POINTS` | 30 | Điểm thưởng khi câu được duyệt |
+| `SUBMISSION_USAGE_POINTS_PER_USE` | 5 | Điểm thưởng mỗi lần câu (đã duyệt) được dùng trong đề thi |
+| `SUBMISSION_USAGE_POINTS_CAP` | 100 | Trần tổng điểm usage cho 1 câu |
+| `SUBMISSION_DUPLICATE_SIMILARITY_THRESHOLD` | 0.6 | Ngưỡng Jaccard similarity để cảnh báo trùng lặp |
+| `DEFAULT_APPROVED_DIFFICULTY` | 2 (Trung bình) | Độ khó mặc định khi tạo `QuestionBank` từ submission — admin có thể sửa lại sau |
+
+---
+
+### API Reference
+
+| Method | Path | Auth | Mô tả |
+|--------|------|------|-------|
+| `POST` | `/api/submissions` | Bearer token | Học sinh gửi câu hỏi mới |
+| `GET` | `/api/submissions` | Bearer token | Danh sách câu đã gửi của mình (phân trang, lọc status) |
+| `GET` | `/api/submissions/:id` | Bearer token (chủ sở hữu) | Chi tiết 1 câu đã gửi |
+| `PUT` | `/api/submissions/:id` | Bearer token (chủ sở hữu, chỉ khi PENDING) | Sửa câu đã gửi |
+| `DELETE` | `/api/submissions/:id` | Bearer token (chủ sở hữu, chỉ khi PENDING) | Xoá câu đã gửi |
+| `GET` | `/api/admin/submissions` | X-Admin-Secret | Danh sách toàn bộ câu học sinh gửi (kèm cảnh báo trùng) |
+| `POST` | `/api/admin/submissions/:id/approve` | X-Admin-Secret | Duyệt câu gửi |
+| `POST` | `/api/admin/submissions/:id/reject` | X-Admin-Secret | Từ chối câu gửi (bắt buộc `note`) |
+| `GET` | `/api/admin/questions/reports` | X-Admin-Secret | Danh sách báo cáo lỗi câu hỏi (kèm đầy đủ nội dung câu hỏi, lọc status/subject/reason) |
+| `GET` | `/api/admin/questions/reports/summary` | X-Admin-Secret | Tổng hợp thống kê báo cáo |
+| `GET` | `/api/admin/questions/reports/facets` | X-Admin-Secret | Giá trị khả dụng cho 3 dropdown lọc (status/subject/reason) theo kiểu lọc liên động — thêm sau vòng test S5 |
+| `PATCH` | `/api/admin/questions/reports/:id/resolve` | X-Admin-Secret | Xử lý 1 báo cáo (FIXED/DISMISSED), có thể kèm sửa nội dung câu hỏi |
+| `POST` | `/api/practice/questions/:id/report` | Bearer token | Học sinh báo cáo câu hỏi; nhận thêm `confirmResubmit?: boolean` — thêm sau vòng test S5 để cho phép báo cáo lại câu đã có report cũ đã xử lý xong |
+
+> ⚠️ **Breaking change:** Route cũ `PATCH /api/admin/questions/reports/:id` (nhận `status` bất kỳ trong 4 giá trị, không hỗ trợ sửa nội dung) đã bị **xoá hoàn toàn**, thay bằng `PATCH /api/admin/questions/reports/:id/resolve` (chỉ nhận `FIXED`/`DISMISSED`). `GET .../summary` đổi field `pending`→`pendingReports`, `reviewed`→`pendingQuestions` (ý nghĩa khác hẳn, không phải đổi tên đơn thuần).
+
+#### POST /api/submissions
+
+**Request** (cập nhật sau vòng test S5 — `questionType` + `correctAnswer` thay cho `correctOptionIndex` cố định MCQ):
+```json
+{
+  "subject": "TOAN",
+  "questionType": "MCQ_4",
+  "questionText": "Đạo hàm của hàm số y = x^2 là gì?",
+  "options": ["y' = x", "y' = 2x", "y' = x^2", "y' = 2"],
+  "correctAnswer": 1
+}
+```
+Với `questionType: "FILL_BLANK"`, `options` phải là `null`/bỏ qua và `correctAnswer` là chuỗi đáp án; hình dạng hợp lệ theo từng `questionType` được kiểm tra bởi `validateQuestionShape()` (dùng chung với module Thi thử).
+
+**Response 201:**
+```json
+{ "id": "c1a2b3c4-...", "status": "PENDING", "createdAt": "2026-07-13T08:30:00.000Z" }
+```
+
+**Luồng xử lý:** Kiểm tra `assertUnderDailyLimit` (COUNT submission hôm nay của user, UTC) → nếu ≥5 ném lỗi → `validateQuestionShape()` → `prisma.studentQuestionSubmission.create()`.
+
+**Error codes:**
+- `400 VALIDATION_ERROR` — thiếu field / hình dạng `options`/`correctAnswer` không khớp `questionType` / môn không hợp lệ (Zod + `validateQuestionShape`)
+- `400 SUBMISSION_RATE_LIMIT_EXCEEDED` — đã gửi đủ 5 câu hôm nay (frontend hiện modal riêng, không phải lỗi inline)
+- `401 MISSING_AUTH_TOKEN` / `401 INVALID_SESSION_TOKEN`
+
+#### POST /api/admin/submissions/:id/approve
+
+**Response 200:**
+```json
+{ "id": "c1a2b3c4-...", "status": "APPROVED", "questionBankId": "f9e8d7c6-..." }
+```
+
+**Luồng xử lý:**
+1. Transaction: "claim" submission (`updateMany` status PENDING→APPROVED) → tạo `QuestionBank` entry (`questionType` = đúng dạng học sinh đã chọn, `difficulty=2`, `isActive=true`) → gắn `questionBankId` vào submission
+2. Fire-and-forget: `pointsService.addPoints(userId, 30, SUBMISSION_APPROVED)` + `notificationService.createNotification(SUBMISSION_APPROVED)`
+
+**Error codes:** `401`, `404 SUBMISSION_NOT_FOUND`, `409 SUBMISSION_NOT_PENDING` (đã bị admin khác xử lý, hoặc học sinh vừa sửa/xoá)
+
+#### POST /api/admin/submissions/:id/reject
+
+**Request:** `{ "note": "Câu hỏi trùng với câu đã có trong kho." }`
+
+**Response 200:** `{ "id": "c1a2b3c4-...", "status": "REJECTED" }`
+
+**Error codes:** `400 SUBMISSION_REJECT_NOTE_REQUIRED` (thiếu/rỗng `note`), `401`, `404 SUBMISSION_NOT_FOUND`, `409 SUBMISSION_NOT_PENDING`
+
+#### GET /api/admin/questions/reports
+
+**Query:** `status`, `subject`, `reason`, `page`, `limit`
+
+**Response 200 (rút gọn 1 item):**
+```json
+{
+  "items": [
+    {
+      "id": "r1...",
+      "questionId": "q1...",
+      "userId": "u1...",
+      "reason": "WRONG_ANSWER",
+      "description": "Đáp án đúng phải là B chứ không phải A",
+      "status": "PENDING",
+      "createdAt": "2026-07-12T10:00:00.000Z",
+      "question": {
+        "subject": "TOAN",
+        "chapter": "Hàm số",
+        "difficulty": 2,
+        "question": "Đạo hàm của y = x^2 là?",
+        "options": ["y'=x", "y'=2x", "y'=x^2", "y'=2"],
+        "correctAnswer": 0,
+        "explanation": null,
+        "isActive": true
+      }
+    }
+  ],
+  "total": 1
+}
+```
+
+#### PATCH /api/admin/questions/reports/:id/resolve
+
+**Request (bỏ qua, không sửa nội dung):**
+```json
+{ "status": "DISMISSED" }
+```
+
+**Request (đánh dấu đã sửa, kèm sửa nội dung câu hỏi):**
+```json
+{
+  "status": "FIXED",
+  "questionUpdate": { "correctAnswer": 1 }
+}
+```
+
+**Response 200:**
+```json
+{ "id": "r1...", "status": "FIXED", "batchResolvedCount": 2, "reactivated": true }
+```
+
+**Luồng xử lý:** (xem "Luồng chạy" bên dưới)
+
+**Error codes:** `400 VALIDATION_ERROR` (gửi `status: "REVIEWED"` — không còn được chấp nhận), `401`, `404 QUESTION_REPORT_NOT_FOUND`
+
+---
+
+### Luồng chạy (Flow)
+
+#### Luồng duyệt câu hỏi học sinh gửi (approve)
+
+```
+Admin bấm "✅ Duyệt"
+       │
+       ▼
+POST /api/admin/submissions/:id/approve
+       │
+       ▼
+findUnique submission → kiểm tra tồn tại + status===PENDING (pre-check nhanh)
+       │
+       ▼
+┌─────────────── $transaction ───────────────┐
+│ updateMany({ id, status:'PENDING' },        │  ← "claim": nếu count=0 (bị xử lý
+│             { status:'APPROVED' })          │     trước đó) → throw ngay, dừng
+│       │ count=1 (claim thành công)          │
+│       ▼                                     │
+│ questionBank.create({ MCQ_4, isActive:true})│
+│       │                                     │
+│       ▼                                     │
+│ submission.update({ questionBankId })       │
+└──────────────────┬───────────────────────────┘
+                    │
+                    ▼ (response trả về ngay, không đợi bước dưới)
+       void fireApprovedRewards(userId, id, questionBankId)
+                    │
+          ┌─────────┴─────────┐
+          ▼                   ▼
+   pointsService.addPoints   notificationService.createNotification
+   (+30đ, SUBMISSION_APPROVED)  (type=SUBMISSION_APPROVED, targetScreen=null)
+```
+
+#### Luồng câu hỏi được dùng trong đề thi (usage points)
+
+```
+Admin bấm "Thêm vào đề thi" (addFromBank) — chọn N câu từ kho
+       │
+       ▼
+┌────────── $transaction ──────────┐
+│ Lọc câu chưa có trong đề           │
+│ createMany ExamQuestion            │
+│ trả về insertedBankIds             │
+└──────────────┬─────────────────────┘
+               │
+               ▼ (response trả về ngay)
+     void fireUsagePointsTrigger(insertedBankIds)
+               │
+               ▼
+     findMany StudentQuestionSubmission
+     WHERE questionBankId IN (insertedBankIds) AND status='APPROVED'
+               │
+               ▼ (với mỗi submission tìm được)
+     awardUsagePointsForSubmission(submissionId)
+               │
+               ▼
+     ┌─── vòng lặp tối đa 5 lần (CAS) ───┐
+     │ đọc usagePointsEarned hiện tại      │
+     │ pointsToAdd = min(5, 100 - hiện tại)│
+     │ pointsToAdd<=0? → dừng, không cộng  │
+     │ updateMany({ id,                    │
+     │   usagePointsEarned: <giá trị cũ> },│  ← điều kiện WHERE = giá trị vừa đọc
+     │   { usageCount:+1, usagePointsEarned:│     (CAS: chỉ 1 request thắng)
+     │     newTotal })                      │
+     │ count=0? → đọc lại, thử lại          │
+     │ count=1? → addPoints + notify → return│
+     └──────────────────────────────────────┘
+```
+
+#### Luồng resolve báo cáo (kèm sửa nội dung + batch)
+
+```
+Admin bấm "✏️ Sửa & Đánh dấu đã sửa" (hoặc "Bỏ qua")
+       │
+       ▼
+PATCH /api/admin/questions/reports/:id/resolve
+{ status: FIXED|DISMISSED, questionUpdate?: {...} }
+       │
+       ▼
+findUnique report → 404 nếu không tồn tại
+       │
+┌──────────────────── $transaction ────────────────────┐
+│ findUnique Question hiện tại (currentQuestion)         │
+│       │                                                │
+│       ├─ có questionUpdate? ─YES→ questionEditHistory  │
+│       │                          .create({ beforeData: │
+│       │                          <snapshot TOÀN BỘ     │
+│       │                          field currentQuestion>})│
+│       │                                                │
+│       ▼                                                │
+│ shouldReactivate = status===FIXED && !currentQuestion. │
+│                     isActive                            │
+│       │                                                │
+│       ├─ questionUpdate hoặc shouldReactivate? ─YES→   │
+│       │      question.update({ ...questionUpdate,      │
+│       │                        isActive: true (nếu     │
+│       │                        shouldReactivate) })     │
+│       ▼                                                │
+│ questionReport.update({ id: reportId, status })        │
+│       │                                                │
+│       ▼                                                │
+│ findMany report KHÁC cùng questionId, status=PENDING    │
+│       │                                                │
+│       ├─ others.length>0? ─YES→ updateMany(others→status)│
+│       ▼                                                │
+│ return { batchResolvedCount, reactivated, othersToNotify}│
+└─────────────────────┬──────────────────────────────────┘
+                       │
+                       ▼ (response trả về ngay)
+        void fireReportResolvedNotification(report chính)
+        for each other in othersToNotify:
+            void fireReportResolvedNotification(other)
+        (mỗi người báo cáo nhận 1 thông báo REPORT_RESOLVED riêng)
+```
+
+---
+
+### File Structure
+
+| File | Vai trò |
+|------|---------|
+| `backend/prisma/schema.prisma` | +model `StudentQuestionSubmission`, +model `QuestionEditHistory`, +3 giá trị enum `NotificationType`, +relation `QuestionBank.submissions` |
+| `backend/prisma/migrations/20260713025009_add_student_submissions_and_edit_history/migration.sql` | Tạo 2 bảng mới + FK + index + enum values (áp dụng thủ công qua `prisma migrate diff` + `db execute` + `migrate resolve`, xem commit `d011674`) |
+| `backend/prisma/migrations/20260713100000_submission_question_types/migration.sql` | Đổi `correctOptionIndex`(Int)→`correctAnswer`(Json), `options` thành nullable, thêm cột `questionType` — thêm sau vòng test S5 |
+| `backend/prisma/migrations/20260714000000_report_resubmit_after_resolved/migration.sql` | Raw SQL: xoá `UNIQUE(userId, questionId)` toàn phần, tạo partial unique index `WHERE status='PENDING'` — thêm sau vòng test S5 |
+| `backend/src/services/submission/submission.types.ts` | Types + hằng số: `SubmissionDto`, `SUBMISSION_DAILY_LIMIT`, `SUBMISSION_APPROVE_POINTS`, `SUBMISSION_USAGE_POINTS_PER_USE`, `SUBMISSION_USAGE_POINTS_CAP`, ngưỡng trùng lặp |
+| `backend/src/services/submission/submission.errors.ts` | 5 error class: `SubmissionNotFoundError`, `NotOwnedError`, `NotPendingError`, `RateLimitError`, `RejectNoteRequiredError` |
+| `backend/src/services/submission/submission.service.ts` | CRUD học sinh + duyệt/từ chối admin + cảnh báo trùng lặp + claim pattern chống race condition |
+| `backend/src/services/submission/__tests__/submission.service.test.ts` | Unit test (bao gồm 5 test race-condition + 1 test boundary rate-limit của S3) |
+| `backend/src/routes/submission.route.ts` | 5 route học sinh (`verifyAppToken`) |
+| `backend/src/routes/admin-submission.route.ts` | 3 route admin (`verifyAdminSecret`) |
+| `backend/src/utils/text-similarity.utils.ts` | `normalizeText()` + `textSimilarity()` — Jaccard similarity trên tập từ đã chuẩn hoá (bỏ dấu, viết thường) |
+| `backend/src/utils/__tests__/text-similarity.utils.test.ts` | 10 unit test (file mới, viết bởi S3) |
+| `backend/src/services/exam/question-bank.service.ts` | `+fireUsagePointsTrigger`, `+awardUsagePointsForSubmission` (CAS retry) — hook vào cuối `addFromBank()` |
+| `backend/src/services/exam/__tests__/question-bank.service.test.ts` | File test mới hoàn toàn (5 test CAS, viết bởi S3) |
+| `backend/src/services/practice/practice.service.ts` | `+resolveReport()` (endpoint gộp mới), `+joinReportsWithQuestions()`, `listReports()` thêm lọc subject/reason, `getReportsSummary()` tách `pendingReports`/`pendingQuestions`; `updateReport()` cũ giữ nguyên nội bộ (không còn route HTTP) |
+| `backend/src/services/practice/practice.types.ts` | `+QuestionReportQuestionDto`, `+ListReportsParams`, `+RESOLVABLE_REPORT_STATUSES`, `+ResolveReportQuestionUpdate`, `+ResolveReportResult`; `QuestionReportSummary` đổi field |
+| `backend/src/services/practice/practice.errors.ts` | `+QuestionReportNotFoundError` |
+| `backend/src/routes/admin.route.ts` | Route reports: thêm lọc subject/reason, đổi `PATCH .../:id` → `PATCH .../:id/resolve` với schema mới (`resolveReportSchema`) |
+| `backend/src/services/points/points.types.ts` | `+PointReason.SUBMISSION_APPROVED`, `+PointReason.SUBMISSION_USED` |
+| `backend/src/services/notification/notification.types.ts` | `+3` shape metadata cho `SUBMISSION_APPROVED`/`REJECTED`/`USED` |
+| `backend/src/app.ts` | Đăng ký `submissionRouter`, `adminSubmissionRouter`; `+6` error code mapping mới (`SUBMISSION_*`, `QUESTION_REPORT_NOT_FOUND`) |
+| `frontend/src/lib/api.ts` | +API functions cho submissions (học sinh + admin) + đổi `adminUpdateReportStatus`→`adminResolveReport`, types tương ứng |
+| `frontend/src/App.tsx` | +`SubmissionsPage`/`SubmissionFormFields`/`SubmissionListSection` (học sinh); +`AdminQuestionManagementPage` (gộp tab), `AdminSubmissionsPage`, `AdminReportResolveForm` (sửa tại chỗ); nút "✍️ Gửi câu hỏi" ở `ProfilePage`; badge tổng chờ xử lý trên tab admin "Câu hỏi" |
+| `frontend/src/App.css` | +CSS cho badge tab admin (`admin-tab-badge`) |
+| `docs/api/drafts/quan-ly-cau-hoi.yaml` | API contract (tạo bởi S1, verify bởi S3) |
+
+---
+
+### Cập nhật sau vòng test thủ công của S5 (2026-07-14)
+
+137/137 unit test PASS và review S3 (3 race condition đã sửa) không phát hiện các điểm dưới đây — đều lộ ra khi test thủ công đối chiếu với kỳ vọng người dùng thực tế, không phải bug logic thuần tuý.
+
+1. **Bỏ trường "Chương" khỏi form gửi câu hỏi + thêm chọn dạng câu hỏi**: bản đầu tiên chỉ hỗ trợ MCQ_4 (`correctOptionIndex: Int`). Đổi sang 3 dạng MCQ_4/TRUE_FALSE_4/FILL_BLANK dùng chung `validateQuestionShape()` với module Thi thử, đồng nghĩa đổi cột `correctOptionIndex` → `correctAnswer` (Json), `options` thành nullable. Migration: `20260713100000_submission_question_types`.
+2. **Cho phép báo cáo lại câu đã từng báo cáo, nếu report cũ đã xử lý xong**: đổi `UNIQUE(userId, questionId)` toàn phần → **partial unique index** `WHERE status='PENDING'` (xem Glossary "Partial Unique Index"). Lỗi mới `REPORT_RESUBMIT_CONFIRM_REQUIRED` (409) — frontend hỏi xác nhận qua `confirm()` trước khi gửi lại. Migration: `20260714000000_report_resubmit_after_resolved`.
+3. **Lỗi vượt rate-limit hiện modal riêng** thay vì chữ đỏ inline như các lỗi validate khác — vì đây là giới hạn cứng (chờ đến ngày mai), không phải lỗi "sửa rồi thử lại ngay".
+4. **Cảnh báo trùng lặp kèm nội dung + đáp án đầy đủ** của câu nghi trùng trong Ngân hàng câu hỏi (`computeDuplicateWarnings` trả thêm `questionType`/`options`/`correctAnswer`, không chỉ `similarity`) — admin đối chiếu tại chỗ, không cần mở riêng trang Ngân hàng câu hỏi.
+5. **Lọc liên động 3 dropdown** (status/subject/reason) ở trang Báo cáo lỗi — endpoint mới `GET /api/admin/questions/reports/facets` (xem Glossary "Faceted Filtering").
+
+Xem chi tiết bài học tại `docs/LESSONS_LEARNED.md` — mục "Vòng 14: Quản lý câu hỏi — bài học bổ sung từ S5 testing".
+
+---
+
+### Ghi chú kỹ thuật
+
+**3 race condition S3 phát hiện và sửa (xem `docs/CODE_REVIEW_LOG.md` mục "Review: Feature 014"):**
+
+| # | Vị trí | Vấn đề | Cách sửa |
+|---|--------|--------|----------|
+| 1 | `question-bank.service.ts` `fireUsagePointsTrigger` | Lost update trên `usagePointsEarned` khi 2 `addFromBank` chạy song song cho cùng 1 câu | Đổi sang CAS (`updateMany` điều kiện giá trị cũ, retry tối đa 5 lần) |
+| 2 | `submission.service.ts` `approveSubmission` | Check status ngoài transaction (TOCTOU) — 2 admin duyệt trùng 1 submission → tạo 2 `QuestionBank` + thưởng điểm 2 lần | Thêm bước "claim" bằng `updateMany({status:'PENDING'})` đầu transaction |
+| 3 | `submission.service.ts` `rejectSubmission`/`updateSubmission`/`deleteSubmission` | Cùng pattern TOCTOU — sửa/xoá/từ chối "hụt" khi submission vừa bị xử lý xong | Đổi `update`/`delete` đơn thành `updateMany`/`deleteMany` có điều kiện `status:'PENDING'` |
+
+**Vì sao dùng `updateMany`/`deleteMany` thay vì `update`/`delete` để chống race condition:**
+Prisma `update`/`delete` theo `id` đơn thuần sẽ **ném lỗi runtime** nếu bản ghi không còn khớp điều kiện tại thời điểm ghi (`RecordNotFound`) — nhưng bản thân câu lệnh vẫn có thể "trúng" 1 bản ghi đã đổi trạng thái nếu chỉ where theo `id`. `updateMany`/`deleteMany` với điều kiện đầy đủ (`id` + `status: 'PENDING'`) trả về `count` thay vì ném lỗi — cho phép code chủ động kiểm tra "mình có thực sự là người thắng cuộc đua hay không" bằng 1 lần round-trip DB duy nhất, không cần transaction riêng lồng nhau.
+
+**Vì sao không dùng optimistic lock kiểu version column cho `usagePointsEarned`:**
+CAS trực tiếp trên chính giá trị nghiệp vụ (`usagePointsEarned`) đơn giản hơn thêm cột `version` mới — vì giá trị này đơn điệu tăng và ta chỉ cần đảm bảo "ghi dựa trên đúng giá trị vừa đọc", không cần theo dõi lịch sử thay đổi.
+
+**`joinReportsWithQuestions` bỏ qua báo cáo mồ côi:** Nếu `questionId` của 1 báo cáo không còn tồn tại trong bảng `questions` (trường hợp lý thuyết — hệ thống hiện tại không hard-delete `Question`), báo cáo đó bị lọc khỏi kết quả thay vì làm lỗi cả trang. Admin sẽ không thấy báo cáo mồ côi này, nhưng dữ liệu vẫn còn nguyên trong DB (không mất mát).
+
+**`REPORT_STATUSES` (4 giá trị) vs `RESOLVABLE_REPORT_STATUSES` (2 giá trị):** Constant cũ `REPORT_STATUSES = ['PENDING','REVIEWED','FIXED','DISMISSED']` vẫn giữ nguyên (phục vụ dữ liệu lịch sử có thể còn ở trạng thái `REVIEWED`), nhưng route `PATCH .../resolve` chỉ validate qua `RESOLVABLE_REPORT_STATUSES = ['FIXED','DISMISSED']` — không cho phép admin ghi lại `REVIEWED` qua API mới.
+
+**Không đồng bộ nội dung câu hỏi vào lịch sử luyện tập cũ:** Đã xác minh hệ thống không lưu snapshot nội dung câu hỏi ở `UserQuestionHistory` — nên khi admin sửa `Question` qua `resolveReport`, mọi nơi hiển thị câu hỏi này (kể cả lịch sử cũ) tự động phản ánh nội dung mới. Đây là hành vi được xác nhận CÓ CHỦ ĐÍCH (ghi rõ trong `docs/api/drafts/quan-ly-cau-hoi.yaml` mục "notes"), không phải side-effect ngoài ý muốn.
+
+**Lint không chạy được trong review S3:** `eslint` bị treo vô thời hạn do tranh chấp tài nguyên khi nhiều session chạy song song trong cùng sandbox (không phải lỗi code) — S3 đã bù bằng `tsc` strict (`noUnusedLocals`/`noUnusedParameters`) sạch + rà thủ công toàn diff. Xem chi tiết `docs/CODE_REVIEW_LOG.md`.
