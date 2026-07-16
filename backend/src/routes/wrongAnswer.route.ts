@@ -1,12 +1,17 @@
 // Routes cho module Ôn câu sai (Wrong Answer Review).
-// Tất cả route đều yêu cầu verifyAppToken (đã đăng nhập).
+// Tất cả route đều yêu cầu verifyAppToken (đã đăng nhập) VÀ Premium (Feature 015 —
+// tính năng này bị khoá hoàn toàn cho Free).
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { verifyAppToken } from '../middleware/auth.middleware.js';
+import { requirePremium } from '../middleware/premium.middleware.js';
 import { wrongAnswerService } from '../services/wrongAnswer/wrongAnswer.service.js';
+import { WrongAnswerReviewPremiumOnlyError } from '../services/wrongAnswer/wrongAnswer.errors.js';
 
 export const wrongAnswerRouter = Router();
 
 wrongAnswerRouter.use(verifyAppToken);
+// Gate Premium — chan hoan toan cho Free (khong chi an UI, chan tu backend).
+wrongAnswerRouter.use(requirePremium(() => new WrongAnswerReviewPremiumOnlyError()));
 
 // ---------------------------------------------------------------------------
 // GET /api/wrong-answers
