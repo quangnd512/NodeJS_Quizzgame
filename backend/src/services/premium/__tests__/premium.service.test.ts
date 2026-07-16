@@ -9,6 +9,7 @@ vi.mock('../../../lib/prisma.js', () => ({
     },
     user: {
       update: vi.fn(),
+      findMany: vi.fn(),
     },
   },
 }));
@@ -28,7 +29,7 @@ import { InvalidPremiumMonthsError } from '../premium.errors.js';
 
 const prismaMock = prisma as unknown as {
   appSettings: { upsert: ReturnType<typeof vi.fn> };
-  user: { update: ReturnType<typeof vi.fn> };
+  user: { update: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
 };
 
 const notificationMock = notificationService as unknown as {
@@ -263,5 +264,77 @@ describe('grantPremiumMonths', () => {
     const result = await premiumService.grantPremiumMonths(user, 1);
 
     expect(result.id).toBe('user-1');
+  });
+});
+
+// ─── notifyExpiringPremiumUsers (cron hằng ngày) ────────────────────────────
+
+describe('notifyExpiringPremiumUsers', () => {
+  it('✅ Happy: user sắp hết hạn trong 24h chưa từng cảnh báo → gửi thông báo + set premiumExpiryWarnedAt', async () => {
+    const expiringUser = { id: 'user-1', premiumExpiresAt: new Date(Date.now() + 10 * 60 * 60 * 1000) };
+    prismaMock.user.findMany.mockResolvedValue([expiringUser]);
+    prismaMock.user.update.mockResolvedValue({});
+
+    const count = await premiumService.notifyExpiringPremiumUsers();
+
+    expect(count).toBe(1);
+    expect(notificationMock.createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user-1', type: 'PREMIUM_EXPIRING_SOON' }),
+    );
+    expect(prismaMock.user.update).toHaveBeenCalledWith({
+      where: { id: 'user-1' },
+      data: { premiumExpiryWarnedAt: expect.any(Date) },
+    });
+  });
+
+  it('✅ Happy: query đúng điều kiện — premiumExpiresAt trong (now, now+24h] VÀ premiumExpiryWarnedAt=null', async () => {
+    prismaMock.user.findMany.mockResolvedValue([]);
+
+    await premiumService.notifyExpiringPremiumUsers();
+
+    const whereArg = prismaMock.user.findMany.mock.calls[0]![0].where;
+    expect(whereArg.premiumExpiryWarnedAt).toBeNull();
+    expect(whereArg.premiumExpiresAt.gt).toBeInstanceOf(Date);
+    expect(whereArg.premiumExpiresAt.lte).toBeInstanceOf(Date);
+    // Cua so quet dung 24h
+    const windowMs = whereArg.premiumExpiresAt.lte.getTime() - whereArg.premiumExpiresAt.gt.getTime();
+    expect(windowMs).toBe(24 * 60 * 60 * 1000);
+  });
+
+  it('⚠️ Edge: không có user nào sắp hết hạn → trả về 0, không gọi update/notification', async () => {
+    prismaMock.user.findMany.mockResolvedValue([]);
+
+    const count = await premiumService.notifyExpiringPremiumUsers();
+
+    expect(count).toBe(0);
+    expect(prismaMock.user.update).not.toHaveBeenCalled();
+    expect(notificationMock.createNotification).not.toHaveBeenCalled();
+  });
+
+  it('⚠️ Edge: lỗi tạo thông báo cho 1 user KHÔNG làm hỏng vòng quét (vẫn set warnedAt, vẫn đếm đúng)', async () => {
+    prismaMock.user.findMany.mockResolvedValue([
+      { id: 'user-1', premiumExpiresAt: new Date(Date.now() + 5 * 60 * 60 * 1000) },
+    ]);
+    prismaMock.user.update.mockResolvedValue({});
+    notificationMock.createNotification.mockRejectedValue(new Error('DB down'));
+
+    const count = await premiumService.notifyExpiringPremiumUsers();
+
+    expect(count).toBe(1);
+    expect(prismaMock.user.update).toHaveBeenCalled();
+  });
+
+  it('⚠️ Edge: nhiều user sắp hết hạn → xử lý và đếm đúng tất cả', async () => {
+    prismaMock.user.findMany.mockResolvedValue([
+      { id: 'user-1', premiumExpiresAt: new Date(Date.now() + 3 * 60 * 60 * 1000) },
+      { id: 'user-2', premiumExpiresAt: new Date(Date.now() + 20 * 60 * 60 * 1000) },
+    ]);
+    prismaMock.user.update.mockResolvedValue({});
+
+    const count = await premiumService.notifyExpiringPremiumUsers();
+
+    expect(count).toBe(2);
+    expect(notificationMock.createNotification).toHaveBeenCalledTimes(2);
+    expect(prismaMock.user.update).toHaveBeenCalledTimes(2);
   });
 });

@@ -210,6 +210,56 @@ async function grantPremiumMonths(user: User, months: number): Promise<GrantPrem
   };
 }
 
+/** So mili-giay trong 24 gio - dung cho cua so quet cua cron canh bao sap het han. */
+const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * [Goi boi cron hang ngay trong server.ts] Quet cac user co premiumExpiresAt
+ * roi vao khoang (now, now+24h] VA premiumExpiryWarnedAt con null (chua tung
+ * canh bao cho HAN HIEN TAI - luu y grantPremiumMonths LUON reset truong nay
+ * ve null moi lan cap/gia han, nen dieu kien "con null" la du de dam bao
+ * KHONG gui trung lap nhieu ngay cho cung 1 han, ma van canh bao lai dung
+ * neu user duoc gia han them sau do).
+ *
+ * Voi moi user thoa dieu kien: gui thong bao PREMIUM_EXPIRING_SOON (fire-and-
+ * forget, loi khong lam hong vong quet) + set premiumExpiryWarnedAt = now.
+ *
+ * @returns So user da duoc canh bao trong lan quet nay.
+ */
+async function notifyExpiringPremiumUsers(): Promise<number> {
+  const now = new Date();
+  const in24Hours = new Date(now.getTime() + TWENTY_FOUR_HOURS_MS);
+
+  const expiringUsers = await prisma.user.findMany({
+    where: {
+      premiumExpiresAt: { gt: now, lte: in24Hours },
+      premiumExpiryWarnedAt: null,
+    },
+    select: { id: true, premiumExpiresAt: true },
+  });
+
+  for (const user of expiringUsers) {
+    // Fire-and-forget: loi tao thong bao cho 1 user khong duoc lam dung ca vong quet.
+    notificationService.createNotification({
+      userId: user.id,
+      type: 'PREMIUM_EXPIRING_SOON',
+      title: '⏰ Premium sắp hết hạn',
+      body: `Premium của bạn sẽ hết hạn vào ${user.premiumExpiresAt!.toLocaleString('vi-VN')}. Hãy gia hạn để không bị gián đoạn quyền lợi!`,
+      targetScreen: 'progress',
+      metadata: { premiumExpiresAt: user.premiumExpiresAt!.toISOString() },
+    }).catch((err: unknown) => {
+      console.error(`[PremiumService] Loi tao thong bao PREMIUM_EXPIRING_SOON cho user ${user.id}:`, err);
+    });
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { premiumExpiryWarnedAt: now },
+    });
+  }
+
+  return expiringUsers.length;
+}
+
 /** [Chi dung cho unit test] Reset cache in-memory ve trang thai chua doc lan nao. */
 function _resetCacheForTest(): void {
   cachedGlobalSetting = null;
@@ -222,5 +272,6 @@ export const premiumService = {
   getGlobalPremiumSetting,
   setGlobalPremiumSetting,
   grantPremiumMonths,
+  notifyExpiringPremiumUsers,
   _resetCacheForTest,
 };
