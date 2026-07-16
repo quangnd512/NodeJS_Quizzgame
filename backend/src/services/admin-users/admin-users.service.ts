@@ -5,6 +5,7 @@
 import { prisma } from '../../lib/prisma.js';
 import { redis } from '../../lib/redis.js';
 import { getFirebaseAuth } from '../../lib/firebase-admin.js';
+import { premiumService } from '../premium/premium.service.js';
 import {
   AdminUserNotFoundError,
   AdminUserNoEmailError,
@@ -15,6 +16,7 @@ import type {
   AdminUserDetail,
   AdminUserListResult,
   DashboardStats,
+  GrantPremiumResultDto,
 } from './admin-users.types.js';
 import { VALID_ROLES } from './admin-users.types.js';
 
@@ -319,6 +321,27 @@ async function deleteUser(userId: string): Promise<{ message: string }> {
   return { message: `Da xoa tai khoan nguoi dung '${user.displayName ?? userId}' thanh cong.` };
 }
 
+/**
+ * Admin cap Premium thu cong cho 1 user theo so thang (1-24) — Feature 015.
+ * Fetch user truoc de nem 404 dung quy uoc chung cua module nay (giong het
+ * setUserBlocked/setUserRole/...), roi giao toan bo logic tinh toan ngay
+ * cong don/reset cho premiumService.grantPremiumMonths (KHONG lap lai logic
+ * nghiep vu o day - tranh 2 noi cung tinh streak freeze/han Premium).
+ */
+async function grantPremium(userId: string, months: number): Promise<GrantPremiumResultDto> {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw new AdminUserNotFoundError(userId);
+
+  const result = await premiumService.grantPremiumMonths(user, months);
+
+  return {
+    id: result.id,
+    premiumExpiresAt: result.premiumExpiresAt.toISOString(),
+    premiumSince: result.premiumSince.toISOString(),
+    streakFreezeReset: result.streakFreezeReset,
+  };
+}
+
 export const adminUsersService = {
   getDashboardStats,
   listUsers,
@@ -327,4 +350,5 @@ export const adminUsersService = {
   resetUserPassword,
   setUserRole,
   deleteUser,
+  grantPremium,
 };

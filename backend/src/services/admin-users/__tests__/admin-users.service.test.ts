@@ -45,9 +45,17 @@ vi.mock('../../../lib/firebase-admin.js', () => ({
   }),
 }));
 
+// ─── Mock PremiumService (Feature 015) ──────────────────────────────────────
+vi.mock('../../premium/premium.service.js', () => ({
+  premiumService: {
+    grantPremiumMonths: vi.fn(),
+  },
+}));
+
 // ─── Imports sau khi mock ────────────────────────────────────────────────────
 import { prisma } from '../../../lib/prisma.js';
 import { redis } from '../../../lib/redis.js';
+import { premiumService } from '../../premium/premium.service.js';
 import { adminUsersService } from '../admin-users.service.js';
 import {
   AdminUserNotFoundError,
@@ -76,6 +84,10 @@ const prismaMock = prisma as unknown as {
 const redisMock = redis as unknown as {
   scan: ReturnType<typeof vi.fn>;
   del: ReturnType<typeof vi.fn>;
+};
+
+const premiumMock = premiumService as unknown as {
+  grantPremiumMonths: ReturnType<typeof vi.fn>;
 };
 
 // ─── Fixture user mẫu ────────────────────────────────────────────────────────
@@ -425,5 +437,43 @@ describe('deleteUser', () => {
     await expect(adminUsersService.deleteUser('no-such-id'))
       .rejects.toThrow(AdminUserNotFoundError);
     expect(mockDeleteUser).not.toHaveBeenCalled();
+  });
+});
+
+// ─── grantPremium (Feature 015 — Free/Premium) ───────────────────────────────
+
+describe('grantPremium', () => {
+  it('✅ Happy: fetch user rồi giao cho premiumService.grantPremiumMonths, trả về dạng ISO string', async () => {
+    const userWithPremiumFields = {
+      ...MOCK_USER,
+      premiumExpiresAt: null,
+      premiumSince: null,
+      premiumExpiryWarnedAt: null,
+    };
+    prismaMock.user.findUnique.mockResolvedValue(userWithPremiumFields);
+    premiumMock.grantPremiumMonths.mockResolvedValue({
+      id: 'user-1',
+      premiumExpiresAt: new Date('2026-04-01T00:00:00.000Z'),
+      premiumSince: new Date('2026-01-01T00:00:00.000Z'),
+      streakFreezeReset: true,
+    });
+
+    const result = await adminUsersService.grantPremium('user-1', 3);
+
+    expect(premiumMock.grantPremiumMonths).toHaveBeenCalledWith(userWithPremiumFields, 3);
+    expect(result).toEqual({
+      id: 'user-1',
+      premiumExpiresAt: '2026-04-01T00:00:00.000Z',
+      premiumSince: '2026-01-01T00:00:00.000Z',
+      streakFreezeReset: true,
+    });
+  });
+
+  it('❌ Error: user không tồn tại → AdminUserNotFoundError, KHÔNG gọi premiumService', async () => {
+    prismaMock.user.findUnique.mockResolvedValue(null);
+
+    await expect(adminUsersService.grantPremium('no-such-id', 3))
+      .rejects.toThrow(AdminUserNotFoundError);
+    expect(premiumMock.grantPremiumMonths).not.toHaveBeenCalled();
   });
 });
