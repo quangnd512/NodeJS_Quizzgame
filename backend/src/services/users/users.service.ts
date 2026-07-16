@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrismaClient } from '../../lib/prisma.js';
+import { redis } from '../../lib/redis.js';
 import { PointsService, pointsService } from '../points/points.service.js';
 import { AvatarError, InvalidProfileInputError, InvalidSubjectsError, UserNotFoundError } from './users.errors.js';
 import {
@@ -39,6 +40,17 @@ export interface ProfileUpdateInput {
   phone?: string | null;
   school?: string | null;
   province?: string | null;
+}
+
+/**
+ * TTL (giay) cua token mo khoa doi mon hoc cho Free (Feature 015 — Free/Premium).
+ * Dung khop voi thoi luong "quang cao" gia lap ~5s o FE + du du an toan.
+ */
+const AD_UNLOCK_TTL_SECONDS = 300;
+
+/** Key Redis danh dau user da "xem quang cao" xong, con hieu luc de doi mon 1 lan. */
+function adUnlockRedisKey(userId: string): string {
+  return `premium:ad-unlock:${userId}`;
 }
 
 export class UsersService {
@@ -84,6 +96,31 @@ export class UsersService {
       }
       throw err;
     }
+  }
+
+  /**
+   * Cap 1 luot mo khoa doi mon hoc cho Free (Feature 015) - goi SAU KHI user
+   * da "xem xong" quang cao gia lap phia FE. Set Redis key TTL 300s.
+   * Premium goi ham nay cung duoc (khong sai) nhung khong bat buoc, vi
+   * Premium khong bi gate o `consumeSubjectsAdUnlock`.
+   */
+  public async grantSubjectsAdUnlock(userId: string): Promise<{ expiresInSeconds: number }> {
+    await redis.set(adUnlockRedisKey(userId), '1', 'EX', AD_UNLOCK_TTL_SECONDS);
+    return { expiresInSeconds: AD_UNLOCK_TTL_SECONDS };
+  }
+
+  /**
+   * Kiem tra + TIEU THU (xoa ngay) token mo khoa doi mon hoc cua 1 user Free.
+   * Tra ve `true` neu token dang con hieu luc (va vua bi xoa - single-use),
+   * `false` neu khong co / da het han / da dung roi.
+   *
+   * Dung `redis.del` truc tiep (tra ve so key da xoa: 1 hoac 0) thay vi
+   * `get` roi `del` rieng - tranh race condition neu 2 request doi mon toi
+   * cung luc (chi 1 trong 2 co the tieu thu thanh cong token duy nhat).
+   */
+  public async consumeSubjectsAdUnlock(userId: string): Promise<boolean> {
+    const deletedCount = await redis.del(adUnlockRedisKey(userId));
+    return deletedCount > 0;
   }
 
   /**
