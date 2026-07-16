@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import { firebaseAuth, googleProvider } from './lib/firebase.js';
 import {
-  loginWithFirebaseToken, getMyProfile, updateSubjects, updateProfile, ApiError,
+  loginWithFirebaseToken, getMyProfile, updateSubjects, adUnlockSubjects, updateProfile, ApiError,
   startPracticeSession, answerQuestion, completeSession, reportQuestion,
   getPracticeHistory, getPracticeStats,
   startExam, submitExam, getExamResult, getActiveExamSession, abandonExam,
@@ -18,6 +18,7 @@ import {
   getWrongAnswers, retryWrongAnswer,
   adminGetDashboard, adminListUsers, adminGetUserDetail,
   adminBlockUser, adminResetPassword, adminSetUserRole, adminDeleteUser,
+  adminGrantPremium, adminGetPremiumDefaultSetting, adminSetPremiumDefaultSetting,
   getUnreadCount, getNotifications, markNotificationAsRead, markAllNotificationsAsRead,
   createSubmission, getMySubmissions, updateSubmission, deleteSubmission,
   adminListSubmissions, adminApproveSubmission, adminRejectSubmission,
@@ -51,7 +52,7 @@ const SUBJECTS = [
   { id: 'GDCD', name: 'Giáo dục công dân', emoji: '⚖️' },
 ];
 
-type Screen = 'loading' | 'login' | 'onboarding' | 'profile' | 'practice' | 'exam' | 'admin' | 'leaderboard' | 'progress' | 'wrongAnswers' | 'submissions';
+type Screen = 'loading' | 'login' | 'onboarding' | 'adGate' | 'profile' | 'practice' | 'exam' | 'admin' | 'leaderboard' | 'progress' | 'wrongAnswers' | 'submissions';
 
 function getInitials(name: string | null, email: string | null): string {
   const src = name ?? email ?? '?';
@@ -176,6 +177,18 @@ export default function App() {
     } catch (err) { handleApiError(err); }
   }
 
+  /**
+   * Bấm "Đổi môn" từ ProfilePage — Feature 015 (Free/Premium):
+   * Premium vào thẳng màn chọn môn; Free phải qua bước "xem quảng cáo" (AdGatePage) trước.
+   */
+  function handleChangeSubjectsClick() {
+    if (profile?.isPremium) {
+      setScreen('onboarding');
+    } else {
+      setScreen('adGate');
+    }
+  }
+
   return (
     <div className="app-shell">
       {globalError && (
@@ -213,7 +226,16 @@ export default function App() {
       {screen === 'onboarding' && (
         <OnboardingPage
           sessionToken={sessionToken}
+          currentSubjects={profile?.subjects.map((s) => s.id) ?? []}
           onDone={afterOnboarding}
+          onError={handleApiError}
+        />
+      )}
+      {screen === 'adGate' && (
+        <AdGatePage
+          sessionToken={sessionToken}
+          onUnlocked={() => setScreen('onboarding')}
+          onCancel={() => setScreen('profile')}
           onError={handleApiError}
         />
       )}
@@ -222,7 +244,7 @@ export default function App() {
           profile={profile}
           sessionToken={sessionToken}
           onProfileUpdate={setProfile}
-          onChangeSubjects={() => setScreen('onboarding')}
+          onChangeSubjects={handleChangeSubjectsClick}
           onPractice={() => setScreen('practice')}
           onExam={() => setScreen('exam')}
           onLeaderboard={() => setScreen('leaderboard')}
@@ -283,6 +305,7 @@ export default function App() {
       {screen === 'wrongAnswers' && profile && (
         <WrongAnswersPage
           sessionToken={sessionToken}
+          isPremium={profile.isPremium}
           onBack={() => setScreen('profile')}
           onError={handleApiError}
         />
@@ -356,9 +379,15 @@ function LoginPage({ onError }: { onError: (m: string) => void }) {
 // ─── OnboardingPage ───────────────────────────────────────────────────────────
 
 function OnboardingPage({
-  sessionToken, onDone, onError,
-}: { sessionToken: string; onDone: () => void; onError: (e: unknown) => void }) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  sessionToken, currentSubjects, onDone, onError,
+}: {
+  sessionToken: string;
+  /** Mã các môn ĐÃ chọn trước đó (profile.subjects) — dùng làm initial state để tránh bug hiển thị trống khi mở lại màn "Đổi môn". */
+  currentSubjects: string[];
+  onDone: () => void;
+  onError: (e: unknown) => void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(currentSubjects));
   const [busy, setBusy] = useState(false);
 
   function toggle(id: string) {
@@ -418,6 +447,80 @@ function OnboardingPage({
           {busy && <Spinner />}
           {busy ? 'Đang lưu…' : 'Bắt đầu ôn thi 🚀'}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── AdGatePage — "xem quảng cáo" giả lập để mở khoá đổi môn cho Free (Feature 015) ──
+
+const AD_COUNTDOWN_SECONDS = 5;
+
+function AdGatePage({
+  sessionToken, onUnlocked, onCancel, onError,
+}: {
+  sessionToken: string;
+  onUnlocked: () => void;
+  onCancel: () => void;
+  onError: (e: unknown) => void;
+}) {
+  const [counting, setCounting] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(AD_COUNTDOWN_SECONDS);
+  const [busy, setBusy] = useState(false);
+
+  async function finishAd() {
+    setBusy(true);
+    try {
+      await adUnlockSubjects(sessionToken);
+      onUnlocked();
+    } catch (err) {
+      onError(err);
+      setCounting(false);
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!counting || busy) return;
+    if (secondsLeft <= 0) {
+      void finishAd();
+      return;
+    }
+    const timer = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [counting, secondsLeft, busy]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function startAd() {
+    setSecondsLeft(AD_COUNTDOWN_SECONDS);
+    setCounting(true);
+  }
+
+  return (
+    <div className="screen screen-center">
+      <div className="ad-gate-card">
+        <p className="ad-gate-icon">🔒</p>
+        <h2 className="page-title">Đổi môn học là quyền lợi Premium</h2>
+        <p className="page-sub">
+          Tài khoản miễn phí cần xem 1 quảng cáo ngắn để mở khoá 1 lượt đổi môn.
+          Nâng cấp Premium để đổi môn thoải mái, không giới hạn!
+        </p>
+
+        {!counting ? (
+          <div className="ad-gate-actions">
+            <button className="btn-primary btn-lg" onClick={startAd}>
+              🎬 Xem quảng cáo để đổi môn
+            </button>
+            <button className="btn-link" onClick={onCancel}>Huỷ, quay lại</button>
+          </div>
+        ) : (
+          <div className="ad-gate-countdown">
+            {busy ? (
+              <><Spinner /> Đang mở khoá…</>
+            ) : (
+              <>⏳ Quảng cáo đang chạy… còn {secondsLeft}s</>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -571,7 +674,10 @@ function ProfilePage({
         </div>
 
         <div className="profile-id">
-          <h2 className="profile-name">{profile.displayName ?? '(Chưa đặt tên)'}</h2>
+          <h2 className="profile-name">
+            {profile.displayName ?? '(Chưa đặt tên)'}
+            {profile.isPremium && <span className="premium-badge">⭐ Premium</span>}
+          </h2>
           <p className="profile-email">{profile.email}</p>
         </div>
         <div className="header-actions">
@@ -4342,12 +4448,18 @@ function ProgressPage({
   }, [sessionToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    // Feature 015 (Free/Premium): Free bị khoá hoàn toàn "Lịch sử thi thử" —
+    // không gọi API (backend cũng chặn 403 EXAM_HISTORY_PREMIUM_ONLY), tránh gọi vô ích.
+    if (!profile.isPremium) {
+      setExamLoading(false); // eslint-disable-line react-hooks/set-state-in-effect
+      return;
+    }
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setExamLoading(true);
     void getExamHistory(sessionToken, EXAM_PAGE_SIZE, examPage * EXAM_PAGE_SIZE)
       .then((data) => { setExamHistory(data); setExamLoading(false); })
       .catch((err) => { onError(err); setExamLoading(false); });
-  }, [sessionToken, examPage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionToken, examPage, profile.isPremium]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const totalExamPages = examHistory ? Math.ceil(examHistory.total / EXAM_PAGE_SIZE) : 0;
 
@@ -4384,6 +4496,19 @@ function ProgressPage({
                 <span className="pstat-unit"> ngày 🐝</span>
               </span>
               <span className="pstat-sub">Tốt nhất: {summary.bestStreak} ngày</span>
+              {/* Feature 015 (Free/Premium): CHỈ hiện cho Premium */}
+              {summary.isPremium && (
+                <>
+                  <span className="pstat-sub">
+                    🛡️ Thẻ bảo hiểm chuỗi: {summary.streakFreeze.remaining}/{summary.streakFreeze.granted}
+                  </span>
+                  {summary.premiumExpiresAt && (
+                    <span className="pstat-sub">
+                      ⭐ Premium đến {new Date(summary.premiumExpiresAt).toLocaleDateString('vi-VN')}
+                    </span>
+                  )}
+                </>
+              )}
             </div>
           </section>
 
@@ -4483,7 +4608,14 @@ function ProgressPage({
       {/* Lịch sử thi thử */}
       <section className="card-section">
         <h3 className="section-title">Lịch sử thi thử</h3>
-        {examLoading ? (
+        {!profile.isPremium ? (
+          /* Feature 015 (Free/Premium): ẩn hoàn toàn bảng, thay bằng banner nâng cấp */
+          <div className="premium-locked-banner">
+            <p className="premium-locked-icon">⭐</p>
+            <p className="premium-locked-title">Lịch sử thi thử là quyền lợi Premium</p>
+            <p className="premium-locked-sub">Nâng cấp Premium để xem lại toàn bộ lịch sử các lần thi thử của bạn.</p>
+          </div>
+        ) : examLoading ? (
           <div className="progress-loading"><Spinner /></div>
         ) : !examHistory || examHistory.items.length === 0 ? (
           <p className="empty">Chưa có lần thi nào.</p>
@@ -4802,9 +4934,11 @@ function WrongAnswerCard({
 }
 
 function WrongAnswersPage({
-  sessionToken, onBack, onError,
+  sessionToken, isPremium, onBack, onError,
 }: {
   sessionToken: string;
+  /** Feature 015 (Free/Premium): Free bị khoá hoàn toàn tính năng này. */
+  isPremium: boolean;
   onBack: () => void;
   onError: (e: unknown) => void;
 }) {
@@ -4826,10 +4960,15 @@ const res: WrongAnswerListResponse = await getWrongAnswers(sessionToken, subj ||
     finally { setLoading(false); }
   }
 
-  // Load dữ liệu lần đầu khi mount
+  // Load dữ liệu lần đầu khi mount — CHỈ khi Premium (Free bị khoá hoàn toàn,
+  // không cần gọi API vì backend cũng sẽ chặn 403 WRONG_ANSWER_REVIEW_PREMIUM_ONLY).
   useEffect(() => {
+    if (!isPremium) {
+      setLoading(false); // eslint-disable-line react-hooks/set-state-in-effect
+      return;
+    }
     void fetchData(1, ''); // eslint-disable-line react-hooks/set-state-in-effect
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isPremium]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
@@ -4858,65 +4997,80 @@ const res: WrongAnswerListResponse = await getWrongAnswers(sessionToken, subj ||
         <span style={{ fontSize: '.82rem', opacity: .85 }}>{total} câu</span>
       </div>
 
-      {/* Filter môn */}
-      <div style={{ padding: '.75rem 1.25rem', background: '#fff', borderBottom: '1px solid #e2e8f0' }}>
-        <select
-          value={subject}
-          onChange={(e) => handleSubjectChange(e.target.value)}
-          style={{ width: '100%', padding: '.5rem .75rem', borderRadius: '8px', border: '1px solid #ddd', fontSize: '.9rem', background: '#fafafa' }}
-        >
-          <option value="">Tất cả môn học</option>
-          {SUBJECTS.map((s) => <option key={s.id} value={s.id}>{s.emoji} {s.name}</option>)}
-        </select>
-      </div>
-
-      {/* Nội dung */}
-      <div style={{ padding: '1rem 1.25rem' }}>
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: '3rem' }}>
-            <Spinner />
-            <p style={{ margin: '.75rem 0 0', color: '#94a3b8', fontSize: '.88rem' }}>Đang tải danh sách câu sai…</p>
+      {!isPremium ? (
+        /* Feature 015 (Free/Premium): khoá hoàn toàn — banner nâng cấp thay vì danh sách câu sai */
+        <div style={{ padding: '2.5rem 1.5rem', textAlign: 'center' }}>
+          <p style={{ fontSize: '2.5rem', margin: '0 0 .75rem' }}>⭐</p>
+          <p style={{ margin: 0, fontWeight: 700, fontSize: '1.05rem', color: '#334155' }}>
+            Ôn lại câu sai là quyền lợi Premium
+          </p>
+          <p style={{ margin: '.5rem 0 0', fontSize: '.9rem', color: '#64748b' }}>
+            Nâng cấp Premium để xem lại và luyện tập những câu bạn đã trả lời sai, giúp học hiệu quả hơn.
+          </p>
+        </div>
+      ) : (
+        <>
+          {/* Filter môn */}
+          <div style={{ padding: '.75rem 1.25rem', background: '#fff', borderBottom: '1px solid #e2e8f0' }}>
+            <select
+              value={subject}
+              onChange={(e) => handleSubjectChange(e.target.value)}
+              style={{ width: '100%', padding: '.5rem .75rem', borderRadius: '8px', border: '1px solid #ddd', fontSize: '.9rem', background: '#fafafa' }}
+            >
+              <option value="">Tất cả môn học</option>
+              {SUBJECTS.map((s) => <option key={s.id} value={s.id}>{s.emoji} {s.name}</option>)}
+            </select>
           </div>
-        ) : data.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8' }}>
-            <p style={{ fontSize: '2rem', margin: '0 0 .75rem' }}>🎉</p>
-            <p style={{ margin: 0, fontWeight: 600 }}>Không có câu sai nào</p>
-            <p style={{ margin: '.35rem 0 0', fontSize: '.88rem' }}>
-              {subject ? 'Thử chọn môn khác hoặc học tốt lắm!' : 'Bạn chưa có câu sai nào còn hạn. Tiếp tục cố gắng!'}
-            </p>
-          </div>
-        ) : (
-          <>
-            {data.map((item) => (
-              <WrongAnswerCard
-                key={item.id}
-                item={item}
-                sessionToken={sessionToken}
-                onError={onError}
-                isRetriedCorrectly={retriedCorrectIds.has(item.id)}
-                onRetryCorrect={() => handleRetryCorrect(item.id)}
-              />
-            ))}
 
-            {/* Phân trang */}
-            {totalPages > 1 && (
-              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '.75rem', marginTop: '1rem' }}>
-                <button
-                  className="btn-secondary"
-                  disabled={page <= 1 || loading}
-                  onClick={() => void handlePageChange(page - 1)}
-                >← Trước</button>
-                <span style={{ fontSize: '.88rem', color: '#64748b' }}>Trang {page}/{totalPages}</span>
-                <button
-                  className="btn-secondary"
-                  disabled={page >= totalPages || loading}
-                  onClick={() => void handlePageChange(page + 1)}
-                >Sau →</button>
+          {/* Nội dung */}
+          <div style={{ padding: '1rem 1.25rem' }}>
+            {loading ? (
+              <div style={{ textAlign: 'center', padding: '3rem' }}>
+                <Spinner />
+                <p style={{ margin: '.75rem 0 0', color: '#94a3b8', fontSize: '.88rem' }}>Đang tải danh sách câu sai…</p>
               </div>
+            ) : data.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8' }}>
+                <p style={{ fontSize: '2rem', margin: '0 0 .75rem' }}>🎉</p>
+                <p style={{ margin: 0, fontWeight: 600 }}>Không có câu sai nào</p>
+                <p style={{ margin: '.35rem 0 0', fontSize: '.88rem' }}>
+                  {subject ? 'Thử chọn môn khác hoặc học tốt lắm!' : 'Bạn chưa có câu sai nào còn hạn. Tiếp tục cố gắng!'}
+                </p>
+              </div>
+            ) : (
+              <>
+                {data.map((item) => (
+                  <WrongAnswerCard
+                    key={item.id}
+                    item={item}
+                    sessionToken={sessionToken}
+                    onError={onError}
+                    isRetriedCorrectly={retriedCorrectIds.has(item.id)}
+                    onRetryCorrect={() => handleRetryCorrect(item.id)}
+                  />
+                ))}
+
+                {/* Phân trang */}
+                {totalPages > 1 && (
+                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '.75rem', marginTop: '1rem' }}>
+                    <button
+                      className="btn-secondary"
+                      disabled={page <= 1 || loading}
+                      onClick={() => void handlePageChange(page - 1)}
+                    >← Trước</button>
+                    <span style={{ fontSize: '.88rem', color: '#64748b' }}>Trang {page}/{totalPages}</span>
+                    <button
+                      className="btn-secondary"
+                      disabled={page >= totalPages || loading}
+                      onClick={() => void handlePageChange(page + 1)}
+                    >Sau →</button>
+                  </div>
+                )}
+              </>
             )}
-          </>
-        )}
-      </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -5280,6 +5434,60 @@ function SubmissionListSection({
 
 // ─── AdminDashboardPage ──────────────────────────────────────────────────────
 
+/** Công tắc toàn cục "Mặc định Premium cho tất cả" (Feature 015 — Free/Premium). */
+function PremiumDefaultToggle({ secret, onLogout }: { secret: string; onLogout: () => void }) {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    adminGetPremiumDefaultSetting(secret)
+      .then((res) => { if (!cancelled) setEnabled(res.enabled); })
+      .catch((err) => {
+        if (cancelled) return;
+        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) { onLogout(); return; }
+        setError(err instanceof Error ? err.message : 'Lỗi không xác định');
+      });
+    return () => { cancelled = true; };
+  }, [secret]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleToggle() {
+    if (enabled === null || busy) return;
+    const next = !enabled;
+    setBusy(true);
+    try {
+      const res = await adminSetPremiumDefaultSetting(secret, next);
+      setEnabled(res.enabled);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Lỗi khi đổi công tắc');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="premium-toggle-card">
+      <div className="premium-toggle-info">
+        <strong>⭐ Mặc định Premium cho tất cả</strong>
+        <p>
+          Khi BẬT: mọi tài khoản (cũ lẫn mới) đều được coi là Premium.
+          Khi TẮT: chỉ user được admin cấp Premium riêng (còn hạn) mới là Premium.
+        </p>
+        {error && <p className="premium-toggle-error">{error}</p>}
+      </div>
+      <button
+        className={`premium-toggle-switch ${enabled ? 'on' : ''}`}
+        disabled={enabled === null || busy}
+        onClick={() => void handleToggle()}
+        aria-pressed={enabled ?? false}
+      >
+        <span className="premium-toggle-knob" />
+      </button>
+    </div>
+  );
+}
+
 function AdminDashboardPage({ secret, onLogout }: { secret: string; onLogout: () => void }) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -5324,6 +5532,9 @@ function AdminDashboardPage({ secret, onLogout }: { secret: string; onLogout: ()
         <h2 style={{ margin: 0 }}>📊 Tổng quan hệ thống</h2>
         <button className="btn-secondary" onClick={() => void load()}>🔄 Làm mới</button>
       </div>
+
+      <PremiumDefaultToggle secret={secret} onLogout={onLogout} />
+
       <div className="dashboard-cards">
         {cards.map((c) => (
           <div key={c.label} className="dashboard-card">
@@ -5355,6 +5566,9 @@ function AdminUsersPage({ secret, onLogout }: { secret: string; onLogout: () => 
   const [detailLoading, setDetailLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  // Feature 015 (Free/Premium): input số tháng + trạng thái busy riêng cho từng dòng user.
+  const [grantMonths, setGrantMonths] = useState<Record<string, string>>({});
+  const [grantBusyUserId, setGrantBusyUserId] = useState<string | null>(null);
 
   async function load(p = page) {
     setLoading(true);
@@ -5438,6 +5652,31 @@ function AdminUsersPage({ secret, onLogout }: { secret: string; onLogout: () => 
     }
   }
 
+  /** Feature 015 (Free/Premium): admin cấp Premium thủ công theo tháng cho 1 user. */
+  async function handleGrantPremium(userId: string) {
+    const raw = grantMonths[userId] ?? '1';
+    const months = parseInt(raw, 10);
+    if (isNaN(months) || months < 1 || months > 24) {
+      setError('Số tháng cấp Premium phải là số nguyên từ 1 đến 24.');
+      return;
+    }
+    setGrantBusyUserId(userId);
+    try {
+      const result = await adminGrantPremium(secret, userId, months);
+      setNotice(
+        `Đã cấp Premium ${months} tháng — hạn mới: ${new Date(result.premiumExpiresAt).toLocaleDateString('vi-VN')}.`,
+      );
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        onLogout();
+        return;
+      }
+      setError(err instanceof Error ? err.message : 'Lỗi cấp Premium');
+    } finally {
+      setGrantBusyUserId(null);
+    }
+  }
+
   async function handleDelete(userId: string, displayName: string | null) {
     const confirmed = window.confirm(
       `Bạn chắc chắn muốn XOÁ tài khoản "${displayName ?? userId}"?\n\nThao tác này KHÔNG THỂ hoàn tác — tài khoản sẽ bị xoá khỏi hệ thống và Firebase.`,
@@ -5507,6 +5746,7 @@ function AdminUsersPage({ secret, onLogout }: { secret: string; onLogout: () => 
                 <th>Quyền</th>
                 <th>Trạng thái</th>
                 <th>Đăng ký</th>
+                <th>Premium</th>
                 <th></th>
               </tr>
             </thead>
@@ -5526,6 +5766,28 @@ function AdminUsersPage({ secret, onLogout }: { secret: string; onLogout: () => 
                       : <span className="status-active">✅ Hoạt động</span>}
                   </td>
                   <td>{new Date(u.createdAt).toLocaleDateString('vi-VN')}</td>
+                  <td>
+                    <div className="grant-premium-form">
+                      <input
+                        type="number"
+                        min={1}
+                        max={24}
+                        className="grant-premium-input"
+                        value={grantMonths[u.id] ?? '1'}
+                        disabled={grantBusyUserId === u.id}
+                        onChange={(e) => setGrantMonths((prev) => ({ ...prev, [u.id]: e.target.value }))}
+                        aria-label="Số tháng cấp Premium"
+                      />
+                      <button
+                        className="btn-secondary"
+                        disabled={grantBusyUserId === u.id}
+                        onClick={() => void handleGrantPremium(u.id)}
+                        title="Cấp Premium theo số tháng"
+                      >
+                        {grantBusyUserId === u.id ? '…' : '🎁 Cấp'}
+                      </button>
+                    </div>
+                  </td>
                   <td>
                     <button
                       className="btn-secondary"
