@@ -8,7 +8,9 @@
 // ============================================================================
 import { prisma } from '../../lib/prisma.js';
 import { practiceService } from '../practice/practice.service.js';
-import { computeStreaks } from '../../utils/streak.utils.js';
+import { computeStreaksWithFreeze, STREAK_FREEZE_GRANT } from '../../utils/streak.utils.js';
+import { premiumService } from '../premium/premium.service.js';
+import { ExamHistoryPremiumOnlyError } from './progress.errors.js';
 import type {
   ExamHistoryItem,
   MonthComparison,
@@ -72,6 +74,8 @@ export const progressService = {
       lastMonthExamScores,
       scoreTrendRaw,
       practiceStatsBySubject,
+      userPremiumFields,
+      globalSetting,
     ] = await Promise.all([
       // Tat ca phien on tap da hoan thanh (lay completedAt de tinh streak + tong)
       prisma.practiceSession.findMany({
@@ -149,13 +153,33 @@ export const progressService = {
 
       // Thong ke theo mon hoc (reuse logic tu practice service)
       practiceService.getStats(userId),
+
+      // Cac truong lien quan Premium cua user (Feature 015) - de tinh isPremium + streak freeze
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { premiumExpiresAt: true, premiumSince: true, createdAt: true },
+      }),
+
+      // Cong tac toan cuc "Mac dinh Premium cho tat ca" (co cache in-memory)
+      premiumService.getGlobalPremiumSetting(),
     ]);
 
-    // Tinh streak
+    // --- Free/Premium (Feature 015) ---
+    // Neu vi ly do hi huu khong tim thay user (vi du bi xoa giua chung luc xu
+    // ly request), coi nhu Free/chua tung Premium - khong crash request.
+    const premiumFields = userPremiumFields ?? { premiumExpiresAt: null, premiumSince: null, createdAt: new Date(0) };
+    const isPremium = premiumService.isUserPremium(premiumFields, globalSetting);
+    const effectivePremiumSince = premiumService.getEffectivePremiumSince(premiumFields, globalSetting);
+    // Free KHONG co the bao hiem chuoi nao (freezeGrant=0) -> streakFreeze luon 0/0/0
+    // va currentStreak/bestStreak tinh y het computeStreaks thuong (khong bac cau).
+    const freezeGrant = isPremium ? STREAK_FREEZE_GRANT : 0;
+
+    // Tinh streak (co ho tro freeze cho Premium)
     const completedDates = practiceSessions
       .map((s) => s.completedAt)
       .filter((d): d is Date => d !== null);
-    const { currentStreak, bestStreak } = computeStreaks(completedDates);
+    const { currentStreak, bestStreak, freezesUsed, freezesRemaining } =
+      computeStreaksWithFreeze(completedDates, effectivePremiumSince, freezeGrant);
 
     // Tong quan
     const overview: ProgressOverview = {
@@ -195,18 +219,37 @@ export const progressService = {
       monthComparison,
       practiceStatsBySubject,
       scoreTrend,
+      isPremium,
+      premiumExpiresAt: premiumFields.premiumExpiresAt?.toISOString() ?? null,
+      streakFreeze: { granted: freezeGrant, used: freezesUsed, remaining: freezesRemaining },
     };
   },
 
   /**
    * Lay lich su thi thu co phan trang.
    * Chi tra ve cac phien co status = "COMPLETED".
+   *
+   * @throws ExamHistoryPremiumOnlyError neu user Free (tinh nang nay chi
+   *   danh cho Premium - chan han o backend, KHONG tra ve du lieu ke ca rong).
    */
   async getExamHistory(
     userId: string,
     limit = 10,
     offset = 0,
   ): Promise<PaginatedExamHistory> {
+    // Gate Premium — chan han o BACKEND, KHONG tra ve du lieu ke ca rong cho Free.
+    const [user, globalSetting] = await Promise.all([
+      prisma.user.findUnique({ where: { id: userId }, select: { premiumExpiresAt: true } }),
+      premiumService.getGlobalPremiumSetting(),
+    ]);
+    const isPremium = premiumService.isUserPremium(
+      user ?? { premiumExpiresAt: null },
+      globalSetting,
+    );
+    if (!isPremium) {
+      throw new ExamHistoryPremiumOnlyError();
+    }
+
     const safeLimit  = Math.max(1, Math.min(limit, 50));
     const safeOffset = Math.max(0, offset);
 
