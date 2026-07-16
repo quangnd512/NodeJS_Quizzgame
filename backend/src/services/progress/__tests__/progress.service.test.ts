@@ -32,7 +32,7 @@ import { progressService } from '../progress.service.js';
 import { ExamHistoryPremiumOnlyError } from '../progress.errors.js';
 
 const prismaMock = prisma as unknown as {
-  practiceSession: { findMany: ReturnType<typeof vi.fn> };
+  practiceSession: { findMany: ReturnType<typeof vi.fn>; count: ReturnType<typeof vi.fn> };
   examSession: { count: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
   userPoints: { findUnique: ReturnType<typeof vi.fn> };
   user: { findUnique: ReturnType<typeof vi.fn> };
