@@ -2,10 +2,11 @@
 // (chon mon hoc dang ky on thi).
 import fs from 'node:fs';
 import path from 'node:path';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient, User } from '@prisma/client';
 import { prisma as defaultPrismaClient } from '../../lib/prisma.js';
 import { redis } from '../../lib/redis.js';
 import { PointsService, pointsService } from '../points/points.service.js';
+import { premiumService } from '../premium/premium.service.js';
 import { AvatarError, InvalidProfileInputError, InvalidSubjectsError, UserNotFoundError } from './users.errors.js';
 import {
   MAX_PROFILE_FIELD_LENGTH,
@@ -51,6 +52,32 @@ const AD_UNLOCK_TTL_SECONDS = 300;
 /** Key Redis danh dau user da "xem quang cao" xong, con hieu luc de doi mon 1 lan. */
 function adUnlockRedisKey(userId: string): string {
   return `premium:ad-unlock:${userId}`;
+}
+
+/**
+ * Ham THUAN TUY (khong query DB/Redis) ghep 1 ban ghi `User` + so diem +
+ * trang thai Premium da tinh san thanh `UserMeDto`. Tach rieng ham nay (thay
+ * vi lap lai object literal o tung noi) de dam bao MOI noi tra ve UserMeDto
+ * (getProfile, va gian tiep qua do la updateProfile/uploadAvatar/removeAvatar)
+ * luon dong bo cung 1 shape - chi can sua field o 1 cho duy nhat khi DTO thay doi sau nay.
+ */
+function toUserMeDto(user: User, points: number, isPremium: boolean): UserMeDto {
+  return {
+    id: user.id,
+    firebaseUid: user.firebaseUid,
+    displayName: user.displayName,
+    email: user.email,
+    phone: user.phone,
+    school: user.school,
+    province: user.province,
+    subjects: user.subjects.map((id) => ({ id, name: getSubjectDisplayName(id) })),
+    avatarUrl: user.avatarUrl,
+    createdAt: user.createdAt,
+    lastLoginAt: user.lastLoginAt,
+    points,
+    isPremium,
+    premiumExpiresAt: user.premiumExpiresAt,
+  };
 }
 
 export class UsersService {
@@ -181,8 +208,13 @@ export class UsersService {
   }
 
   /**
-   * Lay thong tin profile day du cua user kem so diem tich luy hien tai.
-   * Ket hop du lieu tu 2 nguon: bang `users` (profile) va `PointsService` (so du diem).
+   * Lay thong tin profile day du cua user kem so diem tich luy hien tai VA
+   * trang thai Premium (Feature 015). Ket hop du lieu tu 3 nguon: bang `users`
+   * (profile), `PointsService` (so du diem), `premiumService` (isPremium -
+   * co tinh ca cong tac toan cuc). Day la noi DUY NHAT xay dung `UserMeDto`
+   * (qua ham thuan tuy `toUserMeDto`) - `updateProfile`/`uploadAvatar`/
+   * `removeAvatar` deu goi lai ham nay o cuoi thay vi tu lap rap DTO rieng,
+   * dam bao khong bao gio bi lech shape giua cac endpoint.
    *
    * @throws UserNotFoundError neu khong tim thay user
    */
@@ -194,22 +226,13 @@ export class UsersService {
 
     // Goi PointsService de lay so du diem - tach biet ro rang trach nhiem
     // (UsersService khong tu truy van bang user_points truc tiep).
-    const balance = await this.pointsService.getBalance(user.id);
+    const [balance, globalSetting] = await Promise.all([
+      this.pointsService.getBalance(user.id),
+      premiumService.getGlobalPremiumSetting(),
+    ]);
+    const isPremium = premiumService.isUserPremium(user, globalSetting);
 
-    return {
-      id: user.id,
-      firebaseUid: user.firebaseUid,
-      displayName: user.displayName,
-      email: user.email,
-      phone: user.phone,
-      school: user.school,
-      province: user.province,
-      subjects: user.subjects.map((id) => ({ id, name: getSubjectDisplayName(id) })),
-      avatarUrl: user.avatarUrl,
-      createdAt: user.createdAt,
-      lastLoginAt: user.lastLoginAt,
-      points: balance.currentPoints,
-    };
+    return toUserMeDto(user, balance.currentPoints, isPremium);
   }
 
   /**

@@ -72,4 +72,12 @@ export interface UserMeDto {
   lastLoginAt: Date | null;
   /** So diem tich luy hien tai - lay tu PointsService (bang `user_points`). */
   points: number;
+  /**
+   * true neu user dang la Premium (Feature 015) - HOAC cong tac toan cuc
+   * "Mac dinh Premium cho tat ca" dang BAT, HOAC premiumExpiresAt con han.
+   * Xem premiumService.isUserPremium.
+   */
+  isPremium: boolean;
+  /** Han Premium duoc admin cap thu cong (theo thang), null neu chua tung duoc cap. */
+  premiumExpiresAt: Date | null;
 }
