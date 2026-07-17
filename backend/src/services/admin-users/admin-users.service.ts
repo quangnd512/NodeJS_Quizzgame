@@ -324,15 +324,19 @@ async function deleteUser(userId: string): Promise<{ message: string }> {
 /**
  * Admin cap Premium thu cong cho 1 user theo so thang (1-24) — Feature 015.
  * Fetch user truoc de nem 404 dung quy uoc chung cua module nay (giong het
- * setUserBlocked/setUserRole/...), roi giao toan bo logic tinh toan ngay
- * cong don/reset cho premiumService.grantPremiumMonths (KHONG lap lai logic
- * nghiep vu o day - tranh 2 noi cung tinh streak freeze/han Premium).
+ * setUserBlocked/setUserRole/...) - day la 1 kiem tra "fail fast" rieng, KHONG
+ * phai nguon du lieu duy nhat cho phep tinh: premiumService.grantPremiumMonths
+ * tu FETCH LAI ben trong 1 vong lap CAS (compare-and-swap) de tranh race
+ * condition khi 2 request cap Premium cho cung user gan nhu dong thoi (xem
+ * chi tiet trong docblock cua ham do) - vi vay ta chi truyen `userId`, KHONG
+ * truyen thang `user` da fetch o day (du lieu co the da CU vao luc
+ * grantPremiumMonths thuc su ghi).
  */
 async function grantPremium(userId: string, months: number): Promise<GrantPremiumResultDto> {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new AdminUserNotFoundError(userId);
 
-  const result = await premiumService.grantPremiumMonths(user, months);
+  const result = await premiumService.grantPremiumMonths(userId, months);
 
   return {
     id: result.id,

@@ -23,7 +23,7 @@ vi.mock('../../premium/premium.service.js', () => ({
 import { redis } from '../../../lib/redis.js';
 import { premiumService } from '../../premium/premium.service.js';
 import { UsersService } from '../users.service.js';
-import { UserNotFoundError } from '../users.errors.js';
+import { InvalidSubjectsError, UserNotFoundError } from '../users.errors.js';
 
 const redisMock = redis as unknown as {
   set: ReturnType<typeof vi.fn>;
@@ -135,5 +135,38 @@ describe('getProfile — isPremium/premiumExpiresAt (Feature 015)', () => {
     (prismaMock.user.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
     await expect(service.getProfile('no-such-id')).rejects.toThrow(UserNotFoundError);
+  });
+});
+
+describe('validateAndNormalizeSubjects (Feature 015 — được đổi từ private sang public)', () => {
+  // Đổi từ `private` sang `public` để route POST /api/users/subjects có thể validate
+  // ĐẦY ĐỦ trước khi tiêu thụ token mở khoá quảng cáo của Free (xem users.route.ts) —
+  // tránh bug "đốt" token oan khi request sai định dạng/môn không hợp lệ. Test riêng
+  // hàm này ở đây để đảm bảo route mới có thể tin tưởng gọi nó độc lập với updateSubjects.
+
+  it('✅ Happy: chuẩn hoá đúng mã môn (viết hoa, trim khoảng trắng)', () => {
+    const result = usersService.validateAndNormalizeSubjects([{ id: ' toan ' }, { id: 'anh' }]);
+    expect(result).toEqual(['TOAN', 'ANH']);
+  });
+
+  it('❌ Error: rỗng (dưới MIN_SUBJECTS) → InvalidSubjectsError', () => {
+    expect(() => usersService.validateAndNormalizeSubjects([])).toThrow(InvalidSubjectsError);
+  });
+
+  it('❌ Error: quá 7 môn (trên MAX_SUBJECTS) → InvalidSubjectsError', () => {
+    const tooMany = Array.from({ length: 8 }, (_, i) => ({ id: `SUB${i}` }));
+    expect(() => usersService.validateAndNormalizeSubjects(tooMany)).toThrow(InvalidSubjectsError);
+  });
+
+  it('❌ Error: mã môn không hợp lệ → InvalidSubjectsError', () => {
+    expect(() => usersService.validateAndNormalizeSubjects([{ id: 'KHONG_TON_TAI' }])).toThrow(
+      InvalidSubjectsError,
+    );
+  });
+
+  it('❌ Error: môn trùng lặp trong danh sách → InvalidSubjectsError', () => {
+    expect(() => usersService.validateAndNormalizeSubjects([{ id: 'TOAN' }, { id: 'toan' }])).toThrow(
+      InvalidSubjectsError,
+    );
   });
 });

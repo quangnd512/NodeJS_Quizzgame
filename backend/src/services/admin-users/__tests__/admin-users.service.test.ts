@@ -460,7 +460,9 @@ describe('grantPremium', () => {
 
     const result = await adminUsersService.grantPremium('user-1', 3);
 
-    expect(premiumMock.grantPremiumMonths).toHaveBeenCalledWith(userWithPremiumFields, 3);
+    // Truyen `userId` (KHONG truyen thang object `user` da fetch) - premiumService
+    // tu fetch lai ben trong de tranh race condition (xem premium.service.ts).
+    expect(premiumMock.grantPremiumMonths).toHaveBeenCalledWith('user-1', 3);
     expect(result).toEqual({
       id: 'user-1',
       premiumExpiresAt: '2026-04-01T00:00:00.000Z',

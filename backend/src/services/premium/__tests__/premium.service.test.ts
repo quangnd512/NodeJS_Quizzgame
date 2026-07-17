@@ -9,6 +9,8 @@ vi.mock('../../../lib/prisma.js', () => ({
     },
     user: {
       update: vi.fn(),
+      updateMany: vi.fn(),
+      findUnique: vi.fn(),
       findMany: vi.fn(),
     },
   },
@@ -25,11 +27,20 @@ vi.mock('../../notification/notification.service.js', () => ({
 import { prisma } from '../../../lib/prisma.js';
 import { notificationService } from '../../notification/notification.service.js';
 import { premiumService } from '../premium.service.js';
-import { InvalidPremiumMonthsError } from '../premium.errors.js';
+import {
+  InvalidPremiumMonthsError,
+  PremiumGrantConflictError,
+  PremiumUserNotFoundError,
+} from '../premium.errors.js';
 
 const prismaMock = prisma as unknown as {
   appSettings: { upsert: ReturnType<typeof vi.fn> };
-  user: { update: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
+  user: {
+    update: ReturnType<typeof vi.fn>;
+    updateMany: ReturnType<typeof vi.fn>;
+    findUnique: ReturnType<typeof vi.fn>;
+    findMany: ReturnType<typeof vi.fn>;
+  };
 };
 
 const notificationMock = notificationService as unknown as {
@@ -170,17 +181,22 @@ describe('grantPremiumMonths', () => {
   it('✅ Happy: user KHÔNG premium (chưa từng cấp) → premiumSince=now, streakFreezeReset=true', async () => {
     const user = { ...BASE_USER, premiumExpiresAt: null, premiumSince: null };
     const beforeCall = Date.now();
-    prismaMock.user.update.mockImplementation(({ data }: { data: { premiumExpiresAt: Date; premiumSince: Date } }) =>
-      Promise.resolve({ id: 'user-1', premiumExpiresAt: data.premiumExpiresAt, premiumSince: data.premiumSince }),
-    );
+    prismaMock.user.findUnique.mockResolvedValue(user);
+    prismaMock.user.updateMany.mockResolvedValue({ count: 1 });
 
-    const result = await premiumService.grantPremiumMonths(user, 3);
+    const result = await premiumService.grantPremiumMonths('user-1', 3);
 
     expect(result.streakFreezeReset).toBe(true);
     expect(result.premiumSince.getTime()).toBeGreaterThanOrEqual(beforeCall);
     // Hạn mới ~ now + 3 tháng
     const expectedMonth = (new Date().getUTCMonth() + 3) % 12;
     expect(result.premiumExpiresAt.getUTCMonth()).toBe(expectedMonth);
+    // CAS phải khớp đúng điều kiện WHERE dựa trên giá trị VỪA ĐỌC (null/null).
+    expect(prismaMock.user.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 'user-1', premiumExpiresAt: null, premiumSince: null }),
+      }),
+    );
     expect(notificationMock.createNotification).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 'user-1', type: 'PREMIUM_GRANTED' }),
     );
@@ -190,11 +206,10 @@ describe('grantPremiumMonths', () => {
     const pastExpiry = new Date(Date.now() - 86_400_000);
     const oldSince = new Date('2025-06-01');
     const user = { ...BASE_USER, premiumExpiresAt: pastExpiry, premiumSince: oldSince };
-    prismaMock.user.update.mockImplementation(({ data }: { data: { premiumExpiresAt: Date; premiumSince: Date } }) =>
-      Promise.resolve({ id: 'user-1', premiumExpiresAt: data.premiumExpiresAt, premiumSince: data.premiumSince }),
-    );
+    prismaMock.user.findUnique.mockResolvedValue(user);
+    prismaMock.user.updateMany.mockResolvedValue({ count: 1 });
 
-    const result = await premiumService.grantPremiumMonths(user, 1);
+    const result = await premiumService.grantPremiumMonths('user-1', 1);
 
     expect(result.streakFreezeReset).toBe(true);
     expect(result.premiumSince.getTime()).not.toBe(oldSince.getTime());
@@ -206,11 +221,10 @@ describe('grantPremiumMonths', () => {
     const futureExpiry = new Date(Date.now() + 10 * 86_400_000); // còn 10 ngày
     const oldSince = new Date('2025-06-01');
     const user = { ...BASE_USER, premiumExpiresAt: futureExpiry, premiumSince: oldSince };
-    prismaMock.user.update.mockImplementation(({ data }: { data: { premiumExpiresAt: Date; premiumSince: Date } }) =>
-      Promise.resolve({ id: 'user-1', premiumExpiresAt: data.premiumExpiresAt, premiumSince: data.premiumSince }),
-    );
+    prismaMock.user.findUnique.mockResolvedValue(user);
+    prismaMock.user.updateMany.mockResolvedValue({ count: 1 });
 
-    const result = await premiumService.grantPremiumMonths(user, 2);
+    const result = await premiumService.grantPremiumMonths('user-1', 2);
 
     expect(result.streakFreezeReset).toBe(false);
     expect(result.premiumSince.getTime()).toBe(oldSince.getTime());
@@ -224,11 +238,10 @@ describe('grantPremiumMonths', () => {
     vi.setSystemTime(new Date(Date.UTC(2026, 0, 31)));
     try {
       const user = { ...BASE_USER, premiumExpiresAt: null, premiumSince: null };
-      prismaMock.user.update.mockImplementation(({ data }: { data: { premiumExpiresAt: Date; premiumSince: Date } }) =>
-        Promise.resolve({ id: 'user-1', premiumExpiresAt: data.premiumExpiresAt, premiumSince: data.premiumSince }),
-      );
+      prismaMock.user.findUnique.mockResolvedValue(user);
+      prismaMock.user.updateMany.mockResolvedValue({ count: 1 });
 
-      const result = await premiumService.grantPremiumMonths(user, 1);
+      const result = await premiumService.grantPremiumMonths('user-1', 1);
 
       // Thang 2/2026 khong phai nam nhuan -> chi co 28 ngay -> phai clamp, KHONG nhay sang thang 3.
       expect(result.premiumExpiresAt.getUTCFullYear()).toBe(2026);
@@ -240,30 +253,78 @@ describe('grantPremiumMonths', () => {
   });
 
   it('❌ Error: months = 0 → InvalidPremiumMonthsError', async () => {
-    await expect(premiumService.grantPremiumMonths(BASE_USER, 0))
+    await expect(premiumService.grantPremiumMonths('user-1', 0))
       .rejects.toThrow(InvalidPremiumMonthsError);
+    expect(prismaMock.user.findUnique).not.toHaveBeenCalled();
   });
 
   it('❌ Error: months = 25 (ngoài khoảng 1-24) → InvalidPremiumMonthsError', async () => {
-    await expect(premiumService.grantPremiumMonths(BASE_USER, 25))
+    await expect(premiumService.grantPremiumMonths('user-1', 25))
       .rejects.toThrow(InvalidPremiumMonthsError);
   });
 
   it('❌ Error: months không phải số nguyên → InvalidPremiumMonthsError', async () => {
-    await expect(premiumService.grantPremiumMonths(BASE_USER, 1.5))
+    await expect(premiumService.grantPremiumMonths('user-1', 1.5))
       .rejects.toThrow(InvalidPremiumMonthsError);
+  });
+
+  it('❌ Error: user không còn tồn tại (findUnique trả null) → PremiumUserNotFoundError', async () => {
+    prismaMock.user.findUnique.mockResolvedValue(null);
+
+    await expect(premiumService.grantPremiumMonths('no-such-user', 1))
+      .rejects.toThrow(PremiumUserNotFoundError);
+    expect(prismaMock.user.updateMany).not.toHaveBeenCalled();
   });
 
   it('⚠️ Edge: lỗi tạo thông báo KHÔNG làm hỏng luồng cấp Premium chính', async () => {
     const user = { ...BASE_USER, premiumExpiresAt: null, premiumSince: null };
-    prismaMock.user.update.mockImplementation(({ data }: { data: { premiumExpiresAt: Date; premiumSince: Date } }) =>
-      Promise.resolve({ id: 'user-1', premiumExpiresAt: data.premiumExpiresAt, premiumSince: data.premiumSince }),
-    );
+    prismaMock.user.findUnique.mockResolvedValue(user);
+    prismaMock.user.updateMany.mockResolvedValue({ count: 1 });
     notificationMock.createNotification.mockRejectedValue(new Error('DB down'));
 
-    const result = await premiumService.grantPremiumMonths(user, 1);
+    const result = await premiumService.grantPremiumMonths('user-1', 1);
 
     expect(result.id).toBe('user-1');
+  });
+
+  // ─── Race condition (CAS retry) ───────────────────────────────────────────
+
+  it('❌ Race condition: 2 lần cấp Premium gần như đồng thời — lần ghi đầu bị xung đột (count=0) → đọc lại giá trị mới rồi thử lại thành công', async () => {
+    // Lần đọc 1: premiumExpiresAt=null (stale). Lần đọc 2 (sau khi CAS thất bại):
+    // giả lập 1 request song song khác đã cấp Premium 6 tháng trước, giờ giá trị
+    // thực đã có hạn trong tương lai.
+    const staleUser = { ...BASE_USER, premiumExpiresAt: null, premiumSince: null };
+    const freshExpiry = new Date(Date.now() + 180 * 86_400_000); // ~6 tháng
+    const freshSince = new Date(Date.now() - 1000);
+    const freshUser = { ...BASE_USER, premiumExpiresAt: freshExpiry, premiumSince: freshSince };
+
+    prismaMock.user.findUnique
+      .mockResolvedValueOnce(staleUser)
+      .mockResolvedValueOnce(freshUser);
+    // Lần updateMany 1: where khớp premiumExpiresAt=null không còn đúng nữa -> count=0.
+    // Lần updateMany 2: where khớp gia tri moi (freshExpiry/freshSince) -> count=1.
+    prismaMock.user.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    const result = await premiumService.grantPremiumMonths('user-1', 2);
+
+    expect(prismaMock.user.findUnique).toHaveBeenCalledTimes(2);
+    expect(prismaMock.user.updateMany).toHaveBeenCalledTimes(2);
+    // Kết quả cuối phải cộng dồn từ freshExpiry (lần đọc thứ 2), KHÔNG phải từ staleUser.
+    expect(result.streakFreezeReset).toBe(false); // freshUser đang premium còn hạn
+    expect(result.premiumExpiresAt.getTime()).toBeGreaterThan(freshExpiry.getTime());
+    expect(result.premiumSince.getTime()).toBe(freshSince.getTime());
+  });
+
+  it('❌ Race condition: xung đột liên tục vượt quá số lần thử tối đa → PremiumGrantConflictError', async () => {
+    const user = { ...BASE_USER, premiumExpiresAt: null, premiumSince: null };
+    prismaMock.user.findUnique.mockResolvedValue(user);
+    prismaMock.user.updateMany.mockResolvedValue({ count: 0 }); // luôn luôn xung đột
+
+    await expect(premiumService.grantPremiumMonths('user-1', 1))
+      .rejects.toThrow(PremiumGrantConflictError);
+    expect(notificationMock.createNotification).not.toHaveBeenCalled();
   });
 });
 

@@ -305,16 +305,19 @@ export class UsersService {
     }
   }
 
-  // --------------------------------------------------------------------
-  // NOI BO (PRIVATE HELPERS)
-  // --------------------------------------------------------------------
-
   /**
    * Validate va chuan hoa danh sach mon hoc dau vao thanh mang cac MA mon (string[]).
    * Nem `InvalidSubjectsError` voi thong bao cu the cho tung truong hop sai,
    * giup client/FE hien thi loi ro rang cho nguoi dung.
+   *
+   * CONG KHAI (khong con `private`) de route `POST /api/users/subjects` co the
+   * goi validate TRUOC khi tieu thu token mo khoa quang cao cua Free (Feature
+   * 015) — xem giai thich trong `users.route.ts`: neu validate o day chi chay
+   * NGAM BEN TRONG `updateSubjects` (sau khi token da bi xoa), 1 request sai
+   * dinh dang/mon khong hop le se "dot" token vo ich, buoc Free phai xem lai
+   * quang cao dù ho chua he doi mon thanh cong lan nao.
    */
-  private validateAndNormalizeSubjects(subjects: readonly SubjectInput[]): string[] {
+  public validateAndNormalizeSubjects(subjects: readonly SubjectInput[]): string[] {
     if (!Array.isArray(subjects)) {
       throw new InvalidSubjectsError('Truong "subjects" phai la mot mang.');
     }

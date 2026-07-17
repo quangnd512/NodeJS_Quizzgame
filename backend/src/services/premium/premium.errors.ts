@@ -27,3 +27,31 @@ export class InvalidPremiumMonthsError extends PremiumError {
     super(`So thang cap Premium khong hop le: '${String(months)}'. Phai la so nguyen tu 1 den 24.`, 'INVALID_PREMIUM_MONTHS');
   }
 }
+
+/**
+ * Nem ra (cuc hiem) neu user bien mat giua luc grantPremiumMonths dang doc lai
+ * du lieu de tinh CAS (vi du vua bi admin khac xoa tai khoan dung luc nay).
+ * Truong hop binh thuong da duoc chan tu truoc boi AdminUserNotFoundError
+ * (kiem tra ton tai truoc khi goi ham nay) - loi nay chi xay ra trong khoang
+ * thoi gian cuc ngan giua 2 lan doc cua vong lap CAS retry.
+ */
+export class PremiumUserNotFoundError extends PremiumError {
+  constructor(userId: string) {
+    super(`User '${userId}' khong con ton tai.`, 'PREMIUM_USER_NOT_FOUND');
+  }
+}
+
+/**
+ * Nem ra neu grantPremiumMonths() xung dot dong thoi (CAS that bai) qua
+ * MAX_GRANT_CAS_RETRY lan lien tiep - cuc ky hiem trong thuc te (chi xay ra
+ * neu co RAT NHIEU request cap Premium cho CUNG 1 user trong cung 1 khoanh
+ * khac gan nhu tuyet doi dong thoi).
+ */
+export class PremiumGrantConflictError extends PremiumError {
+  constructor() {
+    super(
+      'Qua nhieu xung dot dong thoi khi cap Premium cho user nay, vui long thu lai.',
+      'PREMIUM_GRANT_CONFLICT',
+    );
+  }
+}

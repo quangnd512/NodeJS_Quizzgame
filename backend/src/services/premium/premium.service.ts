@@ -22,7 +22,11 @@
 import type { User } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { notificationService } from '../notification/notification.service.js';
-import { InvalidPremiumMonthsError } from './premium.errors.js';
+import {
+  InvalidPremiumMonthsError,
+  PremiumGrantConflictError,
+  PremiumUserNotFoundError,
+} from './premium.errors.js';
 
 /** Id co dinh cua dong duy nhat trong bang app_settings (xem schema.prisma). */
 const APP_SETTINGS_ID = 'singleton';
@@ -145,6 +149,9 @@ function addMonthsUtc(date: Date, months: number): Date {
   return result;
 }
 
+/** So lan toi da thu lai CAS (compare-and-swap) khi cap Premium gap xung dot dong thoi. */
+const MAX_GRANT_CAS_RETRY = 5;
+
 /**
  * Admin cap Premium thu cong cho 1 user theo so thang (1-24).
  *
@@ -159,55 +166,79 @@ function addMonthsUtc(date: Date, months: number): Date {
  *   - Gui thong bao PREMIUM_GRANTED (fire-and-forget, khong lam that bai
  *     luong chinh neu tao thong bao loi).
  *
- * Nhan vao `user` (ban ghi da duoc fetch san boi noi goi, vi du
- * adminUsersService - noi da chiu trach nhiem kiem tra ton tai / nem 404)
- * thay vi tu fetch lai theo userId, tranh 1 query trung lap khong can thiet.
+ * NHAN `userId` (KHONG nhan san doi tuong `User` da fetch tu ben ngoai) va TU
+ * FETCH BEN TRONG 1 vong lap COMPARE-AND-SWAP (CAS). Ban dau ham nay nhan
+ * `user` da fetch san tu noi goi (de tranh 1 query trung lap) - nhung do la
+ * mot RACE CONDITION: neu 2 admin (hoac double-click) cung cap Premium cho
+ * CUNG 1 user gan nhu dong thoi, ca 2 request co the cung doc duoc du lieu CU
+ * (vi du ca 2 cung thay premiumExpiresAt=null), tinh toan ngay het han rieng
+ * biet, roi lan ghi SAU cung "de len" lan ghi TRUOC - 1 trong 2 lan cap Premium
+ * bi MAT HOAN TOAN thay vi cong don. Dung `updateMany` voi dieu kien WHERE
+ * khop dung ca `premiumExpiresAt` VA `premiumSince` VUA DOC de dam bao chi 1
+ * request thanh cong tai 1 thoi diem; request thua cuoc nhan `count=0`, doc
+ * lai gia tri MOI NHAT va tinh lai tu dau (toi da MAX_GRANT_CAS_RETRY lan).
  *
  * @throws InvalidPremiumMonthsError neu months khong hop le (phong thu tang
  *   cuong - route da validate bang Zod truoc khi goi toi day).
+ * @throws PremiumUserNotFoundError neu user khong con ton tai (cuc hiem).
+ * @throws PremiumGrantConflictError neu xung dot dong thoi qua nhieu lan (cuc hiem).
  */
-async function grantPremiumMonths(user: User, months: number): Promise<GrantPremiumResult> {
+async function grantPremiumMonths(userId: string, months: number): Promise<GrantPremiumResult> {
   if (!Number.isInteger(months) || months < MIN_GRANT_MONTHS || months > MAX_GRANT_MONTHS) {
     throw new InvalidPremiumMonthsError(months);
   }
 
-  const now = new Date();
-  const currentlyPremium = user.premiumExpiresAt !== null && user.premiumExpiresAt.getTime() > now.getTime();
+  for (let attempt = 0; attempt < MAX_GRANT_CAS_RETRY; attempt++) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, premiumExpiresAt: true, premiumSince: true },
+    });
+    if (!user) throw new PremiumUserNotFoundError(userId);
 
-  const baseDate = currentlyPremium ? user.premiumExpiresAt! : now;
-  const newExpiresAt = addMonthsUtc(baseDate, months);
-  const streakFreezeReset = !currentlyPremium;
-  const newPremiumSince = currentlyPremium ? user.premiumSince : now;
+    const now = new Date();
+    const currentlyPremium = user.premiumExpiresAt !== null && user.premiumExpiresAt.getTime() > now.getTime();
 
-  const updated = await prisma.user.update({
-    where: { id: user.id },
-    data: {
+    const baseDate = currentlyPremium ? user.premiumExpiresAt! : now;
+    const newExpiresAt = addMonthsUtc(baseDate, months);
+    const streakFreezeReset = !currentlyPremium;
+    const newPremiumSince = currentlyPremium ? user.premiumSince : now;
+
+    // CAS: chi ghi neu premiumExpiresAt VA premiumSince van dung gia tri VUA
+    // DOC o tren - neu 1 request khac da ghi de trong luc nay, count=0, vong
+    // lap se doc lai gia tri moi nhat va tinh lai (khong bao gio ghi de mu quang).
+    const claimed = await prisma.user.updateMany({
+      where: { id: userId, premiumExpiresAt: user.premiumExpiresAt, premiumSince: user.premiumSince },
+      data: {
+        premiumExpiresAt: newExpiresAt,
+        premiumSince: newPremiumSince,
+        premiumExpiryWarnedAt: null,
+      },
+    });
+    if (claimed.count === 0) continue;
+
+    // Fire-and-forget: loi tao thong bao khong duoc lam hong luong cap Premium chinh.
+    void notificationService.createNotification({
+      userId,
+      type: 'PREMIUM_GRANTED',
+      title: '⭐ Bạn đã được cấp Premium!',
+      body: `Tài khoản của bạn vừa được admin cấp Premium thêm ${months} tháng. Hạn sử dụng mới: ${newExpiresAt.toLocaleDateString('vi-VN')}.`,
+      targetScreen: 'progress',
+      metadata: { months, premiumExpiresAt: newExpiresAt.toISOString() },
+    }).catch((err: unknown) => {
+      console.error('[PremiumService] Loi tao thong bao PREMIUM_GRANTED:', err);
+    });
+
+    return {
+      id: userId,
       premiumExpiresAt: newExpiresAt,
-      premiumSince: newPremiumSince,
-      premiumExpiryWarnedAt: null,
-    },
-    select: { id: true, premiumExpiresAt: true, premiumSince: true },
-  });
+      // Khong the null: currentlyPremium=false -> newPremiumSince=now; currentlyPremium=true
+      // -> user dang premium hop le nen premiumSince da tung duoc set truoc do.
+      premiumSince: newPremiumSince!,
+      streakFreezeReset,
+    };
+  }
 
-  // Fire-and-forget: loi tao thong bao khong duoc lam hong luong cap Premium chinh.
-  void notificationService.createNotification({
-    userId: user.id,
-    type: 'PREMIUM_GRANTED',
-    title: '⭐ Bạn đã được cấp Premium!',
-    body: `Tài khoản của bạn vừa được admin cấp Premium thêm ${months} tháng. Hạn sử dụng mới: ${newExpiresAt.toLocaleDateString('vi-VN')}.`,
-    targetScreen: 'progress',
-    metadata: { months, premiumExpiresAt: newExpiresAt.toISOString() },
-  }).catch((err: unknown) => {
-    console.error('[PremiumService] Loi tao thong bao PREMIUM_GRANTED:', err);
-  });
-
-  return {
-    id: updated.id,
-    // Khong the null vi vua duoc ghi ben tren.
-    premiumExpiresAt: updated.premiumExpiresAt!,
-    premiumSince: updated.premiumSince!,
-    streakFreezeReset,
-  };
+  throw new PremiumGrantConflictError();
 }
 
 /** So mili-giay trong 24 gio - dung cho cua so quet cua cron canh bao sap het han. */

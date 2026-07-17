@@ -98,6 +98,13 @@ usersRouter.post(
  * han. Free BAT BUOC phai co token mo khoa con hieu luc (da goi ad-unlock o
  * tren trong vong 300s gan nhat, CHUA tung dung) - token bi xoa NGAY sau khi
  * tieu thu thanh cong (single-use, moi lan doi mon lai phai xem lai quang cao).
+ *
+ * THU TU XU LY QUAN TRONG: validate TOAN BO du lieu dau vao (dinh dang +
+ * nghiep vu - so luong 1-7 mon, ma mon hop le, khong trung) TRUOC khi tieu
+ * thu token mo khoa. Neu tieu thu token TRUOC khi validate xong (nhu ban dau),
+ * 1 request sai dinh dang/mon khong hop le van "dot" mat token - Free phai
+ * xem lai quang cao du chua he doi mon thanh cong lan nao (edge-case bug da
+ * phat hien va sua o vong review S3).
  */
 usersRouter.post(
   '/subjects',
@@ -108,6 +115,20 @@ usersRouter.post(
   ) => {
     try {
       const userId = req.currentUser!.id;
+      const { subjects } = req.body;
+
+      // Kiem tra dinh dang co ban truoc khi dua xuong service - tranh truong hop
+      // client gui sai kieu hoan toan (vi du gui 1 string thay vi mang).
+      if (!Array.isArray(subjects)) {
+        throw new UsersError('Truong "subjects" phai la mot mang cac doi tuong { id, name }.', 'INVALID_REQUEST_BODY');
+      }
+
+      const normalizedInput: SubjectInput[] = subjects.map((item) => assertSubjectInputShape(item));
+
+      // Validate DAY DU (so luong 1-7, ma mon hop le, khong trung) NGAY BAY GIO -
+      // TRUOC khi cham vao token mo khoa quang cao cua Free. Neu sai o day,
+      // request dung ngay, KHONG tieu thu token (xem giai thich o docblock tren).
+      usersService.validateAndNormalizeSubjects(normalizedInput);
 
       const globalSetting = await premiumService.getGlobalPremiumSetting();
       const isPremium = premiumService.isUserPremium(req.currentUser!, globalSetting);
@@ -120,16 +141,6 @@ usersRouter.post(
           throw new SubjectsChangeLockedError();
         }
       }
-
-      const { subjects } = req.body;
-
-      // Kiem tra dinh dang co ban truoc khi dua xuong service - tranh truong hop
-      // client gui sai kieu hoan toan (vi du gui 1 string thay vi mang).
-      if (!Array.isArray(subjects)) {
-        throw new UsersError('Truong "subjects" phai la mot mang cac doi tuong { id, name }.', 'INVALID_REQUEST_BODY');
-      }
-
-      const normalizedInput: SubjectInput[] = subjects.map((item) => assertSubjectInputShape(item));
 
       // `verifyAppToken` da dam bao `req.currentUser` ton tai.
       const updatedSubjects = await usersService.updateSubjects(userId, normalizedInput);
