@@ -4,6 +4,45 @@
 
 ---
 
+## v1.13.0 — 2026-07-19
+
+### Khung Free/Premium (Feature 015)
+
+**Branch:** `feature/premium-framework`
+
+#### Added
+
+- **Khung Free/Premium**: mọi tài khoản là Free hoặc Premium, xác định qua công tắc toàn cục "Mặc định Premium cho tất cả" (**BẬT SẴN** từ đầu) HOẶC hạn `premiumExpiresAt` cấp thủ công còn hiệu lực
+- **Admin cấp Premium thủ công theo tháng** (1-24) cho từng user — cộng dồn nếu đang Premium còn hạn, kích hoạt mới (reset thẻ bảo hiểm chuỗi) nếu đang Free/hết hạn
+- **Công tắc toàn cục "Mặc định Premium cho tất cả"** trên Admin Dashboard — bật/tắt có hiệu lực ngay lập tức cho mọi user
+- **Gate đổi môn học**: Free phải "xem quảng cáo" giả lập (đếm ngược 5 giây) để mở khoá 1 lượt đổi môn (token Redis single-use, TTL 300s); Premium đổi thoải mái
+- **Khoá hoàn toàn "Ôn lại câu sai"** cho Free — chặn ở backend (middleware `requirePremium`), không chỉ ẩn UI
+- **Khoá hoàn toàn "Lịch sử thi thử"** cho Free (trong trang Tiến độ học tập) — `GET /api/progress/exam-history` trả 403, không trả dữ liệu kể cả rỗng
+- **Khoá "Thống kê theo môn" + "Xu hướng điểm"** ở trang Tiến độ cho Free (bổ sung phạm vi từ S5) — chặn ở backend (trả mảng rỗng), không chỉ ẩn UI
+- **Thẻ bảo hiểm chuỗi (Streak Freeze)**: Premium được cấp 3 thẻ khi kích hoạt, mỗi thẻ tự động "bắc cầu" 1 khoảng trống đúng 1 ngày trong lịch sử ôn tập, không làm đứt streak
+- **Cron cảnh báo Premium sắp hết hạn** — quét hằng ngày 3:05 AM, gửi thông báo trước 24h, chỉ gửi 1 lần/hạn
+- **2 loại thông báo mới**: `PREMIUM_GRANTED`, `PREMIUM_EXPIRING_SOON`
+- **7 endpoint mới**: `POST /api/users/subjects/ad-unlock`, `PATCH /api/admin/users/:id/grant-premium`, `GET/PATCH /api/admin/settings/premium-default`
+- Bảng `app_settings` (singleton) — cấu hình toàn cục dùng chung cho các tính năng sau này
+- Badge "⭐ Premium" ở Trang cá nhân, banner nâng cấp cho các tính năng bị khoá, form cấp Premium trong Admin Dashboard
+
+#### Changed
+
+- `GET /api/users/me` (UserMeDto), `GET /api/progress/summary` mở rộng thêm field Premium (không breaking — chỉ thêm field)
+- `POST /api/users/subjects` — Free bắt buộc có token ad-unlock còn hiệu lực; Premium không đổi hành vi
+
+#### Fixed
+
+- Race condition khi 2 admin cùng cấp Premium cho 1 user gần như đồng thời — có thể làm mất hoàn toàn 1 trong 2 lần cấp (lost update) → sửa bằng Compare-And-Swap có retry
+- Token mở khoá quảng cáo bị tiêu thụ trước khi validate xong dữ liệu đổi môn → sửa bằng cách đổi thứ tự validate trước, tiêu thụ token sau
+- Lỗi CI lint `react-hooks/set-state-in-effect` ở `AdGatePage` (phát hiện qua CI thật sau khi push, không xác minh được cục bộ do sandbox treo I/O với eslint)
+
+**Migration cần chạy trên production:**
+- `npx prisma migrate deploy` — áp dụng migration mới: `add_premium_framework` (thêm bảng `app_settings`, cột Premium trên `User`, giá trị enum `NotificationType` mới)
+- Không có biến môi trường mới cần thêm
+
+---
+
 ## v1.12.0 — 2026-07-15
 
 ### Quản lý câu hỏi — Học sinh đóng góp câu hỏi + Thiết kế lại báo cáo (Feature 014)
