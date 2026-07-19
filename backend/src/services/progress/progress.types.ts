@@ -29,6 +29,13 @@ export interface ScoreTrendPoint {
   subject: string;
 }
 
+/** So the bao hiem chuoi (streak freeze) — chi co y nghia khi isPremium=true; Free luon 0/0/0. */
+export interface StreakFreezeInfo {
+  granted: number;
+  used: number;
+  remaining: number;
+}
+
 /** Ket qua toan bo summary tien do. */
 export interface ProgressSummary {
   overview: ProgressOverview;
@@ -36,6 +43,10 @@ export interface ProgressSummary {
   monthComparison: MonthComparison;
   practiceStatsBySubject: PracticeStats[];
   scoreTrend: ScoreTrendPoint[];
+  /** true neu global toggle bat HOAC premiumExpiresAt con han (xem premiumService.isUserPremium). */
+  isPremium: boolean;
+  premiumExpiresAt: string | null;
+  streakFreeze: StreakFreezeInfo;
 }
 
 /** 1 muc trong lich su thi thu (da hoan thanh). */

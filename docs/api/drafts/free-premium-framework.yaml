@@ -1,0 +1,138 @@
+# API Draft: Khung Free/Premium
+# Feature 015 — S1 draft 2026-07-15
+
+# ============================================================================
+# PHẦN A — Trạng thái Premium của user (đọc)
+# ============================================================================
+endpoints:
+  - method: GET
+    path: /api/users/me
+    change: "Bổ sung field isPremium + premiumExpiresAt vào UserMeDto (không đổi endpoint, chỉ mở rộng response)"
+    response_200_added_fields:
+      isPremium: boolean          # true nếu global toggle bật HOẶC premiumExpiresAt còn hạn
+      premiumExpiresAt: string | null
+
+# ============================================================================
+# PHẦN B — Đổi môn học (gate cho Free)
+# ============================================================================
+
+  - method: POST
+    path: /api/users/subjects/ad-unlock
+    auth: required (user)
+    description: >
+      Free gọi sau khi xem xong "quảng cáo" giả lập (đếm ngược phía FE) để mở khoá
+      1 lượt đổi môn. Premium gọi cũng được nhưng không cần thiết (server bỏ qua,
+      trả về ok luôn vì Premium không bị gate).
+    response_200: { unlocked: true, expiresInSeconds: 300 }
+    side_effects: "Set Redis key premium:ad-unlock:<userId> TTL 300s"
+    errors: [401]
+
+  - method: POST
+    path: /api/users/subjects
+    change: >
+      Nếu user KHÔNG premium: bắt buộc phải có unlock-token còn hiệu lực (kiểm tra
+      + xoá Redis key premium:ad-unlock:<userId>) trước khi cho update, ngược lại
+      403 SUBJECTS_CHANGE_LOCKED. Nếu Premium: bỏ qua kiểm tra, luôn cho đổi.
+    errors_added: [403 SUBJECTS_CHANGE_LOCKED (Free chưa xem quảng cáo)]
+
+# ============================================================================
+# PHẦN C — Ôn lại câu sai (khoá hoàn toàn cho Free)
+# ============================================================================
+
+  - method: GET
+    path: /api/wrong-answers
+    change: "Thêm gate: Free → 403 WRONG_ANSWER_REVIEW_PREMIUM_ONLY"
+    errors_added: [403 WRONG_ANSWER_REVIEW_PREMIUM_ONLY]
+
+  - method: POST
+    path: /api/wrong-answers/:id/retry
+    change: "Cùng gate như trên"
+    errors_added: [403 WRONG_ANSWER_REVIEW_PREMIUM_ONLY]
+
+# ============================================================================
+# PHẦN D — Trang Tiến độ học tập (ẩn Lịch sử thi thử cho Free)
+# ============================================================================
+
+  - method: GET
+    path: /api/progress/summary
+    change: >
+      Bổ sung: isPremium, premiumExpiresAt, streakFreeze { granted, used, remaining }
+      (chỉ có ý nghĩa khi isPremium=true; Free luôn granted=0/used=0/remaining=0).
+      currentStreak/bestStreak trong overview giờ tính theo thuật toán có "bridge"
+      cho Premium (xem Ghi chú kỹ thuật).
+    response_200_added_fields:
+      isPremium: boolean
+      premiumExpiresAt: string | null
+      streakFreeze: { granted: number, used: number, remaining: number }
+
+  - method: GET
+    path: /api/progress/exam-history
+    change: >
+      Free → 403 EXAM_HISTORY_PREMIUM_ONLY (KHÔNG trả về items, kể cả rỗng —
+      chặn hẳn ở backend, không chỉ ẩn UI). Premium → hoạt động như cũ.
+    errors_added: [403 EXAM_HISTORY_PREMIUM_ONLY]
+
+# ============================================================================
+# PHẦN E — Admin: cấp Premium thủ công + công tắc mặc định toàn cục
+# ============================================================================
+
+  - method: PATCH
+    path: /api/admin/users/:id/grant-premium
+    auth: required (X-Admin-Secret)
+    request: { months: number }  # nguyên dương, 1-24
+    response_200: { id: string, premiumExpiresAt: string, premiumSince: string, streakFreezeReset: boolean }
+    side_effects:
+      - "Nếu user HIỆN TẠI KHÔNG premium (premiumExpiresAt null hoặc đã qua hạn):
+         premiumSince = now, streak freeze coi như reset về 3 (không cần field DB,
+         tính lại từ premiumSince mới)"
+      - "Nếu user ĐANG premium còn hạn: premiumExpiresAt = premiumExpiresAt cũ + N tháng
+         (cộng dồn), premiumSince GIỮ NGUYÊN (không reset freeze)"
+      - "premiumExpiryWarnedAt reset về null (để cron cảnh báo lại đúng hạn mới)"
+      - "notificationService.create(userId, PREMIUM_GRANTED)"
+    errors: [400 (months không hợp lệ), 401, 404]
+
+  - method: GET
+    path: /api/admin/settings/premium-default
+    auth: required (X-Admin-Secret)
+    response_200: { enabled: boolean }
+
+  - method: PATCH
+    path: /api/admin/settings/premium-default
+    auth: required (X-Admin-Secret)
+    request: { enabled: boolean }
+    response_200: { enabled: boolean }
+    side_effects: "Invalidate in-memory cache của premium.service ngay lập tức"
+    errors: [400, 401]
+
+# ============================================================================
+# Ghi chú kỹ thuật
+# ============================================================================
+notes:
+  - "DB mới: User += premiumExpiresAt DateTime?, premiumSince DateTime?,
+     premiumExpiryWarnedAt DateTime?. Model mới AppSettings (singleton row,
+     id cố định 'singleton', field defaultPremiumForAll Boolean @default(true))."
+  - "NotificationType += PREMIUM_GRANTED, PREMIUM_EXPIRING_SOON."
+  - "isUserPremium(user, globalSetting) = globalSetting.defaultPremiumForAll ||
+     (user.premiumExpiresAt !== null && user.premiumExpiresAt > now)."
+  - "Streak freeze KHÔNG lưu field 'remaining' riêng trong DB — tính thuần tuý
+     (pure function) từ: danh sách ngày hoàn thành phiên ôn tập + premiumSince
+     hiệu lực (nếu global toggle bật thì coi premiumSince = user.createdAt,
+     tức toàn bộ lịch sử đều được tính) + hằng số STREAK_FREEZE_GRANT = 3.
+     Thuật toán: duyệt các khoảng trống giữa những ngày có hoạt động theo thứ tự
+     THỜI GIAN (cũ → mới); mỗi khoảng trống ĐÚNG 1 ngày xảy ra SAU premiumSince
+     hiệu lực sẽ 'bắc cầu' (coi như streak không đứt) và trừ 1 vé, cho đến khi
+     hết 3 vé thì thôi (khoảng trống >1 ngày luôn làm đứt streak dù còn vé).
+     Áp dụng thống nhất ở CẢ progress.service.ts (hiển thị) và
+     practice.service.ts checkAndFireStreakMilestone (bắn thông báo mốc streak)
+     để không bị lệch nhau."
+  - "Cron mới (thêm cạnh cron cleanup có sẵn trong server.ts, chạy hằng ngày):
+     quét user có premiumExpiresAt trong khoảng (now, now+24h] VÀ
+     premiumExpiryWarnedAt còn null (hoặc cũ hơn premiumExpiresAt hiện tại) →
+     gửi PREMIUM_EXPIRING_SOON + set premiumExpiryWarnedAt = now."
+  - "Ad-unlock dùng Redis (đã có sẵn client redis.ts) — key
+     premium:ad-unlock:<userId>, TTL 300s, single-use (xoá ngay sau khi
+     POST /api/users/subjects tiêu thụ thành công)."
+  - "UserMeDto hiện bị lặp code ở 4 chỗ trong users.service.ts (getProfile,
+     updateProfile, uploadAvatar, removeAvatar) — nhân tiện tách thành 1 hàm
+     dùng chung toUserMeDto(user, points) khi thêm field isPremium/premiumExpiresAt,
+     tránh phải sửa lặp lại 4 nơi mỗi khi đổi DTO sau này."

@@ -17,6 +17,8 @@ export type NotificationMetadata =
   | { submissionId: string; questionBankId: string; pointsAwarded: number }  // SUBMISSION_APPROVED
   | { submissionId: string; note: string }                                   // SUBMISSION_REJECTED
   | { submissionId: string; pointsAwarded: number; totalUsagePoints: number } // SUBMISSION_USED
+  | { months: number; premiumExpiresAt: string }                             // PREMIUM_GRANTED
+  | { premiumExpiresAt: string }                                             // PREMIUM_EXPIRING_SOON
   | Record<string, unknown>;
 
 /// Item thông báo trả về cho frontend.

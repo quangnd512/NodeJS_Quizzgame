@@ -47,3 +47,17 @@ export class AvatarError extends UsersError {
     super(message, code);
   }
 }
+
+/**
+ * Nem ra khi user Free doi mon hoc dang on (POST /api/users/subjects) ma
+ * CHUA goi POST /api/users/subjects/ad-unlock truoc do (hoac token da het
+ * han/da tieu thu) — Feature 015 (Free/Premium).
+ */
+export class SubjectsChangeLockedError extends UsersError {
+  constructor() {
+    super(
+      'Ban can xem quang cao de mo khoa doi mon hoc (goi POST /api/users/subjects/ad-unlock truoc).',
+      'SUBJECTS_CHANGE_LOCKED',
+    );
+  }
+}

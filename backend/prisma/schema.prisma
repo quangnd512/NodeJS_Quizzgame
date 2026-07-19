@@ -76,6 +76,23 @@ model User {
   /// STUDENT: hoc sinh binh thuong. ADMIN: co quyen quan tri he thong.
   role        String   @default("STUDENT")
 
+  /// Thoi diem het han Premium (duoc admin cap thu cong theo thang).
+  /// null = chua tung duoc cap Premium thu cong (van co the la Premium neu
+  /// cong tac toan cuc AppSettings.defaultPremiumForAll dang BAT).
+  /// isUserPremium() = defaultPremiumForAll || (premiumExpiresAt != null && > now).
+  premiumExpiresAt      DateTime?
+
+  /// Thoi diem Premium duoc kich hoat LAN GAN NHAT (dung lam moc tinh streak
+  /// freeze - xem computeStreaksWithFreeze). Chi RESET khi user dang KHONG
+  /// premium (het han/chua co) va duoc cap moi; neu dang premium con han va
+  /// duoc cap dồn them thang thi GIU NGUYEN gia tri nay (khong reset freeze).
+  premiumSince          DateTime?
+
+  /// Thoi diem da gui thong bao PREMIUM_EXPIRING_SOON cho han Premium HIEN TAI.
+  /// Dung de cron canh bao khong gui lap lai nhieu lan cho cung 1 han; duoc
+  /// reset ve null moi khi premiumExpiresAt thay doi (cap them thang moi).
+  premiumExpiryWarnedAt DateTime?
+
   wrongAnswers  WrongAnswer[]
   notifications Notification[]
   submissions   StudentQuestionSubmission[]
@@ -83,7 +100,29 @@ model User {
   /// Index ho tro filter nhanh theo trang thai khoa va vai tro trong admin panel.
   @@index([isBlocked])
   @@index([role])
+  /// Index ho tro cron quet user sap het han Premium (WHERE premiumExpiresAt BETWEEN now AND now+24h).
+  @@index([premiumExpiresAt])
   @@map("users")
+}
+
+/// Bang cau hinh toan cuc cua ung dung - CHI 1 dong duy nhat (singleton,
+/// id co dinh "singleton"). Hien tai chi dung cho cong tac Free/Premium
+/// nhung de ten chung (AppSettings) de mo rong sau nay neu can them cau
+/// hinh toan cuc khac, tranh phai tao bang moi.
+model AppSettings {
+  /// Id co dinh "singleton" - dam bao CHI CO 1 dong duy nhat trong bang nay.
+  id String @id @default("singleton")
+
+  /// true = MOI tai khoan (cu lan moi) deu duoc coi la Premium cho toi khi
+  /// admin tu tat cong tac nay. BAT SAN tu dau (mac dinh true) theo yeu cau
+  /// nghiep vu. Khi tat: user KHONG co premiumExpiresAt con han se thanh Free
+  /// ngay (khong can restart server - premium.service co cache in-memory,
+  /// invalidate ngay khi PATCH endpoint nay).
+  defaultPremiumForAll Boolean @default(true)
+
+  updatedAt DateTime @updatedAt
+
+  @@map("app_settings")
 }
 
 /// Bang luu so du diem tich luy hien tai cua tung nguoi dung.
@@ -633,6 +672,10 @@ enum NotificationType {
   SUBMISSION_REJECTED
   /// Cau hoi hoc sinh gui duoc dung trong 1 de thi (thuong them diem usage).
   SUBMISSION_USED
+  /// Admin cap Premium thu cong cho user (theo thang).
+  PREMIUM_GRANTED
+  /// Premium sap het han trong 24h toi (cron hang ngay quet va gui 1 lan duy nhat).
+  PREMIUM_EXPIRING_SOON
 }
 
 /// Bang luu thong bao cho tung nguoi dung.

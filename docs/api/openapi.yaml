@@ -1,25 +1,41 @@
 openapi: 3.0.3
 info:
   title: QuizzGame API — Practice, Thi thử, Admin, Ngân hàng câu hỏi & Leaderboard
-  version: "1.5.0"
+  version: "1.6.0"
   description: >-
     Contract cho module Ôn tập (Practice), module Thi thử (Exam/Mock Exam),
     các endpoint Admin liên quan (quản lý câu hỏi, xử lý báo cáo câu hỏi,
     quản lý đề thi thử), Ngân hàng câu hỏi (Question Bank),
     Bảng xếp hạng (Leaderboard), Ảnh đại diện (Avatar), Thông báo
-    (Notifications) và Học sinh đóng góp câu hỏi (Submissions).
+    (Notifications), Học sinh đóng góp câu hỏi (Submissions) và Khung
+    Free/Premium.
     Khớp với `docs/FEATURE_LOG.md` Section 4 (Practice Module), Section 5
     (Admin Dashboard), Section 6 (Exam Module), Section 7 (Ngân hàng câu hỏi),
     Section 8 (Leaderboard & Avatar), Section 13 (Notifications), Section 14
-    (Quản lý câu hỏi — Submissions + Report Redesign).
+    (Quản lý câu hỏi — Submissions + Report Redesign), Section 15 (Khung
+    Free/Premium).
 
-    Các endpoint Auth, Onboarding, Points chưa được mô tả trong file này.
+    Các endpoint Auth, Onboarding (đăng nhập, tạo hồ sơ), Points chưa được mô
+    tả trong file này — ngoại lệ 2 endpoint đổi môn học (`/api/users/subjects*`)
+    được thêm riêng vì là trọng tâm gate Free/Premium.
 
     ⚠️ **v1.5.0 — Breaking change**: `PATCH /api/admin/questions/reports/{id}`
     (cũ) đã bị XOÁ, thay bằng `PATCH /api/admin/questions/reports/{id}/resolve`
     (chỉ nhận `FIXED`/`DISMISSED`, không còn `REVIEWED`). Response của
     `GET /api/admin/questions/reports/summary` đổi field `pending`→`pendingReports`,
     `reviewed`→`pendingQuestions` (ý nghĩa khác hẳn). Xem chi tiết ở từng endpoint.
+
+    ⚠️ **v1.6.0 — Feature 015 (Khung Free/Premium)**: `GET /api/users/me`
+    (schema `UserMeDto`) và `GET /api/progress/summary` mở rộng thêm field
+    Premium (không breaking — chỉ thêm field). `GET /api/wrong-answers*` và
+    `GET /api/progress/exam-history` thêm gate 403 cho Free (Premium hoạt
+    động y hệt trước). 2 endpoint mới `/api/users/subjects*` (đổi môn) và 3
+    endpoint admin mới `/api/admin/users/{id}/grant-premium` +
+    `/api/admin/settings/premium-default`. Nhân tiện sửa: 12 endpoint
+    (`/api/admin/question-bank*`, `/api/leaderboard*`, `/api/users/me/avatar`,
+    `/api/progress/*`, `/api/wrong-answers*`) trước đó bị lồng SAI vào trong
+    `components:` do lỗi indent YAML từ vòng trước — đã chuyển đúng về
+    `paths:` (không đổi nội dung, chỉ đổi vị trí cấu trúc).
 
 servers:
   - url: http://localhost:4000
@@ -1888,6 +1904,939 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
 
+  # ─────────────────────── Question Bank paths ─────────────────────────
+  /api/admin/question-bank:
+    get:
+      tags: [QuestionBank]
+      summary: Danh sách câu hỏi trong kho (filter + phân trang)
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - name: subject
+          in: query
+          schema: { $ref: '#/components/schemas/SubjectId' }
+        - name: chapter
+          in: query
+          schema: { type: string, maxLength: 200 }
+        - name: difficulty
+          in: query
+          schema: { type: integer, enum: [1, 2, 3] }
+        - name: search
+          in: query
+          schema: { type: string, maxLength: 200 }
+          description: Tìm kiếm theo nội dung câu hỏi (contains, case-insensitive)
+        - name: isActive
+          in: query
+          schema: { type: string, enum: ['true', 'false'] }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: Danh sách câu hỏi
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuestionBankListResult' }
+        '400':
+          description: Query param không hợp lệ
+        '401':
+          description: Thiếu hoặc sai X-Admin-Secret
+
+    post:
+      tags: [QuestionBank]
+      summary: Tạo câu hỏi mới trong kho
+      security: [{ AdminSecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject, difficulty, questionType, points, questionText, correctAnswer]
+              properties:
+                subject: { $ref: '#/components/schemas/SubjectId' }
+                chapter: { type: string, maxLength: 200 }
+                difficulty: { type: integer, enum: [1, 2, 3] }
+                questionType: { type: string, enum: [MCQ_4, TRUE_FALSE_4, FILL_BLANK] }
+                points: { type: number, minimum: 0.01 }
+                questionText: { type: string, minLength: 1, maxLength: 4000 }
+                options:
+                  type: array
+                  items: { type: string, minLength: 1 }
+                  minItems: 4
+                  maxItems: 4
+                  description: Bắt buộc với MCQ_4 và TRUE_FALSE_4; bỏ qua với FILL_BLANK
+                correctAnswer:
+                  oneOf:
+                    - type: integer
+                    - type: array
+                      items: { type: boolean }
+                    - type: array
+                      items: { type: string }
+                explanation: { type: string, maxLength: 4000 }
+                examYear: { type: integer, minimum: 2000, maximum: 2100 }
+                examCode: { type: string, maxLength: 50 }
+      responses:
+        '201':
+          description: Câu hỏi đã được tạo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuestionBankSummaryDto' }
+        '400':
+          description: Dữ liệu không hợp lệ (thiếu trường, sai định dạng, options/correctAnswer không khớp questionType)
+        '401':
+          description: Thiếu hoặc sai X-Admin-Secret
+
+  /api/admin/question-bank/{id}/usage:
+    get:
+      tags: [QuestionBank]
+      summary: Kiểm tra câu hỏi đang được dùng ở đề nào
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Thông tin usage của câu hỏi
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuestionBankUsageDto' }
+        '401':
+          description: Thiếu hoặc sai X-Admin-Secret
+        '404':
+          description: Câu hỏi không tồn tại trong kho
+
+  /api/admin/question-bank/{id}:
+    put:
+      tags: [QuestionBank]
+      summary: Cập nhật câu hỏi trong kho (partial update)
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Tất cả trường đều tùy chọn — chỉ trường có trong body mới được cập nhật
+              properties:
+                subject: { $ref: '#/components/schemas/SubjectId' }
+                chapter: { type: string, maxLength: 200, nullable: true }
+                difficulty: { type: integer, enum: [1, 2, 3] }
+                questionType: { type: string, enum: [MCQ_4, TRUE_FALSE_4, FILL_BLANK] }
+                points: { type: number, minimum: 0.01 }
+                questionText: { type: string, minLength: 1, maxLength: 4000 }
+                options:
+                  type: array
+                  items: { type: string }
+                correctAnswer:
+                  oneOf:
+                    - type: integer
+                    - type: array
+                      items: { type: boolean }
+                    - type: array
+                      items: { type: string }
+                explanation: { type: string, maxLength: 4000, nullable: true }
+                examYear: { type: integer, nullable: true }
+                examCode: { type: string, nullable: true }
+                isActive: { type: boolean }
+      responses:
+        '200':
+          description: Câu hỏi sau khi cập nhật
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuestionBankSummaryDto' }
+        '400':
+          description: Dữ liệu không hợp lệ
+        '401':
+          description: Thiếu hoặc sai X-Admin-Secret
+        '404':
+          description: Câu hỏi không tồn tại trong kho
+
+    delete:
+      tags: [QuestionBank]
+      summary: Hard delete câu hỏi khỏi kho (có guard phiên IN_PROGRESS)
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Xóa thành công
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: "Da xoa cau hoi khoi ngan hang thanh cong." }
+        '401':
+          description: Thiếu hoặc sai X-Admin-Secret
+        '404':
+          description: Câu hỏi không tồn tại trong kho
+        '409':
+          description: Không thể xóa vì còn ExamSession IN_PROGRESS đang dùng câu này
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string, example: QUESTION_BANK_DELETE_BLOCKED }
+                  message: { type: string }
+
+  /api/admin/exam-papers/{id}/questions/from-bank:
+    post:
+      tags: [QuestionBank, Admin]
+      summary: Thêm nhiều câu từ kho vào đề thi (batch, skip duplicate)
+      description: >-
+        **Side effect mới (v1.5.0, Feature 014)**: sau khi commit, với mỗi câu
+        vừa thêm bắt nguồn từ 1 `StudentQuestionSubmission` đã `APPROVED`,
+        server cộng thêm điểm "usage" cho học sinh gửi câu đó (fire-and-forget,
+        dùng Compare-And-Swap để tránh cộng thiếu khi nhiều request chạy song
+        song) — `min(SUBMISSION_USAGE_POINTS_PER_USE=5, 100 - đã_nhận)` điểm,
+        tăng `usageCount`, gửi thông báo `SUBMISSION_USED`. KHÔNG áp dụng cho
+        endpoint `auto-fill` bên dưới (chỉ trigger khi admin chủ động chọn câu
+        qua `from-bank`).
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: ID của đề thi (`examPaperId`)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [questionBankIds]
+              properties:
+                questionBankIds:
+                  type: array
+                  items: { type: string, format: uuid }
+                  minItems: 1
+                  maxItems: 100
+      responses:
+        '200':
+          description: Kết quả thêm câu từ kho
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AddFromBankResult' }
+        '400':
+          description: questionBankIds rỗng, vượt 100, hoặc không phải UUID
+        '401':
+          description: Thiếu hoặc sai X-Admin-Secret
+        '404':
+          description: examPaperId không tồn tại
+
+  /api/admin/exam-papers/{id}/questions/auto-fill:
+    post:
+      tags: [QuestionBank, Admin]
+      summary: Tự động lấy N câu ngẫu nhiên từ kho vào đề thi (50% dễ / 30% TB / 20% khó)
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: ID của đề thi (`examPaperId`)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [count]
+              properties:
+                count:
+                  type: integer
+                  minimum: 1
+                  maximum: 200
+                  description: Tổng số câu cần thêm (phân phối 50% dễ / 30% TB / 20% khó)
+      responses:
+        '200':
+          description: Kết quả tự động điền câu từ kho
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutoFillFromBankResult' }
+        '400':
+          description: count không hợp lệ (không phải số nguyên dương hoặc vượt 200)
+        '401':
+          description: Thiếu hoặc sai X-Admin-Secret
+        '404':
+          description: examPaperId không tồn tại
+
+  # ─── LEADERBOARD ─────────────────────────────────────────────────────────────
+
+  /api/leaderboard:
+    get:
+      summary: Lấy danh sách xếp hạng học sinh theo Điểm Uy Tín
+      tags: [Leaderboard]
+      security:
+        - SessionToken: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+          description: Số trang (10 người/trang)
+        - name: subject
+          in: query
+          schema: { type: string }
+          description: Lọc theo mã môn học (ví dụ TOAN, VAN). Để trống = tất cả môn.
+      responses:
+        '200':
+          description: Danh sách xếp hạng
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, total, page, pageSize]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [rank, userId, displayName, avatarUrl, reputationScore, avgScore, examCount, trend]
+                      properties:
+                        rank:
+                          type: integer
+                        userId:
+                          type: string
+                          format: uuid
+                        displayName:
+                          type: string
+                          nullable: true
+                        avatarUrl:
+                          type: string
+                          nullable: true
+                          description: URL tương đối (/uploads/avatars/<id>.jpg) hoặc null
+                        reputationScore:
+                          type: number
+                          description: Điểm Uy Tín (làm tròn 2 chữ số thập phân)
+                        avgScore:
+                          type: number
+                        examCount:
+                          type: integer
+                        trend:
+                          type: string
+                          enum: [up, down, same, new]
+                  total:
+                    type: integer
+                  page:
+                    type: integer
+                  pageSize:
+                    type: integer
+                    example: 20
+        '401':
+          description: Thiếu hoặc sai session token
+
+  /api/leaderboard/me:
+    get:
+      summary: Lấy hạng và chỉ số Điểm Uy Tín của user đang đăng nhập
+      tags: [Leaderboard]
+      security:
+        - SessionToken: []
+      parameters:
+        - name: subject
+          in: query
+          schema: { type: string }
+          description: Lọc theo mã môn (tùy chọn)
+      responses:
+        '200':
+          description: Hạng của user hiện tại (rank = null nếu chưa thi lần nào)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rank, reputationScore, avgScore, examCount, trend]
+                properties:
+                  rank:
+                    type: integer
+                    nullable: true
+                  reputationScore:
+                    type: number
+                    nullable: true
+                  avgScore:
+                    type: number
+                    nullable: true
+                  examCount:
+                    type: integer
+                  trend:
+                    type: string
+                    nullable: true
+                    enum: [up, down, same, new]
+        '401':
+          description: Thiếu hoặc sai session token
+
+  # ─── Free/Premium — Đổi môn học (Feature 015) ──────────────────────────────
+  # Lưu ý: các endpoint Auth/Onboarding khác (đăng nhập, tạo hồ sơ...) chưa
+  # được mô tả trong file này (xem `info.description`) — 2 endpoint dưới đây
+  # được thêm riêng vì là trọng tâm của gate Free/Premium (Feature 015).
+
+  /api/users/subjects/ad-unlock:
+    post:
+      summary: Mở khoá 1 lượt đổi môn học cho Free (sau khi "xem quảng cáo")
+      description: >-
+        Feature 015 (Free/Premium). Free gọi endpoint này SAU KHI đã "xem
+        xong" quảng cáo giả lập (đếm ngược 5 giây phía FE, không có quảng cáo
+        thật) để mở khoá 1 lượt đổi môn. Premium gọi cũng được (không sai)
+        nhưng không cần thiết — Premium không bị gate ở `POST /api/users/subjects`.
+      tags: [Users]
+      security:
+        - SessionToken: []
+      responses:
+        '200':
+          description: Đã mở khoá — set Redis key `premium:ad-unlock:<userId>` TTL 300s
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unlocked: { type: boolean, enum: [true] }
+                  expiresInSeconds: { type: integer, example: 300 }
+              example: { unlocked: true, expiresInSeconds: 300 }
+        '401':
+          description: Thiếu hoặc sai session token
+
+  /api/users/subjects:
+    post:
+      summary: Cập nhật danh sách môn học đăng ký ôn thi (đổi môn)
+      description: >-
+        ⚠️ **Gate Free/Premium (Feature 015)**: Premium đổi môn thoải mái,
+        không giới hạn. Free BẮT BUỘC phải có token mở khoá còn hiệu lực (đã
+        gọi `POST /api/users/subjects/ad-unlock` trong vòng 300s gần nhất,
+        CHƯA từng dùng) — token bị xoá NGAY sau khi tiêu thụ thành công
+        (single-use, mỗi lần đổi môn lại phải xem lại quảng cáo).
+
+        **Thứ tự xử lý quan trọng**: server validate TOÀN BỘ dữ liệu đầu vào
+        (số lượng 1-7 môn, mã môn hợp lệ, không trùng) TRƯỚC khi tiêu thụ
+        token mở khoá — nếu validate trước đó bị đảo ngược, 1 request sai định
+        dạng vẫn "đốt" mất token oan (bug đã phát hiện và sửa ở review S3, xem
+        `docs/FEATURE_LOG.md` Section 15).
+      tags: [Users]
+      security:
+        - SessionToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subjects]
+              properties:
+                subjects:
+                  type: array
+                  minItems: 1
+                  maxItems: 7
+                  items:
+                    type: object
+                    required: [id]
+                    properties:
+                      id: { type: string, example: TOAN }
+            example:
+              subjects: [{ id: TOAN }, { id: VAN }]
+      responses:
+        '200':
+          description: Danh sách môn học sau khi cập nhật
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subjects:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+        '400':
+          description: Số lượng môn ngoài khoảng 1-7, mã môn không hợp lệ, hoặc trùng lặp
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Thiếu hoặc sai session token
+        '403':
+          description: >-
+            Feature 015 — Free chưa gọi `ad-unlock` (hoặc token đã hết
+            hạn/đã dùng) (`SUBJECTS_CHANGE_LOCKED`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: SUBJECTS_CHANGE_LOCKED
+                message: 'Ban can xem quang cao de mo khoa doi mon hoc (goi POST /api/users/subjects/ad-unlock truoc).'
+
+  # ─── Admin: Free/Premium (Feature 015) ─────────────────────────────────────
+
+  /api/admin/users/{id}/grant-premium:
+    patch:
+      summary: Admin cấp Premium thủ công cho 1 user theo số tháng (1-24)
+      description: >-
+        Nếu user hiện KHÔNG Premium (hết hạn/chưa từng có): kích hoạt MỚI —
+        `premiumSince = now`, streak freeze coi như reset về 3 thẻ
+        (`streakFreezeReset: true`). Nếu user ĐANG Premium còn hạn: cộng DỒN
+        thêm `months` tháng từ hạn cũ (không phải từ `now`), `premiumSince`
+        GIỮ NGUYÊN (`streakFreezeReset: false`). `premiumExpiryWarnedAt` luôn
+        reset về `null` để cron cảnh báo gửi lại đúng hạn mới. Gửi thông báo
+        `PREMIUM_GRANTED` (fire-and-forget). Dùng Compare-And-Swap nội bộ để
+        chống lost update khi 2 admin cấp gần như đồng thời (xem
+        `docs/FEATURE_LOG.md` Section 15).
+      tags: [Admin]
+      security: [{ AdminSecret: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [months]
+              properties:
+                months: { type: integer, minimum: 1, maximum: 24 }
+            example: { months: 3 }
+      responses:
+        '200':
+          description: Kết quả cấp Premium
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantPremiumResultDto'
+              example:
+                id: 550e8400-e29b-41d4-a716-446655440000
+                premiumExpiresAt: '2026-10-17T00:00:00.000Z'
+                premiumSince: '2026-07-17T00:00:00.000Z'
+                streakFreezeReset: true
+        '400':
+          description: '`months` không hợp lệ (không phải số nguyên 1-24) (INVALID_PREMIUM_MONTHS)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+        '404':
+          description: Không tìm thấy user (ADMIN_USER_NOT_FOUND)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: >-
+            Cực hiếm — xung đột Compare-And-Swap quá 5 lần thử liên tiếp
+            (PREMIUM_GRANT_CONFLICT), thử lại request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/admin/settings/premium-default:
+    get:
+      summary: Đọc công tắc toàn cục "Mặc định Premium cho tất cả"
+      tags: [Admin]
+      security: [{ AdminSecret: [] }]
+      responses:
+        '200':
+          description: Trạng thái công tắc hiện tại
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+              example: { enabled: true }
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+    patch:
+      summary: Bật/tắt công tắc toàn cục "Mặc định Premium cho tất cả"
+      description: >-
+        Khi BẬT: mọi tài khoản (cũ lẫn mới) đều được coi là Premium — mặc
+        định BẬT SẴN từ đầu theo yêu cầu nghiệp vụ. Khi TẮT: chỉ user có
+        `premiumExpiresAt` còn hạn mới là Premium. Invalidate cache in-memory
+        của `premiumService` NGAY LẬP TỨC (không cần restart server, không có
+        độ trễ TTL).
+      tags: [Admin]
+      security: [{ AdminSecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+            example: { enabled: false }
+      responses:
+        '200':
+          description: Trạng thái công tắc sau khi cập nhật
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+              example: { enabled: false }
+        '400':
+          description: Thiếu/sai kiểu `enabled`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/AdminUnauthorized'
+
+  # ─── AVATAR ──────────────────────────────────────────────────────────────────
+
+  /api/users/me/avatar:
+    post:
+      summary: Upload ảnh đại diện (multipart/form-data, field "avatar")
+      tags: [Users]
+      security:
+        - SessionToken: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [avatar]
+              properties:
+                avatar:
+                  type: string
+                  format: binary
+                  description: File ảnh JPG hoặc PNG, tối đa 2MB
+      responses:
+        '200':
+          description: Profile đầy đủ sau khi upload (avatarUrl đã cập nhật)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserMeDto' }
+        '400':
+          description: |
+            Lỗi file — AVATAR_NO_FILE / AVATAR_INVALID_TYPE / AVATAR_FILE_TOO_LARGE
+        '401':
+          description: Thiếu hoặc sai session token
+    delete:
+      summary: Xóa ảnh đại diện (set avatarUrl = null, xóa file vật lý)
+      tags: [Users]
+      security:
+        - SessionToken: []
+      responses:
+        '200':
+          description: Profile đầy đủ sau khi xóa (avatarUrl = null)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserMeDto' }
+        '400':
+          description: AVATAR_NOT_FOUND — User chưa có ảnh đại diện
+        '401':
+          description: Thiếu hoặc sai session token
+
+  # ─── Progress ─────────────────────────────────────────────────────────────
+
+  /api/progress/summary:
+    get:
+      summary: Tổng hợp tiến độ học tập của user đang đăng nhập
+      description: >-
+        **Feature 015 (Free/Premium)**: response mở rộng thêm `isPremium`,
+        `premiumExpiresAt`, `streakFreeze`. `overview.currentStreak`/`bestStreak`
+        giờ tính bằng thuật toán có "thẻ bảo hiểm chuỗi" (streak freeze) cho
+        Premium — xem `docs/FEATURE_LOG.md` Section 15 mục "Luồng chạy". Free
+        luôn có `streakFreeze: { granted: 0, used: 0, remaining: 0 }` và
+        streak tính y hệt thuật toán cũ (không bắc cầu khoảng trống nào).
+      tags: [Progress]
+      security:
+        - SessionToken: []
+      responses:
+        '200':
+          description: ProgressSummary đầy đủ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  overview:
+                    type: object
+                    properties:
+                      totalPracticeSessions: { type: integer, example: 15 }
+                      totalExamSessions:     { type: integer, example: 3 }
+                      currentPoints:         { type: integer, example: 500 }
+                      currentStreak:         { type: integer, example: 3 }
+                  bestStreak:
+                    type: integer
+                    example: 7
+                  monthComparison:
+                    type: object
+                    properties:
+                      thisMonth:
+                        type: object
+                        properties:
+                          practiceSessions: { type: integer, example: 8 }
+                          examAvgScore:     { type: number, nullable: true, example: 7.5 }
+                      lastMonth:
+                        type: object
+                        properties:
+                          practiceSessions: { type: integer, example: 7 }
+                          examAvgScore:     { type: number, nullable: true, example: null }
+                  practiceStatsBySubject:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        subject:        { type: string, example: "TOAN" }
+                        totalSessions:  { type: integer, example: 10 }
+                        avgScore:       { type: number, example: 10.2 }
+                        bestScore:      { type: integer, example: 13 }
+                        accuracyByDifficulty:
+                          type: object
+                          additionalProperties: { type: number }
+                          example: { "1": 0.96, "2": 0.74, "3": 0.52 }
+                  scoreTrend:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        date:    { type: string, format: date-time }
+                        score:   { type: integer }
+                        subject: { type: string }
+                  isPremium:
+                    type: boolean
+                    description: 'Mới ở Feature 015 — xem premiumService.isUserPremium.'
+                  premiumExpiresAt:
+                    type: string
+                    format: date-time
+                    nullable: true
+                    description: Mới ở Feature 015.
+                  streakFreeze:
+                    $ref: '#/components/schemas/StreakFreezeInfo'
+              example:
+                overview: { totalPracticeSessions: 15, totalExamSessions: 3, currentPoints: 500, currentStreak: 8 }
+                bestStreak: 8
+                monthComparison:
+                  thisMonth: { practiceSessions: 8, examAvgScore: 7.5 }
+                  lastMonth: { practiceSessions: 7, examAvgScore: null }
+                practiceStatsBySubject: []
+                scoreTrend: []
+                isPremium: true
+                premiumExpiresAt: '2026-10-17T00:00:00.000Z'
+                streakFreeze: { granted: 3, used: 1, remaining: 2 }
+        '401':
+          description: Thiếu hoặc sai session token
+
+  /api/progress/exam-history:
+    get:
+      summary: Lịch sử thi thử đã hoàn thành của user (có phân trang)
+      description: >-
+        ⚠️ **Premium only (Feature 015)**: Free nhận `403` NGAY, KHÔNG trả
+        `items` kể cả mảng rỗng — chặn hẳn ở backend (khác với
+        `overview`/`bestStreak` ở `GET /api/progress/summary` vẫn hoạt động
+        bình thường cho Free).
+      tags: [Progress]
+      security:
+        - SessionToken: []
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 10, minimum: 1, maximum: 50 }
+          description: Số bản ghi mỗi trang (clamp 1–50)
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0, minimum: 0 }
+          description: Vị trí bắt đầu
+      responses:
+        '200':
+          description: Danh sách phiên thi thử đã hoàn thành
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:            { type: string, format: uuid }
+                        examPaperId:   { type: string, format: uuid }
+                        title:         { type: string, example: "Đề thi thử THPT QG 2024" }
+                        subject:       { type: string, example: "TOAN" }
+                        score:         { type: number, nullable: true, example: 8.5 }
+                        pointsAwarded: { type: integer, example: 80 }
+                        completedAt:   { type: string, format: date-time }
+                  total:  { type: integer, example: 3 }
+                  limit:  { type: integer, example: 10 }
+                  offset: { type: integer, example: 0 }
+        '401':
+          description: Thiếu hoặc sai session token
+        '403':
+          description: 'Feature 015 — user Free (EXAM_HISTORY_PREMIUM_ONLY).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: EXAM_HISTORY_PREMIUM_ONLY
+                message: 'Tinh nang "Lich su thi thu" chi danh cho tai khoan Premium.'
+
+  /api/wrong-answers:
+    get:
+      summary: Danh sách câu sai chưa hết hạn (trong 14 ngày gần nhất)
+      description: >-
+        ⚠️ **Premium only (Feature 015)**: toàn bộ router `/api/wrong-answers`
+        được gate bằng middleware `requirePremium` — Free nhận `403` ngay,
+        KHÔNG có dữ liệu nào được trả về (chặn ở backend, không chỉ ẩn UI).
+      tags: [WrongAnswer]
+      security:
+        - SessionToken: []
+      parameters:
+        - in: query
+          name: subjectId
+          schema: { type: string, example: "TOAN" }
+          description: Lọc theo mã môn học (tùy chọn)
+        - in: query
+          name: page
+          schema: { type: integer, default: 1, minimum: 1 }
+          description: Trang hiện tại
+        - in: query
+          name: pageSize
+          schema: { type: integer, default: 20, minimum: 1, maximum: 50 }
+          description: Số bản ghi mỗi trang (clamp 1–50)
+      responses:
+        '200':
+          description: Danh sách câu sai còn hạn của user đang đăng nhập
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:          { type: integer, example: 42 }
+                        wrongCount:  { type: integer, example: 3 }
+                        lastWrongAt: { type: string, format: date-time }
+                        expiresAt:   { type: string, format: date-time }
+                        source:      { type: string, enum: [practice, exam] }
+                        question:
+                          type: object
+                          properties:
+                            id:           { type: string }
+                            content:      { type: string }
+                            type:         { type: string, enum: [MCQ_4, TRUE_FALSE_4, FILL_BLANK] }
+                            subjectId:    { type: string, example: "TOAN" }
+                            options:      { }
+                            correctAnswer: { }
+                            explanation:  { type: string, nullable: true }
+                  total:    { type: integer, example: 8 }
+                  page:     { type: integer, example: 1 }
+                  pageSize: { type: integer, example: 20 }
+        '401':
+          description: Thiếu hoặc sai session token
+        '403':
+          description: >-
+            Feature 015 — user Free (WRONG_ANSWER_REVIEW_PREMIUM_ONLY). Toàn
+            bộ tính năng Ôn lại câu sai chỉ dành cho Premium.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: WRONG_ANSWER_REVIEW_PREMIUM_ONLY
+                message: 'Tinh nang "On lai cau sai" chi danh cho tai khoan Premium.'
+
+  /api/wrong-answers/{id}/retry:
+    post:
+      summary: Làm lại một câu sai — kiểm tra đáp án, không ghi điểm
+      description: '⚠️ Premium only (Feature 015) — cùng gate `requirePremium` như `GET /api/wrong-answers`.'
+      tags: [WrongAnswer]
+      security:
+        - SessionToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+          description: ID bản ghi WrongAnswer (số nguyên, từ GET /api/wrong-answers)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answer]
+              properties:
+                answer:
+                  description: >
+                    Đáp án tùy theo loại câu:
+                    MCQ_4 → number (0–3),
+                    TRUE_FALSE_4 → boolean[] (4 phần tử),
+                    FILL_BLANK → string
+            examples:
+              mcq4:
+                summary: MCQ_4
+                value: { "answer": 2 }
+              trueFalse4:
+                summary: TRUE_FALSE_4
+                value: { "answer": [true, false, true, false] }
+              fillBlank:
+                summary: FILL_BLANK
+                value: { "answer": "Hà Nội" }
+      responses:
+        '200':
+          description: Kết quả kiểm tra đáp án
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  isCorrect:     { type: boolean }
+                  correctAnswer: { description: "Đáp án đúng (cùng kiểu với answer của request)" }
+                  explanation:   { type: string, nullable: true }
+              examples:
+                correct:
+                  summary: Đáp án đúng
+                  value: { "isCorrect": true, "correctAnswer": 0, "explanation": "Điều kiện x ≥ 1" }
+                wrong:
+                  summary: Đáp án sai
+                  value: { "isCorrect": false, "correctAnswer": 2, "explanation": null }
+        '400':
+          description: id không phải số nguyên hoặc thiếu body.answer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Thiếu hoặc sai session token
+        '403':
+          description: 'Feature 015 — user Free (WRONG_ANSWER_REVIEW_PREMIUM_ONLY).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: id không tồn tại, thuộc user khác, hoặc đã hết hạn (WRONG_ANSWER_NOT_FOUND)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   securitySchemes:
     SessionToken:
@@ -2672,6 +3621,53 @@ components:
         points:
           type: integer
           description: Điểm tích lũy hiện tại
+        isPremium:
+          type: boolean
+          description: >-
+            Mới ở Feature 015 — true nếu công tắc toàn cục "Mặc định Premium
+            cho tất cả" đang BẬT HOẶC `premiumExpiresAt` còn hạn.
+        premiumExpiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            Mới ở Feature 015 — hạn Premium được admin cấp thủ công (theo
+            tháng), null nếu chưa từng được cấp.
+
+    StreakFreezeInfo:
+      type: object
+      description: >-
+        Feature 015 — số "thẻ bảo hiểm chuỗi" (streak freeze). Chỉ có ý
+        nghĩa khi `isPremium=true`; Free luôn `{ granted: 0, used: 0, remaining: 0 }`.
+      properties:
+        granted:
+          type: integer
+          description: Tổng số thẻ được cấp (STREAK_FREEZE_GRANT = 3 cho Premium, 0 cho Free).
+        used:
+          type: integer
+          description: Số thẻ đã dùng để "bắc cầu" các khoảng trống 1 ngày trong lịch sử ôn tập.
+        remaining:
+          type: integer
+          description: 'granted - used (không âm).'
+
+    GrantPremiumResultDto:
+      type: object
+      description: Response của PATCH /api/admin/users/{id}/grant-premium (Feature 015).
+      properties:
+        id:
+          type: string
+          format: uuid
+        premiumExpiresAt:
+          type: string
+          format: date-time
+        premiumSince:
+          type: string
+          format: date-time
+        streakFreezeReset:
+          type: boolean
+          description: >-
+            true nếu đây là lần kích hoạt Premium MỚI (user đang KHÔNG
+            Premium trước đó) — streak freeze được coi là reset về 3.
 
     NotificationItem:
       type: object
@@ -2698,651 +3694,4 @@ components:
             - REPORT_RESOLVED: { reportId: string, status: string, questionPreview: string }
             - NEW_EXAM_PAPER: { subject: string, examPaperTitle: string }
         createdAt:    { type: string, format: date-time }
-
-# ─────────────────────── Question Bank paths ─────────────────────────
-  /api/admin/question-bank:
-    get:
-      tags: [QuestionBank]
-      summary: Danh sách câu hỏi trong kho (filter + phân trang)
-      security: [{ AdminSecret: [] }]
-      parameters:
-        - name: subject
-          in: query
-          schema: { $ref: '#/components/schemas/SubjectId' }
-        - name: chapter
-          in: query
-          schema: { type: string, maxLength: 200 }
-        - name: difficulty
-          in: query
-          schema: { type: integer, enum: [1, 2, 3] }
-        - name: search
-          in: query
-          schema: { type: string, maxLength: 200 }
-          description: Tìm kiếm theo nội dung câu hỏi (contains, case-insensitive)
-        - name: isActive
-          in: query
-          schema: { type: string, enum: ['true', 'false'] }
-        - name: page
-          in: query
-          schema: { type: integer, minimum: 1, default: 1 }
-        - name: pageSize
-          in: query
-          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
-      responses:
-        '200':
-          description: Danh sách câu hỏi
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/QuestionBankListResult' }
-        '400':
-          description: Query param không hợp lệ
-        '401':
-          description: Thiếu hoặc sai X-Admin-Secret
-
-    post:
-      tags: [QuestionBank]
-      summary: Tạo câu hỏi mới trong kho
-      security: [{ AdminSecret: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [subject, difficulty, questionType, points, questionText, correctAnswer]
-              properties:
-                subject: { $ref: '#/components/schemas/SubjectId' }
-                chapter: { type: string, maxLength: 200 }
-                difficulty: { type: integer, enum: [1, 2, 3] }
-                questionType: { type: string, enum: [MCQ_4, TRUE_FALSE_4, FILL_BLANK] }
-                points: { type: number, minimum: 0.01 }
-                questionText: { type: string, minLength: 1, maxLength: 4000 }
-                options:
-                  type: array
-                  items: { type: string, minLength: 1 }
-                  minItems: 4
-                  maxItems: 4
-                  description: Bắt buộc với MCQ_4 và TRUE_FALSE_4; bỏ qua với FILL_BLANK
-                correctAnswer:
-                  oneOf:
-                    - type: integer
-                    - type: array
-                      items: { type: boolean }
-                    - type: array
-                      items: { type: string }
-                explanation: { type: string, maxLength: 4000 }
-                examYear: { type: integer, minimum: 2000, maximum: 2100 }
-                examCode: { type: string, maxLength: 50 }
-      responses:
-        '201':
-          description: Câu hỏi đã được tạo
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/QuestionBankSummaryDto' }
-        '400':
-          description: Dữ liệu không hợp lệ (thiếu trường, sai định dạng, options/correctAnswer không khớp questionType)
-        '401':
-          description: Thiếu hoặc sai X-Admin-Secret
-
-  /api/admin/question-bank/{id}/usage:
-    get:
-      tags: [QuestionBank]
-      summary: Kiểm tra câu hỏi đang được dùng ở đề nào
-      security: [{ AdminSecret: [] }]
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
-      responses:
-        '200':
-          description: Thông tin usage của câu hỏi
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/QuestionBankUsageDto' }
-        '401':
-          description: Thiếu hoặc sai X-Admin-Secret
-        '404':
-          description: Câu hỏi không tồn tại trong kho
-
-  /api/admin/question-bank/{id}:
-    put:
-      tags: [QuestionBank]
-      summary: Cập nhật câu hỏi trong kho (partial update)
-      security: [{ AdminSecret: [] }]
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              description: Tất cả trường đều tùy chọn — chỉ trường có trong body mới được cập nhật
-              properties:
-                subject: { $ref: '#/components/schemas/SubjectId' }
-                chapter: { type: string, maxLength: 200, nullable: true }
-                difficulty: { type: integer, enum: [1, 2, 3] }
-                questionType: { type: string, enum: [MCQ_4, TRUE_FALSE_4, FILL_BLANK] }
-                points: { type: number, minimum: 0.01 }
-                questionText: { type: string, minLength: 1, maxLength: 4000 }
-                options:
-                  type: array
-                  items: { type: string }
-                correctAnswer:
-                  oneOf:
-                    - type: integer
-                    - type: array
-                      items: { type: boolean }
-                    - type: array
-                      items: { type: string }
-                explanation: { type: string, maxLength: 4000, nullable: true }
-                examYear: { type: integer, nullable: true }
-                examCode: { type: string, nullable: true }
-                isActive: { type: boolean }
-      responses:
-        '200':
-          description: Câu hỏi sau khi cập nhật
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/QuestionBankSummaryDto' }
-        '400':
-          description: Dữ liệu không hợp lệ
-        '401':
-          description: Thiếu hoặc sai X-Admin-Secret
-        '404':
-          description: Câu hỏi không tồn tại trong kho
-
-    delete:
-      tags: [QuestionBank]
-      summary: Hard delete câu hỏi khỏi kho (có guard phiên IN_PROGRESS)
-      security: [{ AdminSecret: [] }]
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
-      responses:
-        '200':
-          description: Xóa thành công
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message: { type: string, example: "Da xoa cau hoi khoi ngan hang thanh cong." }
-        '401':
-          description: Thiếu hoặc sai X-Admin-Secret
-        '404':
-          description: Câu hỏi không tồn tại trong kho
-        '409':
-          description: Không thể xóa vì còn ExamSession IN_PROGRESS đang dùng câu này
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error: { type: string, example: QUESTION_BANK_DELETE_BLOCKED }
-                  message: { type: string }
-
-  /api/admin/exam-papers/{id}/questions/from-bank:
-    post:
-      tags: [QuestionBank, Admin]
-      summary: Thêm nhiều câu từ kho vào đề thi (batch, skip duplicate)
-      description: >-
-        **Side effect mới (v1.5.0, Feature 014)**: sau khi commit, với mỗi câu
-        vừa thêm bắt nguồn từ 1 `StudentQuestionSubmission` đã `APPROVED`,
-        server cộng thêm điểm "usage" cho học sinh gửi câu đó (fire-and-forget,
-        dùng Compare-And-Swap để tránh cộng thiếu khi nhiều request chạy song
-        song) — `min(SUBMISSION_USAGE_POINTS_PER_USE=5, 100 - đã_nhận)` điểm,
-        tăng `usageCount`, gửi thông báo `SUBMISSION_USED`. KHÔNG áp dụng cho
-        endpoint `auto-fill` bên dưới (chỉ trigger khi admin chủ động chọn câu
-        qua `from-bank`).
-      security: [{ AdminSecret: [] }]
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
-          description: ID của đề thi (`examPaperId`)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [questionBankIds]
-              properties:
-                questionBankIds:
-                  type: array
-                  items: { type: string, format: uuid }
-                  minItems: 1
-                  maxItems: 100
-      responses:
-        '200':
-          description: Kết quả thêm câu từ kho
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/AddFromBankResult' }
-        '400':
-          description: questionBankIds rỗng, vượt 100, hoặc không phải UUID
-        '401':
-          description: Thiếu hoặc sai X-Admin-Secret
-        '404':
-          description: examPaperId không tồn tại
-
-  /api/admin/exam-papers/{id}/questions/auto-fill:
-    post:
-      tags: [QuestionBank, Admin]
-      summary: Tự động lấy N câu ngẫu nhiên từ kho vào đề thi (50% dễ / 30% TB / 20% khó)
-      security: [{ AdminSecret: [] }]
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
-          description: ID của đề thi (`examPaperId`)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [count]
-              properties:
-                count:
-                  type: integer
-                  minimum: 1
-                  maximum: 200
-                  description: Tổng số câu cần thêm (phân phối 50% dễ / 30% TB / 20% khó)
-      responses:
-        '200':
-          description: Kết quả tự động điền câu từ kho
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/AutoFillFromBankResult' }
-        '400':
-          description: count không hợp lệ (không phải số nguyên dương hoặc vượt 200)
-        '401':
-          description: Thiếu hoặc sai X-Admin-Secret
-        '404':
-          description: examPaperId không tồn tại
-
-  # ─── LEADERBOARD ─────────────────────────────────────────────────────────────
-
-  /api/leaderboard:
-    get:
-      summary: Lấy danh sách xếp hạng học sinh theo Điểm Uy Tín
-      tags: [Leaderboard]
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: page
-          in: query
-          schema: { type: integer, minimum: 1, default: 1 }
-          description: Số trang (10 người/trang)
-        - name: subject
-          in: query
-          schema: { type: string }
-          description: Lọc theo mã môn học (ví dụ TOAN, VAN). Để trống = tất cả môn.
-      responses:
-        '200':
-          description: Danh sách xếp hạng
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [data, total, page, pageSize]
-                properties:
-                  data:
-                    type: array
-                    items:
-                      type: object
-                      required: [rank, userId, displayName, avatarUrl, reputationScore, avgScore, examCount, trend]
-                      properties:
-                        rank:
-                          type: integer
-                        userId:
-                          type: string
-                          format: uuid
-                        displayName:
-                          type: string
-                          nullable: true
-                        avatarUrl:
-                          type: string
-                          nullable: true
-                          description: URL tương đối (/uploads/avatars/<id>.jpg) hoặc null
-                        reputationScore:
-                          type: number
-                          description: Điểm Uy Tín (làm tròn 2 chữ số thập phân)
-                        avgScore:
-                          type: number
-                        examCount:
-                          type: integer
-                        trend:
-                          type: string
-                          enum: [up, down, same, new]
-                  total:
-                    type: integer
-                  page:
-                    type: integer
-                  pageSize:
-                    type: integer
-                    example: 20
-        '401':
-          description: Thiếu hoặc sai session token
-
-  /api/leaderboard/me:
-    get:
-      summary: Lấy hạng và chỉ số Điểm Uy Tín của user đang đăng nhập
-      tags: [Leaderboard]
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: subject
-          in: query
-          schema: { type: string }
-          description: Lọc theo mã môn (tùy chọn)
-      responses:
-        '200':
-          description: Hạng của user hiện tại (rank = null nếu chưa thi lần nào)
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [rank, reputationScore, avgScore, examCount, trend]
-                properties:
-                  rank:
-                    type: integer
-                    nullable: true
-                  reputationScore:
-                    type: number
-                    nullable: true
-                  avgScore:
-                    type: number
-                    nullable: true
-                  examCount:
-                    type: integer
-                  trend:
-                    type: string
-                    nullable: true
-                    enum: [up, down, same, new]
-        '401':
-          description: Thiếu hoặc sai session token
-
-  # ─── AVATAR ──────────────────────────────────────────────────────────────────
-
-  /api/users/me/avatar:
-    post:
-      summary: Upload ảnh đại diện (multipart/form-data, field "avatar")
-      tags: [Users]
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              required: [avatar]
-              properties:
-                avatar:
-                  type: string
-                  format: binary
-                  description: File ảnh JPG hoặc PNG, tối đa 2MB
-      responses:
-        '200':
-          description: Profile đầy đủ sau khi upload (avatarUrl đã cập nhật)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/UserMeDto' }
-        '400':
-          description: |
-            Lỗi file — AVATAR_NO_FILE / AVATAR_INVALID_TYPE / AVATAR_FILE_TOO_LARGE
-        '401':
-          description: Thiếu hoặc sai session token
-    delete:
-      summary: Xóa ảnh đại diện (set avatarUrl = null, xóa file vật lý)
-      tags: [Users]
-      security:
-        - bearerAuth: []
-      responses:
-        '200':
-          description: Profile đầy đủ sau khi xóa (avatarUrl = null)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/UserMeDto' }
-        '400':
-          description: AVATAR_NOT_FOUND — User chưa có ảnh đại diện
-        '401':
-          description: Thiếu hoặc sai session token
-
-  # ─── Progress ─────────────────────────────────────────────────────────────
-
-  /api/progress/summary:
-    get:
-      summary: Tổng hợp tiến độ học tập của user đang đăng nhập
-      tags: [Progress]
-      security:
-        - bearerAuth: []
-      responses:
-        '200':
-          description: ProgressSummary đầy đủ
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  overview:
-                    type: object
-                    properties:
-                      totalPracticeSessions: { type: integer, example: 15 }
-                      totalExamSessions:     { type: integer, example: 3 }
-                      currentPoints:         { type: integer, example: 500 }
-                      currentStreak:         { type: integer, example: 3 }
-                  bestStreak:
-                    type: integer
-                    example: 7
-                  monthComparison:
-                    type: object
-                    properties:
-                      thisMonth:
-                        type: object
-                        properties:
-                          practiceSessions: { type: integer, example: 8 }
-                          examAvgScore:     { type: number, nullable: true, example: 7.5 }
-                      lastMonth:
-                        type: object
-                        properties:
-                          practiceSessions: { type: integer, example: 7 }
-                          examAvgScore:     { type: number, nullable: true, example: null }
-                  practiceStatsBySubject:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        subject:        { type: string, example: "TOAN" }
-                        totalSessions:  { type: integer, example: 10 }
-                        avgScore:       { type: number, example: 10.2 }
-                        bestScore:      { type: integer, example: 13 }
-                        accuracyByDifficulty:
-                          type: object
-                          additionalProperties: { type: number }
-                          example: { "1": 0.96, "2": 0.74, "3": 0.52 }
-                  scoreTrend:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        date:    { type: string, format: date-time }
-                        score:   { type: integer }
-                        subject: { type: string }
-        '401':
-          description: Thiếu hoặc sai session token
-
-  /api/progress/exam-history:
-    get:
-      summary: Lịch sử thi thử đã hoàn thành của user (có phân trang)
-      tags: [Progress]
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: query
-          name: limit
-          schema: { type: integer, default: 10, minimum: 1, maximum: 50 }
-          description: Số bản ghi mỗi trang (clamp 1–50)
-        - in: query
-          name: offset
-          schema: { type: integer, default: 0, minimum: 0 }
-          description: Vị trí bắt đầu
-      responses:
-        '200':
-          description: Danh sách phiên thi thử đã hoàn thành
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        id:            { type: string, format: uuid }
-                        examPaperId:   { type: string, format: uuid }
-                        title:         { type: string, example: "Đề thi thử THPT QG 2024" }
-                        subject:       { type: string, example: "TOAN" }
-                        score:         { type: number, nullable: true, example: 8.5 }
-                        pointsAwarded: { type: integer, example: 80 }
-                        completedAt:   { type: string, format: date-time }
-                  total:  { type: integer, example: 3 }
-                  limit:  { type: integer, example: 10 }
-                  offset: { type: integer, example: 0 }
-        '401':
-          description: Thiếu hoặc sai session token
-
-  /api/wrong-answers:
-    get:
-      summary: Danh sách câu sai chưa hết hạn (trong 14 ngày gần nhất)
-      tags: [WrongAnswer]
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: query
-          name: subjectId
-          schema: { type: string, example: "TOAN" }
-          description: Lọc theo mã môn học (tùy chọn)
-        - in: query
-          name: page
-          schema: { type: integer, default: 1, minimum: 1 }
-          description: Trang hiện tại
-        - in: query
-          name: pageSize
-          schema: { type: integer, default: 20, minimum: 1, maximum: 50 }
-          description: Số bản ghi mỗi trang (clamp 1–50)
-      responses:
-        '200':
-          description: Danh sách câu sai còn hạn của user đang đăng nhập
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        id:          { type: integer, example: 42 }
-                        wrongCount:  { type: integer, example: 3 }
-                        lastWrongAt: { type: string, format: date-time }
-                        expiresAt:   { type: string, format: date-time }
-                        source:      { type: string, enum: [practice, exam] }
-                        question:
-                          type: object
-                          properties:
-                            id:           { type: string }
-                            content:      { type: string }
-                            type:         { type: string, enum: [MCQ_4, TRUE_FALSE_4, FILL_BLANK] }
-                            subjectId:    { type: string, example: "TOAN" }
-                            options:      { }
-                            correctAnswer: { }
-                            explanation:  { type: string, nullable: true }
-                  total:    { type: integer, example: 8 }
-                  page:     { type: integer, example: 1 }
-                  pageSize: { type: integer, example: 20 }
-        '401':
-          description: Thiếu hoặc sai session token
-
-  /api/wrong-answers/{id}/retry:
-    post:
-      summary: Làm lại một câu sai — kiểm tra đáp án, không ghi điểm
-      tags: [WrongAnswer]
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema: { type: integer }
-          description: ID bản ghi WrongAnswer (số nguyên, từ GET /api/wrong-answers)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [answer]
-              properties:
-                answer:
-                  description: >
-                    Đáp án tùy theo loại câu:
-                    MCQ_4 → number (0–3),
-                    TRUE_FALSE_4 → boolean[] (4 phần tử),
-                    FILL_BLANK → string
-            examples:
-              mcq4:
-                summary: MCQ_4
-                value: { "answer": 2 }
-              trueFalse4:
-                summary: TRUE_FALSE_4
-                value: { "answer": [true, false, true, false] }
-              fillBlank:
-                summary: FILL_BLANK
-                value: { "answer": "Hà Nội" }
-      responses:
-        '200':
-          description: Kết quả kiểm tra đáp án
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  isCorrect:     { type: boolean }
-                  correctAnswer: { description: "Đáp án đúng (cùng kiểu với answer của request)" }
-                  explanation:   { type: string, nullable: true }
-              examples:
-                correct:
-                  summary: Đáp án đúng
-                  value: { "isCorrect": true, "correctAnswer": 0, "explanation": "Điều kiện x ≥ 1" }
-                wrong:
-                  summary: Đáp án sai
-                  value: { "isCorrect": false, "correctAnswer": 2, "explanation": null }
-        '400':
-          description: id không phải số nguyên hoặc thiếu body.answer
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '401':
-          description: Thiếu hoặc sai session token
-        '404':
-          description: id không tồn tại, thuộc user khác, hoặc đã hết hạn (WRONG_ANSWER_NOT_FOUND)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
 

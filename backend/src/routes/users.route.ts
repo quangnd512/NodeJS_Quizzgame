@@ -4,7 +4,8 @@ import path from 'node:path';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import multer, { MulterError } from 'multer';
 import { verifyAppToken } from '../middleware/auth.middleware.js';
-import { AvatarError, UsersError } from '../services/users/users.errors.js';
+import { premiumService } from '../services/premium/premium.service.js';
+import { AvatarError, SubjectsChangeLockedError, UsersError } from '../services/users/users.errors.js';
 import { usersService, type ProfileUpdateInput, type SubjectInput } from '../services/users/users.service.js';
 import type { SubjectCatalogEntry, UserMeDto } from '../services/users/users.types.js';
 
@@ -58,6 +59,33 @@ interface UpdateSubjectsResponse {
 }
 
 /**
+ * POST /api/users/subjects/ad-unlock
+ *
+ * Feature 015 (Free/Premium): Free goi endpoint nay SAU KHI da "xem xong"
+ * quang cao gia lap (dem nguoc phia FE) de mo khoa 1 luot doi mon hoc.
+ * Premium goi cung duoc (khong bat buoc, vi Premium khong bi gate ben
+ * POST /subjects) nhung server luon tra ve ok - KHONG can kiem tra gi them.
+ *
+ * Set Redis key `premium:ad-unlock:<userId>` TTL 300s - single-use (bi xoa
+ * ngay khi POST /api/users/subjects tieu thu thanh cong, xem ben duoi).
+ */
+usersRouter.post(
+  '/subjects/ad-unlock',
+  async (
+    req: Request,
+    res: Response<{ unlocked: true; expiresInSeconds: number }>,
+    next: NextFunction,
+  ) => {
+    try {
+      const { expiresInSeconds } = await usersService.grantSubjectsAdUnlock(req.currentUser!.id);
+      res.status(200).json({ unlocked: true, expiresInSeconds });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
  * POST /api/users/subjects
  *
  * Body: `{ "subjects": [{ "id": "TOAN", "name": "Toán" }, ...] }`
@@ -65,6 +93,18 @@ interface UpdateSubjectsResponse {
  * Luu lai danh sach mon hoc nguoi dung dang ky on thi (buoc quan trong trong
  * qua trinh "onboarding"). Validate: phai co tu 1-7 mon, ma mon phai hop le,
  * khong trung lap (xem chi tiet trong `usersService.updateSubjects`).
+ *
+ * GATE Free/Premium (Feature 015): Premium duoc doi mon thoai mai, khong gioi
+ * han. Free BAT BUOC phai co token mo khoa con hieu luc (da goi ad-unlock o
+ * tren trong vong 300s gan nhat, CHUA tung dung) - token bi xoa NGAY sau khi
+ * tieu thu thanh cong (single-use, moi lan doi mon lai phai xem lai quang cao).
+ *
+ * THU TU XU LY QUAN TRONG: validate TOAN BO du lieu dau vao (dinh dang +
+ * nghiep vu - so luong 1-7 mon, ma mon hop le, khong trung) TRUOC khi tieu
+ * thu token mo khoa. Neu tieu thu token TRUOC khi validate xong (nhu ban dau),
+ * 1 request sai dinh dang/mon khong hop le van "dot" mat token - Free phai
+ * xem lai quang cao du chua he doi mon thanh cong lan nao (edge-case bug da
+ * phat hien va sua o vong review S3).
  */
 usersRouter.post(
   '/subjects',
@@ -74,6 +114,7 @@ usersRouter.post(
     next: NextFunction,
   ) => {
     try {
+      const userId = req.currentUser!.id;
       const { subjects } = req.body;
 
       // Kiem tra dinh dang co ban truoc khi dua xuong service - tranh truong hop
@@ -84,8 +125,25 @@ usersRouter.post(
 
       const normalizedInput: SubjectInput[] = subjects.map((item) => assertSubjectInputShape(item));
 
+      // Validate DAY DU (so luong 1-7, ma mon hop le, khong trung) NGAY BAY GIO -
+      // TRUOC khi cham vao token mo khoa quang cao cua Free. Neu sai o day,
+      // request dung ngay, KHONG tieu thu token (xem giai thich o docblock tren).
+      usersService.validateAndNormalizeSubjects(normalizedInput);
+
+      const globalSetting = await premiumService.getGlobalPremiumSetting();
+      const isPremium = premiumService.isUserPremium(req.currentUser!, globalSetting);
+
+      if (!isPremium) {
+        // Free: bat buoc phai co token mo khoa con hieu luc - kiem tra + tieu
+        // thu (xoa) NGAY, single-use, truoc khi cho phep doi mon.
+        const unlocked = await usersService.consumeSubjectsAdUnlock(userId);
+        if (!unlocked) {
+          throw new SubjectsChangeLockedError();
+        }
+      }
+
       // `verifyAppToken` da dam bao `req.currentUser` ton tai.
-      const updatedSubjects = await usersService.updateSubjects(req.currentUser!.id, normalizedInput);
+      const updatedSubjects = await usersService.updateSubjects(userId, normalizedInput);
 
       res.status(200).json({ subjects: updatedSubjects });
     } catch (err) {

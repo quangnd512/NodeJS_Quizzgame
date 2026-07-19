@@ -922,3 +922,59 @@ sửa lại mock, không phải test mới thêm). Build sạch (BE `tsc`).
 - `backend/src/services/practice/__tests__/practice.service.test.ts` — 1 test mới + sửa 5 test cũ
 - `docs/TEST_CASES.md` — thêm 1 test case
 - `docs/CODE_REVIEW_LOG.md` — sửa dòng ghi nhận sai (Edge cases) + mục này
+
+---
+
+## Review: Feature 015 — Khung Free/Premium
+
+**Ngày**: 2026-07-16
+**Reviewer**: S3-SoatLoi
+**Branch**: `feature/premium-framework`
+**Files thay đổi**: 31 files (2402 dòng thêm, 99 dòng bớt) — 12 file backend mới/sửa lớn +
+7 file test mới/sửa + 3 file frontend
+
+### Tiêu chí 8 điểm
+
+| # | Tiêu chí | Kết quả | Ghi chú |
+|---|----------|---------|---------|
+| 1 | Atomic transaction | ✅ Pass | Không có thao tác nhiều bước cần transaction (grant-premium/ad-unlock/streak freeze đều là 1 lần ghi đơn hoặc pure function); `notifyExpiringPremiumUsers` là cron tuần tự, không cần transaction |
+| 2 | Race condition | 🔴 2 lỗi tìm thấy, đã sửa (xem bên dưới) | Trọng tâm review vì đây là module liên quan trực tiếp đến "quyền lợi trả phí" (thời hạn Premium) |
+| 3 | Error handling | ✅ Pass (sau khi sửa #2) | Custom error class đúng pattern (`PremiumError`/`ProgressError` kế thừa `code`); mọi fire-and-forget (notification) có try/catch riêng |
+| 4 | Input validation | ✅ Pass | Zod validate `months` (1-24) + `enabled` (boolean) ở route; `InvalidPremiumMonthsError` phòng thủ tăng cường ở tầng service; `validateAndNormalizeSubjects` validate đầy đủ subject input |
+| 5 | N+1 / Index | ✅ Pass | Index mới `users(premiumExpiresAt)` phục vụ đúng truy vấn cron quét user sắp hết hạn; `getGlobalPremiumSetting` cache in-memory tránh query lặp lại (invalidate ngay khi ghi — đã đọc code xác nhận đúng, không dùng TTL polling lỗi thời) |
+| 6 | TypeScript `any` | ✅ Pass | Rà toàn bộ diff (backend + frontend) — không có `any` nào |
+| 7 | Edge cases | ✅ Pass | Rỗng lịch sử ôn tập, cộng tháng qua ranh giới cuối tháng (clamp đúng), user chưa từng Premium (premiumSince=null), global toggle bật/tắt, gap 1 ngày vs 2 ngày trong streak freeze, "trailing forgiveness", Free không có freeze nào (freezeGrant=0) |
+| 8 | API contract | ✅ Pass | Đối chiếu từng endpoint với `docs/api/drafts/free-premium-framework.yaml`: method/path/request/response/error codes đều khớp; giữ nguyên request/response shape sau khi sửa race condition (chỉ đổi cách tính nội bộ) |
+
+### 🔴 Lỗi Race Condition tìm thấy & đã sửa
+
+| # | Vị trí | Mô tả lỗi | Hậu quả nếu không sửa | Cách sửa |
+|---|--------|-----------|------------------------|----------|
+| 1 | `premium.service.ts` — `grantPremiumMonths` | Hàm nhận sẵn đối tượng `user` đã fetch từ bên ngoài (do `admin-users.service.ts` fetch trước để check 404), tính toán ngày hết hạn/streakFreezeReset dựa trên dữ liệu đó, rồi `update` thẳng — check-rồi-ghi không nguyên tử | 2 admin (hoặc double-click) cùng cấp Premium cho 1 user gần như đồng thời → cả 2 đọc cùng dữ liệu cũ → lần ghi SAU "đè" mất HOÀN TOÀN lần ghi TRƯỚC — user chỉ nhận được 1 trong 2 lần cấp thay vì cộng dồn, **mất số tháng Premium đã trả tiền/được cấp** | Đổi `grantPremiumMonths(user, months)` → `grantPremiumMonths(userId, months)`, tự FETCH bên trong vòng lặp COMPARE-AND-SWAP: `updateMany` với điều kiện WHERE khớp đúng `premiumExpiresAt` + `premiumSince` vừa đọc; nếu `count=0` (bị ghi đè), đọc lại giá trị mới và tính lại, tối đa 5 lần. Thêm `PremiumUserNotFoundError`/`PremiumGrantConflictError` cho 2 case biên cực hiếm |
+| 2 | `users.route.ts` — `POST /api/users/subjects` | Token mở khoá quảng cáo (`consumeSubjectsAdUnlock`, single-use qua Redis) bị tiêu thụ (xoá) NGAY, TRƯỚC KHI validate định dạng/nghiệp vụ của `subjects` (số lượng 1-7, mã môn hợp lệ, không trùng) | Free xem xong quảng cáo, mở khoá 1 lượt đổi môn, nhưng nếu gửi request sai (bug FE, hoặc thao tác nhầm) → token đã bị "đốt" vô ích dù chưa đổi môn thành công lần nào → phải xem lại quảng cáo mới thử lại được | Đổi thứ tự: validate đầy đủ (`assertSubjectInputShape` + `usersService.validateAndNormalizeSubjects`, đổi từ `private`→`public`) TRƯỚC, chỉ tiêu thụ token SAU KHI validate qua hết |
+
+### Kết quả test tự động
+
+- **Unit test**: 201/201 PASS (193 của S2 + 8 mới của S3: 1 test `PremiumUserNotFoundError` + 2 test race-condition CAS cho `grantPremiumMonths`, 5 test cho `validateAndNormalizeSubjects` mới public)
+- **Build**: PASS (Backend `tsc` sạch, Frontend `tsc -b && vite build` sạch — xem log dưới)
+- **npm audit**: không kiểm tra lại riêng cho branch này vì `package.json`/`package-lock.json` không đổi (không thêm dependency mới) — kế thừa baseline đã chấp nhận từ các vòng review trước
+- Môi trường: máy chạy đồng thời nhiều session Claude Code khác (S2 vẫn đang code tính năng khác, S7 đang chờ) khiến `tsc`/test chạy chậm bất thường (nhiều phút thay vì vài giây) — đã xác nhận qua nhiều lần retry đây là do tranh chấp tài nguyên, không phải lỗi code (1 lần build báo lỗi `TS6053` file `@types/*` "not found" nhưng xác minh trực tiếp file vẫn tồn tại trên đĩa — lỗi đọc file thoáng qua, build lại ngay sau đó PASS sạch)
+
+### Ghi chú khác (không phải lỗi, chỉ quan sát)
+
+- `AdminUserListItem`/`AdminUserDetail` (danh sách + chi tiết user cho admin) chưa được bổ sung field `isPremium`/`premiumExpiresAt` — admin hiện chỉ thấy trạng thái Premium của 1 user qua thông báo toast ngay sau khi tự tay cấp, không có cách xem lại trạng thái hiện tại trong bảng danh sách. `docs/api/drafts/free-premium-framework.yaml` không yêu cầu việc này nên KHÔNG coi là lỗi/thiếu sót của PR — chỉ ghi nhận làm gợi ý cải tiến UX cho vòng sau nếu cần.
+- Cache in-memory `cachedGlobalSetting` trong `premium.service.ts` chỉ đúng khi server chạy 1 process duy nhất (không có nhiều worker/instance) — khớp với mô hình triển khai hiện tại của dự án (1 process Node, giống cron cleanup có sẵn), chấp nhận được.
+
+### Files S3 đã sửa/thêm thêm
+
+- `backend/src/services/premium/premium.errors.ts` — thêm `PremiumUserNotFoundError`, `PremiumGrantConflictError`
+- `backend/src/services/premium/premium.service.ts` — CAS retry cho `grantPremiumMonths`
+- `backend/src/services/premium/__tests__/premium.service.test.ts` — sửa toàn bộ test `grantPremiumMonths` theo signature mới + 3 test mới (not-found, 2 race-condition)
+- `backend/src/services/admin-users/admin-users.service.ts` — cập nhật lời gọi `grantPremiumMonths(userId, months)`
+- `backend/src/services/admin-users/__tests__/admin-users.service.test.ts` — sửa 1 assertion
+- `backend/src/app.ts` — map `PREMIUM_USER_NOT_FOUND: 404`, `PREMIUM_GRANT_CONFLICT: 409`
+- `backend/src/services/users/users.service.ts` — `validateAndNormalizeSubjects` đổi `private`→`public`
+- `backend/src/services/users/__tests__/users.service.test.ts` — thêm 5 test cho `validateAndNormalizeSubjects`
+- `backend/src/routes/users.route.ts` — đổi thứ tự validate trước khi tiêu thụ token ad-unlock
+- `docs/TEST_CASES.md` — thêm 26 test case Feature 015
+- `docs/CODE_REVIEW_LOG.md` — file này

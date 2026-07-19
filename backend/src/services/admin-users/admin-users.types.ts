@@ -70,3 +70,12 @@ export interface AdminListUsersQuery {
 
 export const VALID_ROLES = ['STUDENT', 'ADMIN'] as const;
 export type UserRole = (typeof VALID_ROLES)[number];
+
+/** Ket qua tra ve khi admin cap Premium thu cong cho 1 user (Feature 015). */
+export interface GrantPremiumResultDto {
+  id: string;
+  premiumExpiresAt: string;
+  premiumSince: string;
+  /** true neu day la lan kich hoat Premium MOI (streak freeze duoc coi la reset ve 3). */
+  streakFreezeReset: boolean;
+}

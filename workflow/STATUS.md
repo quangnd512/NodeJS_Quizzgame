@@ -10,9 +10,9 @@
 
 | Mục | Giá trị |
 |-----|---------|
-| Tính năng | Quản lý câu hỏi — Học sinh đóng góp câu hỏi + Thiết kế lại báo cáo (Feature 014) |
-| Branch | feature/question-management-hub |
-| Bắt đầu từ | 2026-07-13 |
+| Tính năng | Khung Free/Premium (Feature 015) |
+| Branch | feature/premium-framework |
+| Bắt đầu từ | 2026-07-15 |
 
 ---
 
@@ -21,12 +21,12 @@
 | Session | Tên | Trạng thái | Việc cần làm | Số lần làm lại |
 |---------|-----|------------|--------------|---------------|
 | S1 | Kiến Trúc Sư | ✅ Done | — | 0 |
-| S2 | Thợ Code | ✅ Done (12/12 TASK, 117/117 test) | — | 0 |
-| S3 | Người Soát Lỗi | ✅ Done (đã sửa race condition resolveReport, 138/138 test) | — | 1 |
+| S2 | Thợ Code | ✅ Done (16/16 TASK, 193/193 test) | — | 0 |
+| S3 | Người Soát Lỗi | ✅ Done (sửa 2 race condition, commit 00b7991, 201/201 test) | — | 0 |
 | S4 | Người Ghi Chép | ✅ Done | — | 0 |
-| S5 | Người Thử Nghiệm | ✅ Done (22/22 PASS, +5 thay đổi thiết kế phát sinh) | — | 0 |
+| S5 | Người Thử Nghiệm | ✅ Done (14/14 PASS, +1 thay đổi phạm vi: gate 2 field progress) | — | 0 |
 | S6 | Người Giảng Giải | ✅ Done | — | 0 |
-| S7 | Người Đóng Gói | ⏸ Chờ | Push & merge feature/question-management-hub (CHÚ Ý: nhiều thay đổi chưa commit từ nhiều vòng — xem chi tiết PENDING/S7.md) | 0 |
+| S7 | Người Đóng Gói | ⏸ Chờ | Push & merge feature/premium-framework | 0 |
 | S8 | Giám Sát Chất Lượng | ✅ Done | Quality gate PASS | — |
 | S9 | Cố Vấn Ra Mắt | ⏸ Chờ | — | — |
 
@@ -54,3 +54,4 @@ _(S8 ghi vào đây khi người dùng đặt ra yêu cầu mới trong lúc tí
 | 2026-07-11 | S8 | S5 báo 4/4 kịch bản click-to-navigate PASS (verify UI thật + DB), bổ sung N1-N4 vào TEST_CASES.md. Rà soát lại toàn bộ 17 dòng DoD + checklist QA baseline: TẤT CẢ ĐẠT. Dọn file rác `backend/package.json.tmp`. Cập nhật docs/TASKS.md (009 → Done, 2026-07-11) + docs/PROJECT_OVERVIEW.md (thêm dòng module Notifications). ✅ QUALITY GATE PASS — chuyển S7 push & merge. |
 | 2026-07-14 | S8 | Bắt đầu rà soát Feature 014 (Quản lý câu hỏi). Tự kiểm chứng độc lập: tsc sạch (BE+FE), 137/137 backend test PASS, eslint FE sạch (retry sau lỗi ETIMEDOUT tạm thời), npm audit chỉ lỗ hổng pre-existing, 2 migration mới (question types + report resubmit) đọc kỹ khớp schema.prisma, route ordering reports/facets trước :id/resolve đúng, claim-pattern approveSubmission + CAS usage-points đọc code xác nhận đúng. PHÁT HIỆN: `resolveReport()` (practice.service.ts:951) thiếu claim-pattern chống double-resolve — cùng lớp race condition mà S3 vừa fix ở 2 chỗ khác trong CÙNG PR nhưng bỏ sót ở đây; CODE_REVIEW_LOG.md claim đã test edge case này nhưng không có test nào chứng minh. Trả lại S3, tăng "Số lần làm lại" S3 → 1. |
 | 2026-07-15 | S8 | S3 báo đã sửa xong (claim-pattern giống approveSubmission, error mới ReportNotPendingError/409, 138/138 test). Tự kiểm chứng độc lập: đọc diff resolveReport() — claim đúng vị trí (trước snapshot/update), đọc test mới — assert dừng sớm đúng cả 3 điều kiện. Tự chạy lại: tsc BE (PASS, mất nhiều phút do máy nhiều session chạy song song — không phải lỗi code), tsc FE (PASS), test BE 138/138 PASS. Phát hiện nhỏ: docs/TEST_CASES.md nhắc "case #32" ở ghi chú đầu mục nhưng bảng thực tế dừng ở #31 (thiếu dòng) — S8 tự bổ sung dòng #32 (nội dung đã có sẵn đầy đủ trong CODE_REVIEW_LOG.md, không cần phán đoán thêm). Rà lại toàn bộ 17 dòng DoD: TẤT CẢ ĐẠT. Cập nhật docs/TASKS.md (014 → Done) + docs/PROJECT_OVERVIEW.md (thêm module). Lưu ý: RẤT NHIỀU thay đổi qua 3 vòng (S2/S5/S3) vẫn CHƯA COMMIT trong working tree — đã ghi rõ cho S7 quyết định cách gộp commit trước khi push. ✅ QUALITY GATE PASS — chuyển S7. |
+| 2026-07-19 | S8 | Rà soát Feature 015 (Khung Free/Premium) — feature phức tạp nhất từ trước tới nay (16 task, thuật toán streak-freeze). Tự kiểm chứng độc lập, không chỉ tin báo cáo: tsc sạch (BE+FE, phải kill+retry nhiều lần do máy bị treo I/O — môi trường, không phải lỗi code), 201/201 backend test PASS (2 lần độc lập), npm audit chỉ lỗ hổng pre-existing. Đọc kỹ code các vùng rủi ro cao nhất: thuật toán computeStreaksWithFreeze (bridge/trailing-forgiveness) — đúng, có 13 test edge case riêng; CAS retry đa-field trong grantPremiumMonths — đúng; thứ tự validate-trước-consume token ad-unlock — đúng; 3 gate Premium (wrong-answers, exam-history, 2 field progress mới do S5 bổ sung) — đều chặn đúng ở backend; cron 3:05AM — đúng; migration + schema khớp; addMonthsUtc clamp cuối tháng — đúng; 2 lớp error (ADMIN_USER_NOT_FOUND vs PREMIUM_USER_NOT_FOUND) — xác nhận là defense-in-depth hợp lý, không phải bug. KHÔNG phát hiện lỗi nào — lần đầu tiên 1 feature ĐẠT ngay vòng đầu không cần làm lại. Lưu ý: `eslint` FE treo I/O vô thời hạn dù đã kill+retry 4 lần (đúng y hệt hiện tượng S3 từng ghi nhận ở Feature 014 — giới hạn sandbox, không phải code) — chấp nhận kết quả "sạch" đã được S2+S3 độc lập xác nhận trước đó, bù bằng tsc strict đã PASS. Cập nhật docs/TASKS.md (015 → Done) + docs/PROJECT_OVERVIEW.md (thêm module + chú thích gate ở Progress/Ôn câu sai/Admin). ✅ QUALITY GATE PASS — chuyển S7. |

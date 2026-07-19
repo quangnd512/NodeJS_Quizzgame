@@ -12,8 +12,9 @@ import { redis } from '../../lib/redis.js';
 import { OptimisticLockError, OptimisticLockRetryableError } from '../points/points.errors.js';
 import { pointsService } from '../points/points.service.js';
 import { isValidSubjectId } from '../users/users.types.js';
-import { computeStreaks, STREAK_MILESTONES } from '../../utils/streak.utils.js';
+import { computeStreaksWithFreeze, STREAK_FREEZE_GRANT, STREAK_MILESTONES } from '../../utils/streak.utils.js';
 import { notificationService } from '../notification/notification.service.js';
+import { premiumService } from '../premium/premium.service.js';
 import {
   PracticeRateLimitError,
   PracticeSessionAlreadyCompletedError,
@@ -498,13 +499,27 @@ export class PracticeService {
       });
       if (todayCompletedCount !== 1) return;
 
-      // Tính streak từ toàn bộ lịch sử
-      const sessions = await prisma.practiceSession.findMany({
-        where: { userId, completedAt: { not: null } },
-        select: { completedAt: true },
-      });
+      // Tính streak từ toàn bộ lịch sử — DÙNG ĐÚNG CÙNG thuật toán freeze như
+      // progress.service.ts (computeStreaksWithFreeze) để mốc thông báo streak
+      // KHÔNG bị lệch so với số streak hiển thị ở trang Tiến độ (đây chính là
+      // rủi ro S1 đã lưu ý: 2 nơi tính streak PHẢI nhất quán tuyệt đối).
+      const [sessions, user, globalSetting] = await Promise.all([
+        prisma.practiceSession.findMany({
+          where: { userId, completedAt: { not: null } },
+          select: { completedAt: true },
+        }),
+        prisma.user.findUnique({
+          where: { id: userId },
+          select: { premiumExpiresAt: true, premiumSince: true, createdAt: true },
+        }),
+        premiumService.getGlobalPremiumSetting(),
+      ]);
       const dates = sessions.map((s) => s.completedAt!);
-      const { currentStreak } = computeStreaks(dates);
+      const premiumFields = user ?? { premiumExpiresAt: null, premiumSince: null, createdAt: new Date(0) };
+      const isPremium = premiumService.isUserPremium(premiumFields, globalSetting);
+      const effectivePremiumSince = premiumService.getEffectivePremiumSince(premiumFields, globalSetting);
+      const freezeGrant = isPremium ? STREAK_FREEZE_GRANT : 0;
+      const { currentStreak } = computeStreaksWithFreeze(dates, effectivePremiumSince, freezeGrant);
 
       if (!(STREAK_MILESTONES as readonly number[]).includes(currentStreak)) return;
 

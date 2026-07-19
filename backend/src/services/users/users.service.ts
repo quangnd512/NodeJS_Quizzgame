@@ -2,9 +2,11 @@
 // (chon mon hoc dang ky on thi).
 import fs from 'node:fs';
 import path from 'node:path';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient, User } from '@prisma/client';
 import { prisma as defaultPrismaClient } from '../../lib/prisma.js';
+import { redis } from '../../lib/redis.js';
 import { PointsService, pointsService } from '../points/points.service.js';
+import { premiumService } from '../premium/premium.service.js';
 import { AvatarError, InvalidProfileInputError, InvalidSubjectsError, UserNotFoundError } from './users.errors.js';
 import {
   MAX_PROFILE_FIELD_LENGTH,
@@ -39,6 +41,43 @@ export interface ProfileUpdateInput {
   phone?: string | null;
   school?: string | null;
   province?: string | null;
+}
+
+/**
+ * TTL (giay) cua token mo khoa doi mon hoc cho Free (Feature 015 — Free/Premium).
+ * Dung khop voi thoi luong "quang cao" gia lap ~5s o FE + du du an toan.
+ */
+const AD_UNLOCK_TTL_SECONDS = 300;
+
+/** Key Redis danh dau user da "xem quang cao" xong, con hieu luc de doi mon 1 lan. */
+function adUnlockRedisKey(userId: string): string {
+  return `premium:ad-unlock:${userId}`;
+}
+
+/**
+ * Ham THUAN TUY (khong query DB/Redis) ghep 1 ban ghi `User` + so diem +
+ * trang thai Premium da tinh san thanh `UserMeDto`. Tach rieng ham nay (thay
+ * vi lap lai object literal o tung noi) de dam bao MOI noi tra ve UserMeDto
+ * (getProfile, va gian tiep qua do la updateProfile/uploadAvatar/removeAvatar)
+ * luon dong bo cung 1 shape - chi can sua field o 1 cho duy nhat khi DTO thay doi sau nay.
+ */
+function toUserMeDto(user: User, points: number, isPremium: boolean): UserMeDto {
+  return {
+    id: user.id,
+    firebaseUid: user.firebaseUid,
+    displayName: user.displayName,
+    email: user.email,
+    phone: user.phone,
+    school: user.school,
+    province: user.province,
+    subjects: user.subjects.map((id) => ({ id, name: getSubjectDisplayName(id) })),
+    avatarUrl: user.avatarUrl,
+    createdAt: user.createdAt,
+    lastLoginAt: user.lastLoginAt,
+    points,
+    isPremium,
+    premiumExpiresAt: user.premiumExpiresAt,
+  };
 }
 
 export class UsersService {
@@ -84,6 +123,31 @@ export class UsersService {
       }
       throw err;
     }
+  }
+
+  /**
+   * Cap 1 luot mo khoa doi mon hoc cho Free (Feature 015) - goi SAU KHI user
+   * da "xem xong" quang cao gia lap phia FE. Set Redis key TTL 300s.
+   * Premium goi ham nay cung duoc (khong sai) nhung khong bat buoc, vi
+   * Premium khong bi gate o `consumeSubjectsAdUnlock`.
+   */
+  public async grantSubjectsAdUnlock(userId: string): Promise<{ expiresInSeconds: number }> {
+    await redis.set(adUnlockRedisKey(userId), '1', 'EX', AD_UNLOCK_TTL_SECONDS);
+    return { expiresInSeconds: AD_UNLOCK_TTL_SECONDS };
+  }
+
+  /**
+   * Kiem tra + TIEU THU (xoa ngay) token mo khoa doi mon hoc cua 1 user Free.
+   * Tra ve `true` neu token dang con hieu luc (va vua bi xoa - single-use),
+   * `false` neu khong co / da het han / da dung roi.
+   *
+   * Dung `redis.del` truc tiep (tra ve so key da xoa: 1 hoac 0) thay vi
+   * `get` roi `del` rieng - tranh race condition neu 2 request doi mon toi
+   * cung luc (chi 1 trong 2 co the tieu thu thanh cong token duy nhat).
+   */
+  public async consumeSubjectsAdUnlock(userId: string): Promise<boolean> {
+    const deletedCount = await redis.del(adUnlockRedisKey(userId));
+    return deletedCount > 0;
   }
 
   /**
@@ -144,8 +208,13 @@ export class UsersService {
   }
 
   /**
-   * Lay thong tin profile day du cua user kem so diem tich luy hien tai.
-   * Ket hop du lieu tu 2 nguon: bang `users` (profile) va `PointsService` (so du diem).
+   * Lay thong tin profile day du cua user kem so diem tich luy hien tai VA
+   * trang thai Premium (Feature 015). Ket hop du lieu tu 3 nguon: bang `users`
+   * (profile), `PointsService` (so du diem), `premiumService` (isPremium -
+   * co tinh ca cong tac toan cuc). Day la noi DUY NHAT xay dung `UserMeDto`
+   * (qua ham thuan tuy `toUserMeDto`) - `updateProfile`/`uploadAvatar`/
+   * `removeAvatar` deu goi lai ham nay o cuoi thay vi tu lap rap DTO rieng,
+   * dam bao khong bao gio bi lech shape giua cac endpoint.
    *
    * @throws UserNotFoundError neu khong tim thay user
    */
@@ -157,22 +226,13 @@ export class UsersService {
 
     // Goi PointsService de lay so du diem - tach biet ro rang trach nhiem
     // (UsersService khong tu truy van bang user_points truc tiep).
-    const balance = await this.pointsService.getBalance(user.id);
+    const [balance, globalSetting] = await Promise.all([
+      this.pointsService.getBalance(user.id),
+      premiumService.getGlobalPremiumSetting(),
+    ]);
+    const isPremium = premiumService.isUserPremium(user, globalSetting);
 
-    return {
-      id: user.id,
-      firebaseUid: user.firebaseUid,
-      displayName: user.displayName,
-      email: user.email,
-      phone: user.phone,
-      school: user.school,
-      province: user.province,
-      subjects: user.subjects.map((id) => ({ id, name: getSubjectDisplayName(id) })),
-      avatarUrl: user.avatarUrl,
-      createdAt: user.createdAt,
-      lastLoginAt: user.lastLoginAt,
-      points: balance.currentPoints,
-    };
+    return toUserMeDto(user, balance.currentPoints, isPremium);
   }
 
   /**
@@ -245,16 +305,19 @@ export class UsersService {
     }
   }
 
-  // --------------------------------------------------------------------
-  // NOI BO (PRIVATE HELPERS)
-  // --------------------------------------------------------------------
-
   /**
    * Validate va chuan hoa danh sach mon hoc dau vao thanh mang cac MA mon (string[]).
    * Nem `InvalidSubjectsError` voi thong bao cu the cho tung truong hop sai,
    * giup client/FE hien thi loi ro rang cho nguoi dung.
+   *
+   * CONG KHAI (khong con `private`) de route `POST /api/users/subjects` co the
+   * goi validate TRUOC khi tieu thu token mo khoa quang cao cua Free (Feature
+   * 015) — xem giai thich trong `users.route.ts`: neu validate o day chi chay
+   * NGAM BEN TRONG `updateSubjects` (sau khi token da bi xoa), 1 request sai
+   * dinh dang/mon khong hop le se "dot" token vo ich, buoc Free phai xem lai
+   * quang cao dù ho chua he doi mon thanh cong lan nao.
    */
-  private validateAndNormalizeSubjects(subjects: readonly SubjectInput[]): string[] {
+  public validateAndNormalizeSubjects(subjects: readonly SubjectInput[]): string[] {
     if (!Array.isArray(subjects)) {
       throw new InvalidSubjectsError('Truong "subjects" phai la mot mang.');
     }

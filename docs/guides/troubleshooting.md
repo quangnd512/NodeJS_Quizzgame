@@ -254,3 +254,70 @@ ORDER BY "completedAt" DESC LIMIT 30;
 **Nguyên nhân phổ biến nhất**: Badge (`questionsPendingBadge`) chỉ refetch khi đổi `tab` hoặc `secret` thay đổi (`useEffect` phụ thuộc `[secret, tab]`) — nếu admin xử lý xong 1 báo cáo/submission mà KHÔNG chuyển tab ra rồi vào lại, badge không tự cập nhật ngay (không có polling như bell icon phía học sinh, Feature 013).
 
 **Giải pháp**: Chuyển sang tab khác rồi quay lại tab "Câu hỏi" để buộc tính lại badge, hoặc F5 trang. Đây là giới hạn đã biết (badge admin không polling theo thời gian thực), không phải lỗi tính toán sai.
+
+---
+
+## Lỗi liên quan đến Khung Free/Premium (Feature 015)
+
+### 20. Đổi trạng thái Free/Premium (cấp thủ công hoặc đổi công tắc) nhưng user vẫn thấy trạng thái cũ
+
+**Triệu chứng**: Admin vừa cấp Premium (hoặc bật/tắt công tắc toàn cục), nhưng app của user vẫn hiển thị Free (hoặc ngược lại).
+
+**Nguyên nhân**: `premiumService` có cache in-memory cho công tắc toàn cục — cache này được invalidate NGAY khi ghi, nên backend luôn trả đúng dữ liệu mới cho request tiếp theo. Vấn đề thường nằm ở phía client: frontend chỉ đọc lại `profile.isPremium` khi gọi `GET /api/users/me` — nếu user không tải lại trang/đăng nhập lại, họ vẫn thấy `profile` cũ đã lấy từ trước đó (state React không tự refetch).
+
+**Giải pháp**:
+- Yêu cầu user F5 trang hoặc đăng xuất/đăng nhập lại để lấy `profile` mới nhất.
+- Nếu vẫn sai sau khi F5: kiểm tra trực tiếp DB `SELECT "premiumExpiresAt" FROM users WHERE id='<userId>';` và `SELECT "defaultPremiumForAll" FROM app_settings;` để xác nhận dữ liệu backend đã đúng chưa — nếu backend đã đúng mà FE vẫn sai, đây mới là bug thực sự cần điều tra thêm (không phải hành vi mong đợi).
+
+### 21. Cấp Premium báo lỗi 409 PREMIUM_GRANT_CONFLICT
+
+**Triệu chứng**: Admin bấm "🎁 Cấp" Premium cho 1 user, nhận lỗi 409 thay vì thành công.
+
+**Nguyên nhân**: Đây là kết quả của cơ chế Compare-And-Swap (CAS) chống race condition có chủ đích (xem `docs/FEATURE_LOG.md` Section 15) — xảy ra khi có RẤT NHIỀU request cấp Premium cho CÙNG 1 user gần như đồng thời (ví dụ double-click liên tục, hoặc 2 admin cùng thao tác), vượt quá `MAX_GRANT_CAS_RETRY` (5) lần thử lại liên tiếp. Cực kỳ hiếm trong sử dụng bình thường.
+
+**Giải pháp**: Thử lại thao tác cấp Premium — do bản chất transient (tạm thời) của lỗi này, lần thử lại thường thành công ngay vì tần suất request đồng thời đã giảm.
+
+### 22. Free đã "xem quảng cáo" xong nhưng vẫn bị chặn đổi môn (403 SUBJECTS_CHANGE_LOCKED)
+
+**Triệu chứng**: User Free xem xong đếm ngược 5 giây, nhưng khi bấm lưu môn học vẫn nhận lỗi 403 `SUBJECTS_CHANGE_LOCKED`.
+
+**Nguyên nhân phổ biến nhất**: Token mở khoá (Redis, TTL 300 giây, single-use) đã hết hạn giữa lúc "xem quảng cáo" xong và lúc user thực sự bấm lưu ở màn chọn môn (ví dụ user để màn hình mở quá lâu trước khi bấm lưu). Nguyên nhân khác: user đã dùng token đó cho 1 lần đổi môn khác trước đó (single-use, không tái sử dụng được).
+
+**Giải pháp**:
+- Yêu cầu user quay lại bấm "Đổi môn" → xem lại quảng cáo → lưu môn NGAY sau khi đếm ngược xong.
+- Kiểm tra còn hạn hay không (không xoá key khi kiểm tra bằng `TTL`):
+  ```bash
+  redis-cli TTL "premium:ad-unlock:<userId>"
+  # -2 = không tồn tại (hết hạn/chưa xem), >0 = còn N giây
+  ```
+- Đây KHÔNG phải bug nếu token thực sự đã hết hạn — đúng theo thiết kế (single-use, TTL ngắn để tránh lạm dụng).
+
+### 23. Streak bị đứt dù Premium còn thẻ bảo hiểm chuỗi
+
+**Triệu chứng**: User Premium báo mất streak dù họ nghĩ mình còn thẻ bảo hiểm chuỗi (`streakFreeze.remaining > 0`).
+
+**Nguyên nhân phổ biến nhất**: Thẻ bảo hiểm chuỗi CHỈ "bắc cầu" khoảng trống **ĐÚNG 1 ngày** — nếu user lỡ **2 ngày liên tiếp trở lên** không ôn tập, streak LUÔN đứt dù còn bao nhiêu thẻ (xem thuật toán `computeStreaksWithFreeze` trong `docs/FEATURE_LOG.md` Section 15). Nguyên nhân khác: khoảng trống xảy ra TRƯỚC mốc `premiumSinceEffective` (ví dụ user vừa mới được cấp Premium, nhưng khoảng trống đó nằm trong giai đoạn họ còn là Free) — không được tính bắc cầu.
+
+**Giải pháp**:
+- Xác nhận số ngày thực sự bị lỡ (không phải 1 ngày) bằng cách xem lịch sử phiên ôn tập:
+  ```sql
+  SELECT "completedAt" FROM practice_sessions
+  WHERE "userId" = '<userId>' AND "completedAt" IS NOT NULL
+  ORDER BY "completedAt" DESC LIMIT 30;
+  ```
+- Xác nhận thời điểm `premiumSince` của user để so sánh với thời điểm xảy ra khoảng trống:
+  ```sql
+  SELECT "premiumSince", "premiumExpiresAt" FROM users WHERE id = '<userId>';
+  ```
+- Nếu khoảng trống đúng 1 ngày VÀ xảy ra sau `premiumSince` VÀ user thực sự có `streakFreeze.remaining > 0` tại thời điểm đó mà vẫn bị đứt — đây mới là bug cần báo cáo, không phải hành vi mong đợi.
+
+### 24. Cron cảnh báo Premium sắp hết hạn không gửi thông báo
+
+**Triệu chứng**: User có Premium hết hạn trong 24h nhưng không nhận được thông báo "⏰ Premium sắp hết hạn".
+
+**Nguyên nhân phổ biến nhất**: Cron chỉ chạy 1 lần/ngày lúc 3:05 AM — nếu hạn Premium rơi vào "cửa sổ 24h" SAU thời điểm cron chạy hôm đó, user sẽ nhận cảnh báo vào lần chạy cron TIẾP THEO (hôm sau), có thể chỉ còn vài giờ trước khi hết hạn thay vì đủ 24h. Nguyên nhân khác: `premiumExpiryWarnedAt` đã được set từ lần cảnh báo trước đó cho ĐÚNG hạn này (nếu user không được gia hạn thêm, trường này không tự reset).
+
+**Giải pháp**:
+- Kiểm tra `premiumExpiryWarnedAt` hiện tại của user — nếu đã có giá trị VÀ `premiumExpiresAt` không đổi từ lần cảnh báo trước, đây là hành vi đúng (không gửi trùng lặp cho cùng 1 hạn).
+- Nếu cần gửi cảnh báo thủ công ngay: gọi trực tiếp `premiumService.notifyExpiringPremiumUsers()` qua script debug, hoặc set `premiumExpiryWarnedAt = NULL` cho user đó rồi đợi lần chạy cron kế tiếp.
+- Xem log backend tìm dòng `[Scheduler] Da canh bao N user Premium sap het han.` để xác nhận cron có chạy đúng giờ không.

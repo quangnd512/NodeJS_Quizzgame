@@ -7000,3 +7000,399 @@ CAS trực tiếp trên chính giá trị nghiệp vụ (`usagePointsEarned`) đ
 **Không đồng bộ nội dung câu hỏi vào lịch sử luyện tập cũ:** Đã xác minh hệ thống không lưu snapshot nội dung câu hỏi ở `UserQuestionHistory` — nên khi admin sửa `Question` qua `resolveReport`, mọi nơi hiển thị câu hỏi này (kể cả lịch sử cũ) tự động phản ánh nội dung mới. Đây là hành vi được xác nhận CÓ CHỦ ĐÍCH (ghi rõ trong `docs/api/drafts/quan-ly-cau-hoi.yaml` mục "notes"), không phải side-effect ngoài ý muốn.
 
 **Lint không chạy được trong review S3:** `eslint` bị treo vô thời hạn do tranh chấp tài nguyên khi nhiều session chạy song song trong cùng sandbox (không phải lỗi code) — S3 đã bù bằng `tsc` strict (`noUnusedLocals`/`noUnusedParameters`) sạch + rà thủ công toàn diff. Xem chi tiết `docs/CODE_REVIEW_LOG.md`.
+
+---
+
+## 15. Khung Free/Premium — Free vs Premium
+
+**Trạng thái:** ✅ Hoàn thành
+**Ngày hoàn thành:** 2026-07-17
+**Branch / commit liên quan:** `feature/premium-framework` (commit chính: `fac8b25`→`e3ac1a8`, fix race condition: `00b7991`)
+
+---
+
+### Tổng quan
+
+#### Vấn đề cần giải quyết
+
+Trước Feature 015, mọi tài khoản đều có quyền lợi ngang nhau — không có cơ chế phân biệt gói miễn phí (Free) và gói trả phí (Premium), nên hệ thống không có đòn bẩy kinh doanh hay cách ưu đãi người dùng gắn bó lâu dài. Cần một khung Free/Premium:
+- Một số tính năng chỉ dành cho Premium (khoá hẳn hoặc giới hạn cho Free).
+- Admin có thể cấp Premium thủ công cho từng user (theo tháng).
+- Một công tắc toàn cục để "mở Premium cho tất cả" trong giai đoạn ra mắt/khuyến mãi, tắt dần khi cần thu phí thật.
+
+#### Giải pháp được chọn
+
+5 giới hạn/quyền lợi được gắn vào khung Free/Premium:
+
+1. **Đổi môn học** — Free phải "xem quảng cáo" giả lập (đếm ngược 5 giây phía FE) để mở khoá 1 lượt đổi môn (token Redis, single-use, TTL 300s); Premium đổi môn thoải mái không giới hạn.
+2. **Ôn lại câu sai (Wrong Answer Review, Feature 010)** — khoá **hoàn toàn** cho Free, chặn ở tầng backend (middleware `requirePremium`), không chỉ ẩn UI.
+3. **Lịch sử thi thử** (trong trang Tiến độ học tập) — khoá **hoàn toàn** cho Free ở tầng backend (`GET /api/progress/exam-history` trả 403, không trả `items` kể cả rỗng).
+4. **Thẻ bảo hiểm chuỗi (Streak Freeze)** — Premium được cấp 3 "thẻ" ngay khi kích hoạt, mỗi thẻ tự động "bắc cầu" 1 khoảng trống đúng 1 ngày trong lịch sử ôn tập (không làm đứt streak); Free không có thẻ nào, streak tính y hệt thuật toán cũ.
+5. **2 mục thống kê "Xu hướng điểm (30 phiên gần nhất)" và "Thống kê theo môn"** ở trang Tiến độ — Premium-only, chặn ở BACKEND bằng cách trả **mảng rỗng** cho Free (không phải lỗi 403, khác với mục 2-3 ở trên vì đây chỉ là 1 phần trong 1 trang tổng hợp lớn hơn). Thêm sau vòng test thủ công của S5 (xem mục "Cập nhật sau vòng test thủ công của S5" cuối phần này).
+
+**Cơ chế nền:**
+- **`isUserPremium`** = công tắc toàn cục `defaultPremiumForAll` (bảng `app_settings`, mặc định **BẬT sẵn**) HOẶC `premiumExpiresAt` còn hạn.
+- **Admin cấp Premium thủ công** theo tháng (1-24) — cộng dồn nếu đang Premium còn hạn, "kích hoạt mới" (reset mốc tính streak freeze) nếu đang Free/đã hết hạn.
+- **Cron cảnh báo sắp hết hạn** — quét hằng ngày, gửi thông báo trước 24h, chỉ gửi 1 lần/hạn.
+
+---
+
+### Phương án kỹ thuật được lựa chọn và lý do
+
+#### 1. Công tắc toàn cục mặc định BẬT (`defaultPremiumForAll = true`)
+
+**Lý do nghiệp vụ:** Ra mắt tính năng Free/Premium mà không "khoá" đột ngột người dùng hiện tại — mọi tài khoản (cũ lẫn mới) đều được coi là Premium cho tới khi admin **chủ động tắt** công tắc này. Đây là quyết định nghiệp vụ đã chốt từ S1, không phải giá trị mặc định an toàn ngẫu nhiên.
+
+#### 2. Cache in-memory cho công tắc toàn cục, invalidate ngay (không TTL polling)
+
+**Lý do:** `isUserPremium` được gọi ở RẤT NHIỀU nơi mỗi request (`/me`, gate wrong-answer, gate exam-history, gate subjects...) — query DB mỗi lần sẽ tốn kém. Cache 1 biến in-memory (`cachedGlobalSetting`), nhưng khi admin `PATCH /api/admin/settings/premium-default`, cache được **ghi đè ngay lập tức** (không đợi TTL hết hạn) — đảm bảo request tiếp theo (kể cả trên cùng process) thấy giá trị mới ngay, không có độ trễ khó hiểu.
+
+**Giới hạn đã biết (chấp nhận được):** Cache chỉ đúng khi server chạy 1 process duy nhất (không có nhiều worker/instance) — khớp với mô hình triển khai hiện tại của dự án.
+
+#### 3. Compare-And-Swap (CAS) cho `grantPremiumMonths` — chống lost update
+
+**Vấn đề (lỗi S3 phát hiện):** Ban đầu hàm nhận sẵn `user` đã fetch từ nơi gọi, tính toán rồi `update` thẳng — check-rồi-ghi không nguyên tử. 2 admin (hoặc double-click) cùng cấp Premium cho 1 user gần như đồng thời có thể cùng đọc dữ liệu cũ, lần ghi sau "đè" mất hoàn toàn lần ghi trước — **user chỉ nhận được 1 trong 2 lần cấp** thay vì cộng dồn.
+
+**Giải pháp:** Đổi `grantPremiumMonths(user, months)` → `grantPremiumMonths(userId, months)`, tự fetch bên trong vòng lặp CAS: `updateMany` với điều kiện `WHERE` khớp đúng `premiumExpiresAt` **và** `premiumSince` vừa đọc; nếu `count=0` (bị ghi đè), đọc lại giá trị mới nhất và tính lại, tối đa 5 lần (`MAX_GRANT_CAS_RETRY`).
+
+#### 4. Thứ tự validate trước khi tiêu thụ token ad-unlock (lỗi S3 phát hiện thứ 2)
+
+**Vấn đề:** Token mở khoá quảng cáo (`consumeSubjectsAdUnlock`, single-use qua Redis) bị tiêu thụ (xoá) **ngay**, trước khi validate định dạng/nghiệp vụ của `subjects` (số lượng 1-7, mã môn hợp lệ, không trùng). Request sai định dạng vẫn "đốt" token oan — Free phải xem lại quảng cáo dù chưa đổi môn thành công lần nào.
+
+**Giải pháp:** Đổi thứ tự trong route: validate đầy đủ (`assertSubjectInputShape` + `usersService.validateAndNormalizeSubjects`, đổi từ `private`→`public` để route gọi được) **trước**, chỉ tiêu thụ token **sau khi** validate qua hết.
+
+#### 5. Thuật toán Streak Freeze — pure function, thống nhất giữa 2 nơi tính streak
+
+**Vấn đề cần tránh:** Hệ thống có 2 nơi tính streak độc lập — `progress.service.ts` (hiển thị số streak ở trang Tiến độ) và `practice.service.ts` `checkAndFireStreakMilestone` (bắn thông báo mốc streak). Nếu 2 nơi dùng công thức khác nhau, số hiển thị và thông báo sẽ lệch nhau — rất khó phát hiện qua test đơn lẻ.
+
+**Giải pháp:** Viết `computeStreaksWithFreeze` là **pure function** duy nhất (không query DB) trong `streak.utils.ts`, dùng chung ở cả 2 nơi, nhận `freezeGrant` (số thẻ, `0` cho Free) và `premiumSinceEffective` (mốc bắt đầu tính freeze) làm tham số — đảm bảo không thể lệch nhau vì cùng 1 hàm.
+
+**Thuật toán (xem docstring `computeStreaksWithFreeze`):** Duyệt các ngày có hoạt động theo thứ tự cũ → mới. Khoảng trống đúng 1 ngày xảy ra SAU mốc Premium hiệu lực và còn thẻ → "bắc cầu" (streak không đứt), dùng 1 thẻ. Khoảng trống > 1 ngày luôn làm đứt streak dù còn thẻ. Sau khi duyệt lịch sử, kiểm tra thêm khoảng cách từ ngày hoạt động gần nhất đến **hôm nay** bằng đúng logic bắc cầu — đây là "trailing forgiveness": streak được bảo vệ ngay lập tức khi bỏ lỡ 1 ngày, không cần đợi ôn tập lại mới "hồi phục".
+
+#### 6. `getEffectivePremiumSince` — coi công tắc toàn cục BẬT như "Premium từ lúc tạo tài khoản"
+
+**Lý do:** Nếu công tắc toàn cục đang BẬT, user có thể chưa từng được admin cấp Premium thủ công (`premiumSince = null`) nhưng vẫn đang là Premium (do công tắc). Trong trường hợp này, mốc tính streak freeze được coi là `user.createdAt` — tức toàn bộ lịch sử hoạt động của user đều được tính bắc cầu, nhất quán với việc họ "đã luôn là Premium" theo góc nhìn công tắc toàn cục.
+
+#### 7. Tách `toUserMeDto` dùng chung — tránh lặp code ở 4 chỗ
+
+**Vấn đề đã có sẵn trước feature này:** `UserMeDto` bị lặp code ở 4 chỗ trong `users.service.ts` (`getProfile`, `updateProfile`, `uploadAvatar`, `removeAvatar`). Nhân tiện thêm field `isPremium`/`premiumExpiresAt`, tách thành 1 hàm thuần tuý `toUserMeDto(user, points, isPremium)` dùng chung — tránh phải sửa lặp lại 4 nơi mỗi khi đổi DTO sau này.
+
+---
+
+### Data Model
+
+#### Bảng `users` (+3 field mới)
+
+| Field | Type | Mô tả |
+|-------|------|-------|
+| `premiumExpiresAt` | `TIMESTAMP` nullable | Thời điểm hết hạn Premium (do admin cấp thủ công theo tháng). `null` = chưa từng được cấp Premium thủ công (vẫn có thể là Premium nếu công tắc toàn cục đang BẬT) |
+| `premiumSince` | `TIMESTAMP` nullable | Thời điểm Premium được kích hoạt **lần gần nhất** — mốc gốc cho thuật toán streak freeze. Chỉ RESET khi user đang KHÔNG Premium và được cấp mới; nếu đang Premium còn hạn và được cấp dồn thêm tháng thì GIỮ NGUYÊN |
+| `premiumExpiryWarnedAt` | `TIMESTAMP` nullable | Thời điểm đã gửi `PREMIUM_EXPIRING_SOON` cho hạn Premium HIỆN TẠI — reset về `null` mỗi khi `premiumExpiresAt` thay đổi (cấp thêm tháng mới), tránh gửi trùng lặp cho cùng 1 hạn |
+
+**Index mới:** `users(premiumExpiresAt)` — phục vụ cron quét user sắp hết hạn (`WHERE premiumExpiresAt BETWEEN now AND now+24h`).
+
+#### Bảng `app_settings` (mới — singleton)
+
+| Field | Type | Mô tả |
+|-------|------|-------|
+| `id` | `TEXT` PK | Cố định `"singleton"` — đảm bảo CHỈ CÓ 1 dòng duy nhất trong bảng |
+| `defaultPremiumForAll` | `BOOLEAN` default `true` | **BẬT SẴN từ đầu** theo yêu cầu nghiệp vụ. Khi TẮT: user không có `premiumExpiresAt` còn hạn sẽ thành Free ngay lập tức (không cần restart server — cache in-memory invalidate ngay) |
+| `updatedAt` | `TIMESTAMP` | |
+
+> Đặt tên chung `AppSettings` (không phải `PremiumSettings`) để mở rộng cho cấu hình toàn cục khác sau này, tránh phải tạo bảng mới.
+
+#### Enum `NotificationType` (+2 giá trị mới)
+
+| Giá trị | Khi nào trigger |
+|---------|----------------|
+| `PREMIUM_GRANTED` | Admin cấp Premium thủ công cho user (theo tháng) |
+| `PREMIUM_EXPIRING_SOON` | Premium sắp hết hạn trong 24h tới (cron hằng ngày quét và gửi đúng 1 lần/hạn) |
+
+#### Hằng số quan trọng
+
+| Hằng số | Giá trị | Ý nghĩa |
+|---------|---------|---------|
+| `MIN_GRANT_MONTHS` / `MAX_GRANT_MONTHS` | 1 / 24 | Khoảng hợp lệ khi admin cấp Premium thủ công |
+| `MAX_GRANT_CAS_RETRY` | 5 | Số lần thử lại tối đa khi CAS xung đột (`grantPremiumMonths`) |
+| `STREAK_FREEZE_GRANT` | 3 | Số thẻ bảo hiểm chuỗi cấp cho Premium ngay khi kích hoạt |
+| `AD_UNLOCK_TTL_SECONDS` | 300 | TTL (giây) của token mở khoá đổi môn (Redis, single-use) |
+| `AD_COUNTDOWN_SECONDS` (FE) | 5 | Thời lượng đếm ngược "xem quảng cáo" giả lập phía frontend |
+| `TWENTY_FOUR_HOURS_MS` | 86400000 | Cửa sổ quét của cron cảnh báo sắp hết hạn |
+
+---
+
+### API Reference
+
+| Method | Path | Auth | Mô tả |
+|--------|------|------|-------|
+| `GET` | `/api/users/me` | Bearer token | Mở rộng: thêm `isPremium`, `premiumExpiresAt` vào `UserMeDto` (không đổi endpoint) |
+| `POST` | `/api/users/subjects/ad-unlock` | Bearer token | Free mở khoá 1 lượt đổi môn sau khi "xem quảng cáo" |
+| `POST` | `/api/users/subjects` | Bearer token | Mở rộng: Free bắt buộc có token ad-unlock còn hiệu lực, Premium bỏ qua kiểm tra |
+| `GET` | `/api/wrong-answers` | Bearer token, **Premium only** | Free → `403 WRONG_ANSWER_REVIEW_PREMIUM_ONLY` |
+| `POST` | `/api/wrong-answers/:id/retry` | Bearer token, **Premium only** | Cùng gate như trên |
+| `GET` | `/api/progress/summary` | Bearer token | Mở rộng: thêm `isPremium`, `premiumExpiresAt`, `streakFreeze { granted, used, remaining }`; `practiceStatsBySubject`/`scoreTrend` trả `[]` cho Free (thêm sau vòng test S5) |
+| `GET` | `/api/progress/exam-history` | Bearer token, **Premium only** | Free → `403 EXAM_HISTORY_PREMIUM_ONLY` (không trả `items` kể cả rỗng) |
+| `PATCH` | `/api/admin/users/:id/grant-premium` | X-Admin-Secret | Cấp Premium thủ công theo tháng (1-24) |
+| `GET` | `/api/admin/settings/premium-default` | X-Admin-Secret | Đọc công tắc toàn cục |
+| `PATCH` | `/api/admin/settings/premium-default` | X-Admin-Secret | Đổi công tắc toàn cục — invalidate cache ngay |
+
+#### POST /api/users/subjects/ad-unlock
+
+**Response 200:**
+```json
+{ "unlocked": true, "expiresInSeconds": 300 }
+```
+
+**Luồng xử lý:** `redis.set('premium:ad-unlock:<userId>', '1', 'EX', 300)`. Premium gọi cũng được (không sai) nhưng không cần thiết vì Premium không bị gate ở bước tiếp theo.
+
+**Error codes:** `401 MISSING_AUTH_TOKEN`
+
+#### POST /api/users/subjects (gate mới)
+
+**Request:**
+```json
+{ "subjects": [{ "id": "TOAN" }, { "id": "VAN" }] }
+```
+
+**Luồng xử lý:** validate đầy đủ định dạng + nghiệp vụ (`validateAndNormalizeSubjects`) → nếu Free: `redis.del('premium:ad-unlock:<userId>')` (trả về số key đã xoá, 1 hoặc 0) → nếu `0` (không có token/hết hạn/đã dùng) → `403 SUBJECTS_CHANGE_LOCKED` → nếu `1`: cho phép đổi môn.
+
+**Error codes:** `400 VALIDATION_ERROR`, `401`, `403 SUBJECTS_CHANGE_LOCKED` (Free chưa xem quảng cáo hoặc token đã hết hạn/đã dùng)
+
+#### PATCH /api/admin/users/:id/grant-premium
+
+**Request:**
+```json
+{ "months": 3 }
+```
+
+**Response 200:**
+```json
+{
+  "id": "user-uuid",
+  "premiumExpiresAt": "2026-10-17T00:00:00.000Z",
+  "premiumSince": "2026-07-17T00:00:00.000Z",
+  "streakFreezeReset": true
+}
+```
+
+**Luồng xử lý:** Xem sơ đồ CAS bên dưới.
+
+**Error codes:** `400 INVALID_PREMIUM_MONTHS` (months ngoài khoảng 1-24), `401`, `404 ADMIN_USER_NOT_FOUND` (fetch trước ở `admin-users.service.ts`), `409 PREMIUM_GRANT_CONFLICT` (cực hiếm — xung đột CAS quá 5 lần liên tiếp)
+
+#### PATCH /api/admin/settings/premium-default
+
+**Request:** `{ "enabled": false }`
+
+**Response 200:** `{ "enabled": false }`
+
+**Error codes:** `400 VALIDATION_ERROR` (thiếu/sai kiểu `enabled`), `401`
+
+---
+
+### Luồng chạy (Flow)
+
+#### Luồng đổi môn học (gate Free/Premium)
+
+```
+Free bấm "Đổi môn" ở ProfilePage
+       │
+       ▼
+profile.isPremium? ──YES──► vào thẳng OnboardingPage (đổi môn thoải mái)
+       │ NO
+       ▼
+AdGatePage — bấm "🎬 Xem quảng cáo để đổi môn"
+       │
+       ▼
+Đếm ngược 5 giây (AD_COUNTDOWN_SECONDS, phía FE, không có quảng cáo thật)
+       │
+       ▼
+POST /api/users/subjects/ad-unlock
+       │
+       ▼
+redis.set('premium:ad-unlock:<userId>', '1', EX 300)
+       │
+       ▼
+Chuyển sang OnboardingPage — chọn môn, bấm Lưu
+       │
+       ▼
+POST /api/users/subjects { subjects }
+       │
+       ▼
+validateAndNormalizeSubjects(subjects)   ◄── validate TRƯỚC (fix race condition)
+       │
+       ├─ sai định dạng? ──► 400, token KHÔNG bị đụng tới
+       │
+       ▼ hợp lệ
+isUserPremium? ──YES──► bỏ qua bước dưới, cho đổi luôn
+       │ NO (Free)
+       ▼
+redis.del('premium:ad-unlock:<userId>')  ◄── tiêu thụ token SAU validate
+       │
+       ├─ trả về 0 (không có/hết hạn/đã dùng) ──► 403 SUBJECTS_CHANGE_LOCKED
+       │
+       ▼ trả về 1
+usersService.updateSubjects(userId, subjects) → 200
+```
+
+#### Luồng cấp Premium thủ công (CAS chống lost update)
+
+```
+Admin nhập số tháng, bấm "🎁 Cấp"
+       │
+       ▼
+PATCH /api/admin/users/:id/grant-premium { months }
+       │
+       ▼
+Zod validate months (1-24) → adminUsersService.grantPremium(userId, months)
+       │
+       ▼
+fetch user (fail-fast 404 nếu không tồn tại) → premiumService.grantPremiumMonths(userId, months)
+       │
+       ▼
+┌─────────── vòng lặp CAS (tối đa 5 lần) ───────────┐
+│ đọc user.premiumExpiresAt + user.premiumSince        │
+│       │                                              │
+│ currentlyPremium = premiumExpiresAt còn hạn?         │
+│       │                                              │
+│  ├─ YES: baseDate = premiumExpiresAt cũ (CỘNG DỒN)   │
+│  │       premiumSince GIỮ NGUYÊN, streakFreezeReset=false│
+│  └─ NO:  baseDate = now (KÍCH HOẠT MỚI)              │
+│          premiumSince = now, streakFreezeReset=true  │
+│       │                                              │
+│ newExpiresAt = addMonthsUtc(baseDate, months)        │
+│       │                                              │
+│ updateMany({                                         │
+│   WHERE: id, premiumExpiresAt=<vừa đọc>,             │
+│           premiumSince=<vừa đọc> ,                   │  ← điều kiện CAS
+│   SET: premiumExpiresAt=new, premiumSince=new,       │
+│        premiumExpiryWarnedAt=null })                 │
+│       │                                              │
+│  ├─ count=0 (bị ghi đè bởi request khác) ──► lặp lại │
+│  └─ count=1 (thành công) ──► thoát vòng lặp           │
+└───────────────────────────────────────────────────────┘
+       │
+       ▼ (response trả về ngay)
+void notificationService.createNotification(PREMIUM_GRANTED, targetScreen='progress')
+       │
+       ▼
+Sau 5 lần vẫn xung đột → 409 PREMIUM_GRANT_CONFLICT (cực hiếm)
+```
+
+#### Luồng streak freeze — tính tại `progress.service.ts` và `practice.service.ts`
+
+```
+[GET /api/progress/summary]  hoặc  [practice.completeSession() → checkAndFireStreakMilestone]
+       │
+       ▼
+Promise.all: user{premiumExpiresAt,premiumSince,createdAt} + globalSetting (cache)
+       │
+       ▼
+isPremium = premiumService.isUserPremium(user, globalSetting)
+effectivePremiumSince = premiumService.getEffectivePremiumSince(user, globalSetting)
+    (globalSetting.defaultPremiumForAll ? user.createdAt : user.premiumSince)
+       │
+       ▼
+freezeGrant = isPremium ? STREAK_FREEZE_GRANT(3) : 0
+       │
+       ▼
+computeStreaksWithFreeze(completedDates, effectivePremiumSince, freezeGrant)
+       │
+       ├─ duyệt các ngày hoạt động CŨ→MỚI
+       │    diff=1 ngày        → liên tục bình thường
+       │    diff=2 ngày VÀ có thể bridge → dùng 1 thẻ, "bắc cầu", streak không đứt
+       │    còn lại            → đứt streak, reset về 1
+       │
+       ├─ kiểm tra thêm: ngày hoạt động gần nhất → HÔM NAY (cùng logic bridge)
+       │    → "trailing forgiveness": streak sống ngay cả khi chưa ôn tập lại
+       │
+       ▼
+{ currentStreak, bestStreak, freezesUsed, freezesRemaining }
+```
+
+#### Luồng cron cảnh báo Premium sắp hết hạn (hằng ngày 3:05 AM)
+
+```
+cron.schedule('5 3 * * *') trong server.ts
+       │
+       ▼
+premiumService.notifyExpiringPremiumUsers()
+       │
+       ▼
+findMany users WHERE premiumExpiresAt ∈ (now, now+24h] AND premiumExpiryWarnedAt IS NULL
+       │
+       ▼ (với mỗi user thoả điều kiện)
+void notificationService.createNotification(PREMIUM_EXPIRING_SOON)  ← fire-and-forget
+       │
+       ▼
+UPDATE user SET premiumExpiryWarnedAt = now
+```
+
+---
+
+### File Structure
+
+| File | Vai trò |
+|------|---------|
+| `backend/prisma/schema.prisma` | +3 field `User` (premiumExpiresAt/premiumSince/premiumExpiryWarnedAt), +model `AppSettings` (singleton), +2 giá trị enum `NotificationType`, +index `users(premiumExpiresAt)` |
+| `backend/prisma/migrations/20260716000000_add_premium_framework/migration.sql` | Tạo cột mới + bảng `app_settings` + enum values + index |
+| `backend/src/services/premium/premium.errors.ts` | `PremiumError`, `InvalidPremiumMonthsError`, `PremiumUserNotFoundError`, `PremiumGrantConflictError` |
+| `backend/src/services/premium/premium.service.ts` | Trung tâm logic: `isUserPremium`, `checkIsPremium`, `getEffectivePremiumSince`, `getGlobalPremiumSetting`/`setGlobalPremiumSetting` (cache in-memory), `grantPremiumMonths` (CAS), `notifyExpiringPremiumUsers` (cron) |
+| `backend/src/services/premium/__tests__/premium.service.test.ts` | Unit test đầy đủ (bao gồm 3 test mới của S3: not-found + 2 race-condition) |
+| `backend/src/middleware/premium.middleware.ts` | `requirePremium(errorFactory)` — middleware Express dùng chung, chặn Free với error code riêng theo module |
+| `backend/src/middleware/__tests__/premium.middleware.test.ts` | Unit test middleware |
+| `backend/src/utils/streak.utils.ts` | `+computeStreaksWithFreeze` (pure function), `+STREAK_FREEZE_GRANT`; giữ nguyên `computeStreaks` cũ (vẫn dùng cho trường hợp không cần freeze) |
+| `backend/src/utils/__tests__/streak.utils.test.ts` | Unit test thuật toán freeze (bridge, trailing forgiveness, hết thẻ, Free freezeGrant=0...) |
+| `backend/src/services/users/users.service.ts` | `+toUserMeDto` (dùng chung 4 chỗ), `+grantSubjectsAdUnlock`, `+consumeSubjectsAdUnlock`, `validateAndNormalizeSubjects` đổi `private`→`public` |
+| `backend/src/services/users/users.errors.ts` | `+SubjectsChangeLockedError` |
+| `backend/src/services/users/users.types.ts` | `UserMeDto` +`isPremium`, +`premiumExpiresAt` |
+| `backend/src/services/users/__tests__/users.service.test.ts` | +5 test `validateAndNormalizeSubjects` (S3) |
+| `backend/src/routes/users.route.ts` | `+POST /subjects/ad-unlock`; `POST /subjects` đổi thứ tự validate→tiêu thụ token (fix race condition S3) |
+| `backend/src/routes/wrongAnswer.route.ts` | `+requirePremium` gate toàn bộ router |
+| `backend/src/services/wrongAnswer/wrongAnswer.errors.ts` | `+WrongAnswerReviewPremiumOnlyError` |
+| `backend/src/services/progress/progress.errors.ts` | File mới — `ProgressError`, `ExamHistoryPremiumOnlyError` |
+| `backend/src/services/progress/progress.service.ts` | `getSummary` +isPremium/premiumExpiresAt/streakFreeze (dùng `computeStreaksWithFreeze`); `getExamHistory` +gate Premium-only |
+| `backend/src/services/progress/progress.types.ts` | `+StreakFreezeInfo`, `ProgressSummary` +3 field |
+| `backend/src/services/progress/__tests__/progress.service.test.ts` | Unit test gate + streak freeze trong context progress |
+| `backend/src/services/practice/practice.service.ts` | `checkAndFireStreakMilestone` đổi sang `computeStreaksWithFreeze` (đồng bộ với progress.service) |
+| `backend/src/services/admin-users/admin-users.service.ts` | `+grantPremium(userId, months)` — fetch fail-fast 404, gọi `premiumService.grantPremiumMonths` |
+| `backend/src/services/admin-users/admin-users.types.ts` | `+GrantPremiumResultDto` |
+| `backend/src/services/admin-users/__tests__/admin-users.service.test.ts` | +test grant Premium |
+| `backend/src/routes/admin-users.route.ts` | `+PATCH /users/:id/grant-premium`, `+GET/PATCH /settings/premium-default` |
+| `backend/src/services/notification/notification.types.ts` | +2 shape metadata (`PREMIUM_GRANTED`, `PREMIUM_EXPIRING_SOON`) |
+| `backend/src/app.ts` | +6 error code mapping (`INVALID_PREMIUM_MONTHS`, `WRONG_ANSWER_REVIEW_PREMIUM_ONLY`, `EXAM_HISTORY_PREMIUM_ONLY`, `SUBJECTS_CHANGE_LOCKED`, `PREMIUM_USER_NOT_FOUND`, `PREMIUM_GRANT_CONFLICT`) |
+| `backend/src/server.ts` | +cron hằng ngày 3:05 AM gọi `notifyExpiringPremiumUsers` |
+| `frontend/src/lib/api.ts` | +`adUnlockSubjects`, +`adminGrantPremium`/`adminGetPremiumDefaultSetting`/`adminSetPremiumDefaultSetting`, `UserProfile`/`ProgressSummary` +field Premium |
+| `frontend/src/App.tsx` | +`AdGatePage` (đếm ngược giả lập), +badge "⭐ Premium" ở ProfilePage, +banner khoá cho `WrongAnswersPage`/`ProgressPage` (lịch sử thi thử), +`PremiumDefaultToggle` (Admin Dashboard), +form cấp Premium theo tháng (`AdminUsersPage`, cột "Premium" mới) |
+| `frontend/src/App.css` | +CSS: `.ad-gate-*`, `.premium-badge`, `.premium-locked-banner`, `.premium-toggle-*`, `.grant-premium-*` |
+| `docs/api/drafts/free-premium-framework.yaml` | API contract (tạo bởi S1, verify bởi S3) |
+
+---
+
+### Cập nhật sau vòng test thủ công của S5 (2026-07-19)
+
+14/14 test case thủ công PASS, **không phát hiện bug logic mới** — 2 race condition mà S3 đã sửa (CAS `grantPremiumMonths`, thứ tự validate/tiêu thụ token ad-unlock) được re-verify bằng tay và xác nhận đúng. Chỉ có 1 thay đổi phạm vi phát sinh theo yêu cầu người dùng trong lúc test:
+
+**Gate thêm Premium-only cho 2 mục thống kê ở trang Tiến độ** ("Xu hướng điểm (30 phiên gần nhất)" và "Thống kê theo môn") — trước đó 2 mục này hiển thị cho MỌI user (Free lẫn Premium), không nằm trong 4 giới hạn ban đầu S1 đã liệt kê. Cách chặn **khác** với cách chặn "Ôn lại câu sai"/"Lịch sử thi thử" (403 nguyên trang): vì 2 mục này chỉ là 1 phần trong response `GET /api/progress/summary` (1 trang tổng hợp nhiều thông tin khác vẫn cần hiển thị cho Free), chặn bằng cách trả **mảng rỗng** (`practiceStatsBySubject: isPremium ? data : []`, tương tự `scoreTrend`) thay vì ném lỗi — tránh làm sập cả trang Tiến độ. Đã cập nhật `progress.service.ts` (chặn ở backend, không chỉ ẩn UI) + `App.tsx` (hiện banner nâng cấp thay vì bảng rỗng cho Free).
+
+Xem thêm nguyên tắc chọn "chặn bằng lỗi 403" vs "chặn bằng trả rỗng" tại `docs/GLOSSARY.md` mục "Thuật ngữ Feature 015" — "Gate theo phạm vi ảnh hưởng (Scoped Gating)".
+
+---
+
+### Ghi chú kỹ thuật
+
+**2 race condition S3 phát hiện và sửa (xem `docs/CODE_REVIEW_LOG.md` mục "Review: Feature 015"):**
+
+| # | Vị trí | Vấn đề | Cách sửa |
+|---|--------|--------|----------|
+| 1 | `premium.service.ts` `grantPremiumMonths` | Nhận sẵn `user` đã fetch từ ngoài, check-rồi-ghi không nguyên tử — 2 admin cấp Premium gần như đồng thời có thể làm MẤT HOÀN TOÀN 1 trong 2 lần cấp (lost update) | Đổi signature nhận `userId`, tự fetch bên trong vòng lặp CAS (`updateMany` điều kiện khớp đúng `premiumExpiresAt`+`premiumSince` vừa đọc, tối đa 5 lần thử) |
+| 2 | `users.route.ts` `POST /api/users/subjects` | Token ad-unlock bị tiêu thụ TRƯỚC KHI validate xong `subjects` — request sai định dạng vẫn "đốt" token oan | Đổi thứ tự: validate đầy đủ trước, tiêu thụ token sau |
+
+**Vì sao CAS kiểm tra CẢ `premiumExpiresAt` VÀ `premiumSince` trong điều kiện WHERE (không chỉ 1 field):**
+Nếu chỉ kiểm tra `premiumExpiresAt`, một race condition hiếm hơn vẫn có thể lọt: 2 request đọc cùng `premiumExpiresAt` NHƯNG một trong hai đã kịp bị 1 request khác đổi `premiumSince` (ví dụ do 1 request "kích hoạt mới" chen giữa) — dẫn tới ghi đè sai `premiumSince` dù `premiumExpiresAt` khớp. Kiểm tra cả 2 field đảm bảo CAS chỉ thành công khi TOÀN BỘ state liên quan vẫn đúng như lúc đọc.
+
+**Vì sao `WRONG_ANSWER_REVIEW_PREMIUM_ONLY` và `EXAM_HISTORY_PREMIUM_ONLY` chặn ở BACKEND (không chỉ ẩn UI):**
+Yêu cầu nghiệp vụ rõ ràng: Free không được phép truy cập dữ liệu này DÙ QUA CÁCH NÀO (kể cả gọi thẳng API, bỏ qua UI). Nếu chỉ ẩn ở frontend, Free vẫn có thể gọi trực tiếp API và lấy được dữ liệu — vi phạm ranh giới gói dịch vụ.
+
+**Ghi chú quan sát của S3 (không phải lỗi, chỉ là gợi ý cải tiến UX cho vòng sau):** `AdminUserListItem`/`AdminUserDetail` (danh sách + chi tiết user cho admin) chưa có field `isPremium`/`premiumExpiresAt` — admin hiện chỉ biết trạng thái Premium của 1 user ngay sau khi tự tay cấp (qua thông báo toast), không có cách xem lại trạng thái hiện tại trong bảng danh sách mà không tra riêng. `docs/api/drafts/free-premium-framework.yaml` không yêu cầu việc này nên KHÔNG coi là thiếu sót của PR.
+
+**Lint môi trường:** Nhiều session Claude Code chạy song song trong cùng sandbox khiến `tsc`/test chạy chậm bất thường (nhiều phút thay vì vài giây) — đã xác nhận qua nhiều lần retry đây là tranh chấp tài nguyên, không phải lỗi code (1 lần build báo lỗi `TS6053` thoáng qua, build lại ngay sau đó PASS sạch).

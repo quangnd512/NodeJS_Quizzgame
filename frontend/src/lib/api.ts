@@ -14,6 +14,10 @@ export interface UserProfile {
   createdAt: string;
   lastLoginAt: string | null;
   points: number;
+  /** true nếu đang là Premium (công tắc toàn cục BẬT hoặc premiumExpiresAt còn hạn). */
+  isPremium: boolean;
+  /** Hạn Premium được admin cấp thủ công (theo tháng), null nếu chưa từng được cấp. */
+  premiumExpiresAt: string | null;
 }
 
 export interface LoginResult {
@@ -104,6 +108,17 @@ export async function updateSubjects(
     method: 'POST',
     body: JSON.stringify({ subjects: subjectIds.map((id) => ({ id })) }),
   });
+}
+
+/**
+ * POST /api/users/subjects/ad-unlock — Feature 015 (Free/Premium).
+ * Free gọi sau khi "xem xong" quảng cáo giả lập (đếm ngược phía FE) để mở
+ * khoá 1 lượt đổi môn học. Premium gọi cũng được nhưng không cần thiết.
+ */
+export async function adUnlockSubjects(
+  sessionToken: string,
+): Promise<{ unlocked: true; expiresInSeconds: number }> {
+  return request('/api/users/subjects/ad-unlock', sessionToken, { method: 'POST' });
 }
 
 /** PUT /api/users/profile */
@@ -1003,12 +1018,22 @@ export interface PracticeStatItem {
   accuracyByDifficulty: Record<number, number>;
 }
 
+/** Số thẻ bảo hiểm chuỗi (streak freeze) — chỉ có ý nghĩa khi isPremium=true; Free luôn 0/0/0. */
+export interface StreakFreezeInfo {
+  granted: number;
+  used: number;
+  remaining: number;
+}
+
 export interface ProgressSummary {
   overview: ProgressOverview;
   bestStreak: number;
   monthComparison: MonthComparison;
   practiceStatsBySubject: PracticeStatItem[];
   scoreTrend: ScoreTrendPoint[];
+  isPremium: boolean;
+  premiumExpiresAt: string | null;
+  streakFreeze: StreakFreezeInfo;
 }
 
 export interface ExamHistoryItem {
@@ -1232,6 +1257,46 @@ export async function adminDeleteUser(
     `/api/admin/users/${userId}`,
     secret,
     { method: 'DELETE' },
+  );
+}
+
+// ─── Admin: Free/Premium (Feature 015) ───────────────────────────────────────
+
+export interface GrantPremiumResult {
+  id: string;
+  premiumExpiresAt: string;
+  premiumSince: string;
+  /** true nếu đây là lần kích hoạt Premium MỚI (streak freeze được coi là reset về 3). */
+  streakFreezeReset: boolean;
+}
+
+/** PATCH /api/admin/users/:id/grant-premium — cấp Premium thủ công theo tháng (1-24). */
+export async function adminGrantPremium(
+  secret: string,
+  userId: string,
+  months: number,
+): Promise<GrantPremiumResult> {
+  return adminRequest<GrantPremiumResult>(
+    `/api/admin/users/${userId}/grant-premium`,
+    secret,
+    { method: 'PATCH', body: JSON.stringify({ months }) },
+  );
+}
+
+/** GET /api/admin/settings/premium-default — công tắc toàn cục "Mặc định Premium cho tất cả". */
+export async function adminGetPremiumDefaultSetting(secret: string): Promise<{ enabled: boolean }> {
+  return adminRequest<{ enabled: boolean }>('/api/admin/settings/premium-default', secret);
+}
+
+/** PATCH /api/admin/settings/premium-default */
+export async function adminSetPremiumDefaultSetting(
+  secret: string,
+  enabled: boolean,
+): Promise<{ enabled: boolean }> {
+  return adminRequest<{ enabled: boolean }>(
+    '/api/admin/settings/premium-default',
+    secret,
+    { method: 'PATCH', body: JSON.stringify({ enabled }) },
   );
 }
 

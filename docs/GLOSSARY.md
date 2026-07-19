@@ -1385,3 +1385,73 @@ facets(status, subject, reason):
 **Định nghĩa**: Khi 2 tính năng khác nhau cùng cần đảm bảo "dữ liệu đầu vào đúng hình dạng theo 1 discriminator field" (ở đây: `options`/`correctAnswer` phải đúng hình dạng theo `questionType`), tái dùng lại đúng 1 hàm validate thay vì viết lại logic tương tự ở nơi khác.
 
 **Trong dự án này**: `validateQuestionShape()` vốn viết cho module Thi thử (`exam.service.ts`), được `submission.service.ts` import và gọi lại y nguyên khi học sinh gửi/sửa câu hỏi — đảm bảo 2 nơi tạo câu hỏi trong hệ thống (`ExamQuestion` và `StudentQuestionSubmission`) không bao giờ lệch quy tắc hình dạng dữ liệu với nhau.
+
+---
+
+## Thuật ngữ Feature 015 — Khung Free/Premium
+
+> Cũng là các pattern **tổng quát**, đáng áp dụng lại cho dự án khác có mô hình gói dịch vụ (Free/Premium, Trial/Paid...).
+
+### Invalidate-on-Write Cache (Cache ghi-đè-ngay, không TTL)
+
+**Định nghĩa**: Cache in-memory cho 1 giá trị cấu hình toàn cục, được **ghi đè ngay lập tức** mỗi khi giá trị gốc thay đổi — khác với cache kiểu TTL (hết hạn theo thời gian rồi tự làm mới), nơi luôn có 1 khoảng trễ giữa lúc dữ liệu gốc đổi và lúc cache phản ánh đúng.
+
+**Trong dự án này** (`premium.service.ts`): công tắc toàn cục `defaultPremiumForAll` được đọc RẤT NHIỀU nơi mỗi request (gate wrong-answer, gate exam-history, gate subjects, `/me`...) — cache 1 biến `cachedGlobalSetting` để tránh query DB liên tục. Nhưng thay vì TTL, `setGlobalPremiumSetting()` ghi đè biến cache NGAY khi admin đổi công tắc — đảm bảo request tiếp theo (kể cả trên cùng process) thấy giá trị mới tức thì.
+
+**Giới hạn cần nhớ**: chỉ đúng khi server chạy **1 process duy nhất**. Nếu triển khai nhiều worker/instance (horizontal scaling), mỗi process có 1 bản cache riêng — cần chuyển sang cache tập trung (Redis pub/sub để broadcast invalidate, hoặc đọc thẳng DB) khi mở rộng quy mô.
+
+---
+
+### Streak Freeze (Thẻ bảo hiểm chuỗi)
+
+**Định nghĩa**: Cơ chế cho phép "bỏ lỡ 1 ngày mà không mất chuỗi (streak)" bằng cách tiêu 1 "thẻ" trong số thẻ được cấp — biến 1 quy tắc cứng nhắc ("bỏ 1 ngày là mất hết") thành 1 quyền lợi có giới hạn.
+
+**Trong dự án này** (`computeStreaksWithFreeze`): Premium được cấp 3 thẻ ngay khi kích hoạt. Khoảng trống ĐÚNG 1 ngày (không hơn) xảy ra SAU mốc "bắt đầu Premium" và còn thẻ → tự động "bắc cầu" (dùng 1 thẻ, streak không đứt). Thuật toán còn có "trailing forgiveness": kiểm tra thêm khoảng cách từ hoạt động gần nhất đến HÔM NAY bằng đúng logic bắc cầu, để streak được bảo vệ ngay lập tức thay vì phải đợi user học lại mới "hồi phục".
+
+**Nguyên tắc thiết kế đáng nhớ**: viết thành 1 **pure function** duy nhất (không query DB, nhận toàn bộ dữ liệu cần thiết qua tham số) khi thuật toán này cần dùng ở ≥2 nơi khác nhau (ở đây: hiển thị số streak + bắn thông báo mốc streak) — đảm bảo 2 nơi không bao giờ tính lệch nhau vì cùng gọi 1 hàm.
+
+---
+
+### End-of-Month Date Clamping (Kẹp ngày về cuối tháng)
+
+**Định nghĩa**: Khi cộng N tháng vào 1 ngày cụ thể mà tháng đích không đủ số ngày đó (VD: 31/1 + 1 tháng, tháng 2 không có ngày 31), cần "kẹp" (clamp) kết quả về ngày cuối cùng của tháng đích, thay vì để giá trị tự "tràn" sang tháng kế tiếp.
+
+**Cách làm không cần thư viện ngoài** (`addMonthsUtc` trong `premium.service.ts`):
+```ts
+const originalDay = result.getUTCDate();
+result.setUTCMonth(result.getUTCMonth() + months); // JS tự tràn nếu tháng đích thiếu ngày
+if (result.getUTCDate() !== originalDay) {          // phát hiện đã tràn
+  result.setUTCDate(0);                             // "ngày 0" = ngày cuối tháng LIỀN TRƯỚC
+}
+```
+`setUTCDate(0)` là thủ thuật cốt lõi: ngày `0` của 1 tháng trong JS luôn trả về ngày cuối cùng của tháng ngay trước nó.
+
+---
+
+### Token Burn Ordering (Thứ tự "đốt" tài nguyên có hạn)
+
+**Định nghĩa**: Nguyên tắc chung — bất kỳ hành động nào tiêu tốn 1 tài nguyên có hạn/dùng 1 lần (token, lượt thử, tiền, thẻ bảo hiểm...) phải được đặt SAU CÙNG trong luồng xử lý, chỉ sau khi mọi bước validate/kiểm tra khác đã chắc chắn thành công.
+
+**Bug thật đã xảy ra trong dự án này**: token mở khoá đổi môn (Redis, single-use) ban đầu bị tiêu thụ (`redis.del`) TRƯỚC khi validate định dạng `subjects` — 1 request sai định dạng vẫn "đốt" token oan dù chưa đổi môn thành công lần nào. Sửa bằng cách đảo thứ tự: validate toàn bộ xong xuôi → mới tiêu thụ token.
+
+**Cách tự kiểm tra khi viết code mới**: với mọi thao tác có "tiêu something", tự hỏi "nếu phần code SAU bước này thất bại, tài nguyên vừa tiêu có bị mất oan không? Nếu có, cần dời việc tiêu tài nguyên xuống sau."
+
+---
+
+### Frontend Gate vs Backend Gate (Gate ở giao diện vs Gate ở máy chủ)
+
+**Định nghĩa**: Phân biệt 2 lớp khác nhau khi giới hạn quyền truy cập theo gói dịch vụ — Frontend gate (ẩn nút, không gọi API, hiện banner nâng cấp) chỉ phục vụ TRẢI NGHIỆM mượt mà; Backend gate (middleware/service chặn request) mới là lớp BẢO VỆ THẬT SỰ.
+
+**Trong dự án này**: `WrongAnswersPage` chủ động không gọi API nếu biết trước `isPremium=false` (tiết kiệm 1 round-trip network vô ích) — nhưng đây chỉ là tối ưu UX. Lớp bảo vệ thật là middleware `requirePremium` ở backend, luôn chặn dù request có đi qua UI hay gọi thẳng bằng `curl`/Postman.
+
+**Nguyên tắc chung**: KHÔNG BAO GIỜ chỉ dựa vào frontend để giới hạn quyền truy cập dữ liệu/tính năng trả phí — ai cũng có thể bỏ qua UI và gọi thẳng API.
+
+---
+
+### Scoped Gating (Gate theo phạm vi ảnh hưởng)
+
+**Định nghĩa**: Khi quyết định cách "chặn" 1 phần nội dung Premium-only, chọn cơ chế dựa trên việc nội dung đó là **cả 1 trang/API riêng** hay chỉ là **1 phần nhỏ trong 1 trang/response lớn hơn**:
+- Cả 1 trang/API riêng dành cho Premium (VD: `WrongAnswersPage`, lịch sử thi thử) → chặn thẳng bằng lỗi rõ ràng (403).
+- 1 phần trong 1 response lớn hơn (VD: 2 mục thống kê trong `GET /api/progress/summary`, response còn nhiều field khác Free vẫn cần xem) → trả giá trị rỗng/mặc định cho phần đó, KHÔNG ném lỗi làm sập cả response.
+
+**Trong dự án này**: `getExamHistory` (API riêng) → `403 EXAM_HISTORY_PREMIUM_ONLY`. `getMyProgress` → `practiceStatsBySubject`/`scoreTrend` trả `[]` cho Free, các field khác (streak, điểm, xếp hạng...) vẫn trả bình thường.

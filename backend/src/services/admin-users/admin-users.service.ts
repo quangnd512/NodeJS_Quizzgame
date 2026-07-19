@@ -5,6 +5,7 @@
 import { prisma } from '../../lib/prisma.js';
 import { redis } from '../../lib/redis.js';
 import { getFirebaseAuth } from '../../lib/firebase-admin.js';
+import { premiumService } from '../premium/premium.service.js';
 import {
   AdminUserNotFoundError,
   AdminUserNoEmailError,
@@ -15,6 +16,7 @@ import type {
   AdminUserDetail,
   AdminUserListResult,
   DashboardStats,
+  GrantPremiumResultDto,
 } from './admin-users.types.js';
 import { VALID_ROLES } from './admin-users.types.js';
 
@@ -319,6 +321,31 @@ async function deleteUser(userId: string): Promise<{ message: string }> {
   return { message: `Da xoa tai khoan nguoi dung '${user.displayName ?? userId}' thanh cong.` };
 }
 
+/**
+ * Admin cap Premium thu cong cho 1 user theo so thang (1-24) — Feature 015.
+ * Fetch user truoc de nem 404 dung quy uoc chung cua module nay (giong het
+ * setUserBlocked/setUserRole/...) - day la 1 kiem tra "fail fast" rieng, KHONG
+ * phai nguon du lieu duy nhat cho phep tinh: premiumService.grantPremiumMonths
+ * tu FETCH LAI ben trong 1 vong lap CAS (compare-and-swap) de tranh race
+ * condition khi 2 request cap Premium cho cung user gan nhu dong thoi (xem
+ * chi tiet trong docblock cua ham do) - vi vay ta chi truyen `userId`, KHONG
+ * truyen thang `user` da fetch o day (du lieu co the da CU vao luc
+ * grantPremiumMonths thuc su ghi).
+ */
+async function grantPremium(userId: string, months: number): Promise<GrantPremiumResultDto> {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw new AdminUserNotFoundError(userId);
+
+  const result = await premiumService.grantPremiumMonths(userId, months);
+
+  return {
+    id: result.id,
+    premiumExpiresAt: result.premiumExpiresAt.toISOString(),
+    premiumSince: result.premiumSince.toISOString(),
+    streakFreezeReset: result.streakFreezeReset,
+  };
+}
+
 export const adminUsersService = {
   getDashboardStats,
   listUsers,
@@ -327,4 +354,5 @@ export const adminUsersService = {
   resetUserPassword,
   setUserRole,
   deleteUser,
+  grantPremium,
 };

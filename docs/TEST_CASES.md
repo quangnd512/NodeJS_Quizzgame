@@ -753,3 +753,50 @@
 | 30 | PATCH .../resolve — status không hợp lệ (gửi REVIEWED) | status="REVIEWED" | 400 (Zod: chỉ chấp nhận FIXED\|DISMISSED) |
 | 31 | PATCH .../resolve — reportId không tồn tại | id ngẫu nhiên | 404 | `QUESTION_REPORT_NOT_FOUND` |
 | 32 | **Race condition**: PATCH .../resolve gọi 2 lần liên tiếp trên cùng 1 report (double-click, retry client, hoặc 2 admin xử lý gần như đồng thời) | request thứ 2 "thua cuộc đua claim" (`updateMany` điều kiện `status:'PENDING'` trong transaction trả count=0) | 409 `REPORT_NOT_PENDING` — KHÔNG tạo thêm `question_edit_history` thừa, KHÔNG ghi đè Question, KHÔNG gửi trùng thông báo REPORT_RESOLVED |
+
+---
+
+## Test Cases: Khung Free/Premium (Feature 015)
+
+> Branch `feature/premium-framework`. Bổ sung ở vòng review S3 (2026-07-16): 2 test
+> race-condition mới cho `grantPremiumMonths` (CAS) + 1 test "user không tồn tại" +
+> 5 test cho `validateAndNormalizeSubjects` (mới public, phục vụ fix thứ tự
+> validate/tiêu thụ token ad-unlock).
+
+### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | GET /api/users/me — user Free | global toggle tắt, premiumExpiresAt=null | `isPremium: false, premiumExpiresAt: null` |
+| 2 | GET /api/users/me — user Premium còn hạn | premiumExpiresAt tương lai | `isPremium: true` |
+| 3 | POST /api/users/subjects/ad-unlock | user Free | 200, `{ unlocked: true, expiresInSeconds: 300 }`, set Redis key TTL 300s |
+| 4 | POST /api/users/subjects — Free đã ad-unlock | token còn hiệu lực | 200, token bị xoá (single-use) |
+| 5 | POST /api/users/subjects — Premium | không cần ad-unlock | 200, luôn cho đổi |
+| 6 | PATCH /api/admin/users/:id/grant-premium — user chưa từng Premium | months=3 | 200, `premiumSince=now`, `streakFreezeReset=true`, +30 ngày×3 |
+| 7 | PATCH .../grant-premium — user đang Premium còn hạn | months=2 | cộng dồn từ hạn cũ, `premiumSince` giữ nguyên, `streakFreezeReset=false` |
+| 8 | GET/PATCH /api/admin/settings/premium-default | enabled=false | cache in-memory invalidate ngay, đọc lại thấy giá trị mới |
+| 9 | GET /api/progress/summary — Premium | có streak freeze | `streakFreeze: { granted: 3, used, remaining }`, streak tính theo thuật toán bridge |
+| 10 | Cron `notifyExpiringPremiumUsers` | user hết hạn trong 24h, chưa cảnh báo | gửi PREMIUM_EXPIRING_SOON, set `premiumExpiryWarnedAt=now` |
+
+### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 11 | Cộng tháng qua ranh giới cuối tháng | 31/1 + 1 tháng | clamp về 28/2 (hoặc 29/2 năm nhuận), KHÔNG nhảy sang tháng 3 |
+| 12 | Streak freeze — gap đúng 1 ngày sau khi Premium kích hoạt | còn thẻ | bắc cầu, dùng 1 thẻ, streak không đứt |
+| 13 | Streak freeze — gap 2 ngày trở lên | — | luôn đứt streak dù còn thẻ |
+| 14 | Streak freeze — "trailing forgiveness": bỏ lỡ hôm qua, chưa ôn tập lại hôm nay | còn thẻ | streak vẫn "sống" ngay lập tức, không cần đợi ôn tập lại |
+| 15 | Free (freezeGrant=0) | có gap 1 ngày trong lịch sử | KHÔNG bắc cầu, tính y hệt `computeStreaks` thường |
+| 16 | validateAndNormalizeSubjects — chuẩn hoá mã môn (viết hoa, trim) | `{ id: " toan " }` | trả về `"TOAN"` |
+| 17 | GET /api/progress/exam-history — Free | — | 403 (không trả về items kể cả rỗng, chặn hẳn ở backend) |
+
+### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| 18 | GET /api/wrong-answers — Free | — | 403 | `WRONG_ANSWER_REVIEW_PREMIUM_ONLY` |
+| 19 | POST /api/users/subjects — Free chưa ad-unlock | không có token | 403 | `SUBJECTS_CHANGE_LOCKED` |
+| 20 | PATCH .../grant-premium — months ngoài khoảng 1-24 | months=25 hoặc 0 | 400 | `INVALID_PREMIUM_MONTHS` |
+| 21 | PATCH .../grant-premium — user không tồn tại | id ngẫu nhiên | 404 | `ADMIN_USER_NOT_FOUND` |
+| 22 | validateAndNormalizeSubjects — rỗng/quá 7 môn/mã không hợp lệ/trùng lặp | — | throw `InvalidSubjectsError` (400 qua route) |
+| 23 | **Race condition (edge-case bug đã sửa)**: Free ad-unlock xong nhưng gửi body sai định dạng/môn không hợp lệ ở POST /subjects | token còn hiệu lực, `subjects` sai | 400 — token **KHÔNG bị tiêu thụ** (validate chạy TRƯỚC khi consume, xem users.route.ts) — trước khi sửa, token sẽ bị "đốt" oan buộc phải xem lại quảng cáo |
+| 24 | **Race condition**: 2 admin cùng `grant-premium` cho 1 user gần như đồng thời | request thứ 2 đọc dữ liệu đã cũ | CAS tự động đọc lại giá trị mới nhất và tính lại (tối đa 5 lần thử) — KHÔNG mất 1 trong 2 lần cấp (trước khi sửa: lần ghi sau "đè" mất hoàn toàn lần ghi trước) |
+| 25 | **Race condition**: xung đột CAS liên tục vượt quá số lần thử tối đa (cực hiếm) | `updateMany` luôn trả count=0 | 409 `PREMIUM_GRANT_CONFLICT` |
+| 26 | grantPremiumMonths — user biến mất giữa lúc CAS đọc lại (cực hiếm) | `findUnique` trả null | `PREMIUM_USER_NOT_FOUND` (404) |
