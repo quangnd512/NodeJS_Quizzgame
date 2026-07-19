@@ -483,6 +483,7 @@ function AdGatePage({
   useEffect(() => {
     if (!counting || busy) return;
     if (secondsLeft <= 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       void finishAd();
       return;
     }
@@ -4454,7 +4455,6 @@ function ProgressPage({
       setExamLoading(false); // eslint-disable-line react-hooks/set-state-in-effect
       return;
     }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setExamLoading(true);
     void getExamHistory(sessionToken, EXAM_PAGE_SIZE, examPage * EXAM_PAGE_SIZE)
       .then((data) => { setExamHistory(data); setExamLoading(false); })
@@ -4983,7 +4983,7 @@ const res: WrongAnswerListResponse = await getWrongAnswers(sessionToken, subj ||
       setLoading(false); // eslint-disable-line react-hooks/set-state-in-effect
       return;
     }
-    void fetchData(1, ''); // eslint-disable-line react-hooks/set-state-in-effect
+    void fetchData(1, '');
   }, [isPremium]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
