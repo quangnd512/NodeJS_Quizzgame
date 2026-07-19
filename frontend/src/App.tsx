@@ -4553,7 +4553,15 @@ function ProgressPage({
           {/* Thống kê theo môn */}
           <section className="card-section">
             <h3 className="section-title">Thống kê theo môn</h3>
-            {summary.practiceStatsBySubject.length === 0 ? (
+            {!summary.isPremium ? (
+              /* Feature 015 (Free/Premium): bổ sung theo yêu cầu người dùng — khoá
+               * hoàn toàn cho Free, giống hệt pattern "Lịch sử thi thử". */
+              <div className="premium-locked-banner">
+                <p className="premium-locked-icon">⭐</p>
+                <p className="premium-locked-title">Thống kê theo môn là quyền lợi Premium</p>
+                <p className="premium-locked-sub">Nâng cấp Premium để xem thống kê chi tiết theo từng môn học.</p>
+              </div>
+            ) : summary.practiceStatsBySubject.length === 0 ? (
               <p className="empty">Chưa có dữ liệu ôn tập.</p>
             ) : (
               <div className="progress-table-wrap">
@@ -4590,7 +4598,15 @@ function ProgressPage({
           {/* Biểu đồ xu hướng điểm */}
           <section className="card-section">
             <h3 className="section-title">Xu hướng điểm (30 phiên gần nhất)</h3>
-            {summary.scoreTrend.length === 0 ? (
+            {!summary.isPremium ? (
+              /* Feature 015 (Free/Premium): bổ sung theo yêu cầu người dùng — khoá
+               * hoàn toàn cho Free, giống hệt pattern "Lịch sử thi thử". */
+              <div className="premium-locked-banner">
+                <p className="premium-locked-icon">⭐</p>
+                <p className="premium-locked-title">Xu hướng điểm là quyền lợi Premium</p>
+                <p className="premium-locked-sub">Nâng cấp Premium để xem biểu đồ xu hướng điểm số theo thời gian.</p>
+              </div>
+            ) : summary.scoreTrend.length === 0 ? (
               <p className="empty">Chưa có dữ liệu.</p>
             ) : (
               <div className="sparkline-wrap">

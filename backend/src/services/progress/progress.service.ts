@@ -213,12 +213,16 @@ export const progressService = {
       }))
       .reverse(); // sap xep tu cu den moi de ve bieu do
 
+    // "Thong ke theo mon" + "Xu huong diem" chi danh cho Premium (Feature 015,
+    // bo sung theo yeu cau nguoi dung ngoai pham vi thiet ke goc cua S1) - chan
+    // o BACKEND (tra mang rong cho Free) thay vi chi an o FE, tranh lo du lieu
+    // qua goi thang API.
     return {
       overview,
       bestStreak,
       monthComparison,
-      practiceStatsBySubject,
-      scoreTrend,
+      practiceStatsBySubject: isPremium ? practiceStatsBySubject : [],
+      scoreTrend: isPremium ? scoreTrend : [],
       isPremium,
       premiumExpiresAt: premiumFields.premiumExpiresAt?.toISOString() ?? null,
       streakFreeze: { granted: freezeGrant, used: freezesUsed, remaining: freezesRemaining },
