@@ -18,6 +18,7 @@
 | 012 | Exam UX Improvements – Resume, Exit Button, ABANDONED status | ✅ Done | feature/exam-ux-improvements | 2026-07-09 |
 | 009 | Notifications – Thông báo hệ thống | ✅ Done | feature/notifications | 2026-07-11 |
 | 014 | Quản lý câu hỏi – Học sinh đóng góp câu hỏi + Thiết kế lại báo cáo | ✅ Done | feature/question-management-hub | 2026-07-15 |
+| 015 | Khung Free/Premium | ✅ Done | feature/premium-framework | 2026-07-19 |
 
 ---
 

@@ -183,3 +183,24 @@ Cảnh báo trùng lặp ban đầu chỉ có con số % — admin muốn xác m
 
 **8. Dropdown lọc tĩnh gây hiểu lầm "không có dữ liệu" khi thực chất là "tổ hợp lọc rỗng"**
 3 dropdown lọc (status/subject/reason) ban đầu luôn hiện đủ mọi giá trị tĩnh — chọn `status=FIXED` + `subject=VĂN` (chưa từng có báo cáo FIXED môn Văn) → danh sách trống, học sinh/admin dễ hiểu lầm là lỗi hệ thống thay vì "tổ hợp lọc này không có dữ liệu". **Bài học**: với trang có ≥2 dropdown lọc đồng thời, nên làm lọc liên động (mỗi dropdown chỉ hiện giá trị thực sự khớp với các điều kiện lọc còn lại) ngay từ đầu nếu ngân sách cho phép — tránh phải làm lại sau khi người dùng phản hồi "sao chọn xong không có gì cả".
+
+## Vòng 15: Khung Free/Premium (2026-07-16 → 2026-07-19)
+
+### Bài học từ S3 review (2 race condition)
+
+**1. Nhận `userId` rồi tự fetch bên trong vòng lặp CAS — không nhận sẵn object đã fetch từ ngoài**
+Bản đầu tiên của `grantPremiumMonths(user, months)` nhận sẵn `User` đã fetch từ nơi gọi — nhìn qua tưởng vô hại (tiết kiệm 1 query), nhưng nghĩa là dữ liệu đã "cũ" ngay từ đầu tham số hàm, không có cách nào tự đọc lại nếu bị xung đột. Đổi sang `grantPremiumMonths(userId, months)`, tự `findUnique` NGAY TRONG vòng lặp retry. **Bài học**: bất kỳ hàm nào cần làm CAS/optimistic-retry đều phải tự chịu trách nhiệm đọc dữ liệu mới nhất ở mỗi lần thử — không nhận dữ liệu "đã đọc sẵn" làm tham số đầu vào, vì lời gọi thứ 2 trở đi trong vòng retry sẽ không có cách nào lấy được bản mới.
+
+**2. CAS trên nhiều field cùng lúc — điều kiện WHERE phải khớp TẤT CẢ field liên quan, không chỉ field "chính"**
+`grantPremiumMonths` phải kiểm tra CẢ `premiumExpiresAt` VÀ `premiumSince` trong điều kiện CAS, không chỉ `premiumExpiresAt` — vì 1 race condition hiếm hơn vẫn lọt qua nếu chỉ kiểm tra 1 field (2 request đọc cùng `premiumExpiresAt` nhưng `premiumSince` đã bị 1 request khác đổi ở giữa). **Bài học**: khi 1 lần ghi cập nhật ĐỒNG THỜI nhiều field liên quan tới nhau về mặt nghiệp vụ (ở đây: hạn Premium + mốc tính streak freeze), điều kiện CAS trong `WHERE` phải bao gồm TẤT CẢ field đó — thiếu 1 field vẫn để lọt race condition, dù xác suất thấp hơn.
+
+### Bài học bổ sung từ S5 testing
+
+**3. Không phải mọi vòng test thủ công đều tìm ra bug — đôi khi kết quả là "xác nhận lại đúng", và đó cũng là giá trị**
+Khác với Feature 013/014 (S5 tìm ra bug/cải tiến mới), lần này S3 đã cover race condition đủ kỹ nên S5 KHÔNG phát hiện bug logic nào — chỉ re-verify bằng tay 6 kịch bản đặc biệt (công tắc toàn cục, ad-unlock, gate backend qua curl, cấp Premium cả 2 case, streak freeze 3 nhánh, validate input). **Bài học**: giá trị của vòng test thủ công không chỉ nằm ở "tìm bug mới" — việc re-verify độc lập bằng tay (không chỉ tin vào unit test) các kịch bản đã được sửa trước đó vẫn cần thiết, vì unit test có thể pass trong khi hành vi thực tế trên app thật lại khác (mock không phản ánh đúng môi trường thật, VD Redis TTL thực tế).
+
+**4. Phạm vi Premium-only cần rà lại TOÀN BỘ trang, không chỉ các mục đã liệt kê từ đầu**
+S1 liệt kê 4 giới hạn ban đầu — khi test thực tế trang Tiến độ, phát hiện 2 mục thống kê ("Xu hướng điểm", "Thống kê theo môn") vẫn hiển thị cho Free dù về mặt sản phẩm nên là quyền lợi Premium (tương tự lịch sử thi thử đã bị khoá). **Bài học**: với tính năng "phân hạng quyền lợi" (Free/Premium, Free/Trial...), nên rà soát toàn bộ MỌI màn hình liên quan (không chỉ các mục đã được liệt kê trong yêu cầu ban đầu) trong vòng test thủ công cuối — vì rất dễ bỏ sót 1 vài chỗ khi thiết kế ban đầu chỉ liệt kê "những gì nghĩ ra được lúc đó".
+
+**5. Cùng là "Premium-only" nhưng cách chặn cần khác nhau tuỳ phạm vi ảnh hưởng**
+Khi thêm gate cho 2 mục thống kê, không copy y nguyên cách chặn 403 của "Ôn lại câu sai"/"Lịch sử thi thử" — vì 2 mục này chỉ là 1 phần trong response `GET /api/progress/summary` (phần còn lại Free vẫn cần xem). Ném lỗi 403 sẽ làm sập TOÀN BỘ trang Tiến độ chỉ vì 2 mục nhỏ. **Bài học**: trước khi chọn cơ chế gate, luôn tự hỏi "nội dung Premium-only này là 1 API/trang RIÊNG, hay chỉ là 1 PHẦN của 1 response lớn hơn?" — câu trả lời quyết định nên ném lỗi hay trả giá trị rỗng/mặc định cho phần đó.

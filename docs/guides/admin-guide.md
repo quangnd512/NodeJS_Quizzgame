@@ -22,6 +22,7 @@
 12. [Tab Người dùng — Quản lý tài khoản](#12-tab-người-dùng--quản-lý-tài-khoản)
 13. [Thông báo hệ thống — Feature 013](#13-thông-báo-hệ-thống--feature-013)
 14. [Học sinh đóng góp câu hỏi — Feature 014](#14-học-sinh-đóng-góp-câu-hỏi--feature-014)
+15. [Khung Free/Premium — Feature 015](#15-khung-freepremium--feature-015)
 
 ---
 
@@ -1537,6 +1538,8 @@ SELECT type, COUNT(*) FROM notifications WHERE "isRead" = false GROUP BY type;
 | `SUBMISSION_APPROVED` | Admin duyệt câu hỏi học sinh gửi | `submission.service.approveSubmission()` (Feature 014, xem mục 14) |
 | `SUBMISSION_REJECTED` | Admin từ chối câu hỏi học sinh gửi (kèm lý do trong `body`) | `submission.service.rejectSubmission()` (Feature 014, xem mục 14) |
 | `SUBMISSION_USED` | Câu hỏi học sinh gửi (đã duyệt) được admin thêm vào 1 đề thi thật | `question-bank.service.fireUsagePointsTrigger()` (Feature 014, xem mục 14) |
+| `PREMIUM_GRANTED` | Admin cấp Premium thủ công cho user (theo tháng) | `premium.service.grantPremiumMonths()` (Feature 015, xem mục 15) |
+| `PREMIUM_EXPIRING_SOON` | Premium của user sắp hết hạn trong 24h tới | `premium.service.notifyExpiringPremiumUsers()` — cron hằng ngày 3:05 AM (Feature 015, xem mục 15) |
 
 ### 13.3 Hành động admin ảnh hưởng đến thông báo
 
@@ -1561,6 +1564,13 @@ SELECT type, COUNT(*) FROM notifications WHERE "isRead" = false GROUP BY type;
 - Khi admin chuyển đề thi từ `isActive: false` → `true`, tất cả học sinh đã từng học môn đó sẽ nhận thông báo `NEW_EXAM_PAPER`
 - Thông báo được gửi theo batch (1 INSERT duy nhất cho N user)
 - **Lưu ý**: Nếu tắt rồi bật lại đề thi, thông báo sẽ gửi lại lần nữa
+
+**Cấp Premium thủ công (Feature 015, xem mục 15):**
+- Khi admin cấp Premium theo tháng cho 1 user (`PATCH .../grant-premium`), user
+  đó nhận ngay thông báo `PREMIUM_GRANTED` kèm số tháng và hạn mới
+- Cron hằng ngày (3:05 AM) tự động gửi `PREMIUM_EXPIRING_SOON` cho user có
+  Premium sắp hết hạn trong 24h tới — **không phải hành động thủ công của
+  admin**, chỉ liệt kê ở đây để admin biết nguồn gốc thông báo khi có user hỏi
 
 ### 13.4 Khắc phục sự cố — Thông báo
 
@@ -1719,3 +1729,170 @@ giống câu đã có**
 Nếu câu diễn đạt khác nhiều (đổi thứ tự từ, dùng từ đồng nghĩa), similarity
 có thể dưới ngưỡng — đây là hạn chế đã biết của thuật toán so khớp thô, cần
 admin tự đọc kỹ, không dựa hoàn toàn vào cảnh báo tự động.
+
+---
+
+## 15. Khung Free/Premium — Feature 015
+
+Từ Feature 015, hệ thống phân biệt 2 gói: **Free** (miễn phí, một số tính năng
+bị giới hạn/khoá) và **Premium** (đầy đủ quyền lợi). Admin quản lý qua tab
+**Dashboard** (công tắc toàn cục) và tab **Người dùng** (cấp Premium từng
+user).
+
+### 15.1 Công tắc toàn cục "Mặc định Premium cho tất cả"
+
+Ở tab **Dashboard**, ngay dưới tiêu đề, có 1 công tắc bật/tắt:
+
+> ⭐ **Mặc định Premium cho tất cả**
+> Khi BẬT: mọi tài khoản (cũ lẫn mới) đều được coi là Premium.
+> Khi TẮT: chỉ user được admin cấp Premium riêng (còn hạn) mới là Premium.
+
+- **Mặc định BẬT SẴN** ngay từ khi triển khai tính năng (theo yêu cầu nghiệp
+  vụ — không "khoá" đột ngột người dùng hiện tại khi ra mắt Free/Premium).
+- Đổi công tắc có hiệu lực **ngay lập tức** cho MỌI user, MỌI request tiếp
+  theo — không cần restart server, không có độ trễ.
+- API trực tiếp:
+  ```bash
+  GET /api/admin/settings/premium-default
+  X-Admin-Secret: <secret>
+
+  PATCH /api/admin/settings/premium-default
+  X-Admin-Secret: <secret>
+  Content-Type: application/json
+
+  { "enabled": false }
+  ```
+
+> ⚠️ **Cẩn thận khi TẮT công tắc này**: mọi user không có `premiumExpiresAt`
+> còn hạn sẽ ngay lập tức trở thành Free — mất quyền truy cập Ôn lại câu sai,
+> Lịch sử thi thử, và bị gate đổi môn học. Nên thông báo trước cho người dùng
+> nếu đây là lần đầu tắt công tắc sau một thời gian dài bật sẵn.
+
+### 15.2 Cấp Premium thủ công cho 1 user
+
+Ở tab **Người dùng**, bảng danh sách có thêm cột **"Premium"** với ô nhập số
+tháng + nút **"🎁 Cấp"**:
+
+1. Nhập số tháng (1-24) vào ô số bên cạnh tên user.
+2. Bấm **"🎁 Cấp"**.
+3. Thông báo xác nhận hiện ra với hạn Premium mới.
+
+**API trực tiếp:**
+```bash
+PATCH /api/admin/users/:userId/grant-premium
+X-Admin-Secret: <secret>
+Content-Type: application/json
+
+{ "months": 3 }
+```
+
+**Response mẫu:**
+```json
+{
+  "id": "user-uuid",
+  "premiumExpiresAt": "2026-10-17T00:00:00.000Z",
+  "premiumSince": "2026-07-17T00:00:00.000Z",
+  "streakFreezeReset": true
+}
+```
+
+**Quy tắc cộng dồn — QUAN TRỌNG khi giải thích cho user:**
+
+| Tình huống user hiện tại | Kết quả sau khi cấp thêm N tháng |
+|---------------------------|-----------------------------------|
+| Free (chưa từng Premium, hoặc Premium đã hết hạn) | Hạn mới = **hôm nay + N tháng**. Được cấp lại đủ **3 thẻ bảo hiểm chuỗi** (`streakFreezeReset: true`) |
+| Đang Premium còn hạn | Hạn mới = **hạn cũ + N tháng** (cộng dồn, KHÔNG tính từ hôm nay). Thẻ bảo hiểm chuỗi **giữ nguyên** số đã dùng (`streakFreezeReset: false`) — không được "làm mới" thẻ chỉ vì gia hạn thêm |
+
+> Ví dụ dễ hiểu: User đang Premium tới 20/8. Admin cấp thêm 2 tháng ngày
+> 17/7 → hạn mới là **20/10** (từ 20/8, không phải từ 17/7). Nếu cấp 2 tháng
+> cho user ĐÃ hết hạn Premium từ 1/6 → hạn mới là **17/9** (từ hôm nay 17/7).
+
+> ⚠️ **Hiện chưa xem được trạng thái Premium hiện tại của user trong bảng
+> danh sách** (chỉ biết qua thông báo toast ngay sau khi tự tay cấp) — đây là
+> giới hạn UX đã biết (ghi nhận trong review S3), không phải lỗi. Muốn kiểm
+> tra nhanh 1 user có đang Premium hay không, tra trực tiếp DB:
+> ```sql
+> SELECT "premiumExpiresAt", "premiumSince" FROM users WHERE id = '<userId>';
+> ```
+> Premium nếu `premiumExpiresAt` còn trong tương lai, HOẶC công tắc toàn cục
+> (mục 15.1) đang BẬT.
+
+### 15.3 Các quyền lợi bị giới hạn cho Free
+
+| Tính năng | Free | Premium |
+|-----------|------|---------|
+| Đổi môn học | Phải "xem quảng cáo" (đếm ngược 5s) mỗi lần, mở khoá 1 lượt/lần xem | Đổi thoải mái, không giới hạn |
+| Ôn lại câu sai (Feature 010) | **Khoá hoàn toàn** — chặn ở backend (403), không chỉ ẩn UI | Dùng đầy đủ |
+| Lịch sử thi thử (trang Tiến độ) | **Khoá hoàn toàn** — chặn ở backend (403), không trả dữ liệu kể cả rỗng | Xem đầy đủ |
+| Thẻ bảo hiểm chuỗi (Streak Freeze) | Không có (0 thẻ) — bỏ lỡ 1 ngày là đứt streak ngay | 3 thẻ khi kích hoạt — mỗi thẻ tự "bắc cầu" 1 khoảng trống đúng 1 ngày, không làm đứt streak |
+
+**Vì sao 2 tính năng "khoá hoàn toàn" lại chặn ở backend chứ không chỉ ẩn nút
+trên giao diện?** Đây là quyết định nghiệp vụ có chủ đích: Free không được
+phép lấy dữ liệu này DÙ QUA CÁCH NÀO (kể cả gọi thẳng API, bỏ qua giao diện).
+Nếu chỉ ẩn ở giao diện, Free vẫn có thể gọi trực tiếp API và lấy được dữ
+liệu — vi phạm ranh giới gói dịch vụ.
+
+### 15.4 Thẻ bảo hiểm chuỗi (Streak Freeze) — giải thích cho support
+
+Khi 1 user kích hoạt Premium (lần đầu hoặc sau khi hết hạn rồi được cấp lại),
+họ nhận **3 thẻ**. Nếu họ bỏ lỡ **đúng 1 ngày** không ôn tập (không phải 2
+ngày trở lên) SAU thời điểm kích hoạt Premium, hệ thống tự động dùng 1 thẻ để
+"bắc cầu" — streak KHÔNG bị coi là đứt. Hết 3 thẻ, các lần bỏ lỡ tiếp theo
+làm đứt streak bình thường.
+
+- Nếu bỏ lỡ **2 ngày liên tiếp trở lên**: LUÔN đứt streak, dù còn thẻ.
+- Nếu công tắc toàn cục (mục 15.1) đang BẬT: mọi user được coi như "Premium
+  từ lúc tạo tài khoản" — toàn bộ lịch sử ôn tập của họ đều được tính bắc cầu
+  (không chỉ từ lúc admin cấp Premium thủ công).
+- Cấp thêm tháng cho user ĐANG Premium còn hạn KHÔNG làm mới lại số thẻ (xem
+  bảng ở mục 15.2) — chỉ "kích hoạt mới" (từ Free/hết hạn) mới reset về 3.
+
+Nếu user thắc mắc "sao tôi bỏ lỡ hôm qua mà streak vẫn còn?" — đây là thẻ bảo
+hiểm chuỗi hoạt động đúng thiết kế, không phải lỗi hiển thị.
+
+### 15.5 Cron cảnh báo Premium sắp hết hạn
+
+Chạy tự động **hằng ngày lúc 3:05 AM** (`server.ts`), không cần admin can
+thiệp: quét mọi user có `premiumExpiresAt` rơi vào khoảng 24 giờ tới và chưa
+từng được cảnh báo cho hạn hiện tại → gửi thông báo `PREMIUM_EXPIRING_SOON`
+(xem mục 13.2, 13.3).
+
+Nếu cần kiểm tra thủ công đã chạy đúng chưa:
+```sql
+-- User sắp hết hạn Premium trong 24h nhưng chưa được cảnh báo
+SELECT id, "premiumExpiresAt", "premiumExpiryWarnedAt"
+FROM users
+WHERE "premiumExpiresAt" > NOW() AND "premiumExpiresAt" <= NOW() + INTERVAL '24 hours'
+  AND "premiumExpiryWarnedAt" IS NULL;
+```
+
+### 15.6 Xử lý sự cố — Free/Premium
+
+**Đổi công tắc toàn cục xong nhưng user vẫn thấy trạng thái Premium/Free cũ**
+→ Cache in-memory của `premiumService` được invalidate NGAY khi admin PATCH
+công tắc — nếu vẫn thấy sai, khả năng cao là frontend đang hiển thị dữ liệu
+`profile` đã lấy TRƯỚC lúc đổi công tắc (chưa gọi lại `GET /api/users/me`).
+Yêu cầu user tải lại trang (F5) hoặc đăng nhập lại.
+
+**Cấp Premium báo lỗi 409 PREMIUM_GRANT_CONFLICT**
+→ Cực hiếm — xảy ra khi có rất nhiều request cấp Premium cho CÙNG 1 user gần
+như đồng thời (ví dụ double-click nhiều lần liên tục, hoặc 2 admin cùng thao
+tác 1 lúc), vượt quá 5 lần thử lại Compare-And-Swap nội bộ. Thử lại thao tác
+— đây là cơ chế chống mất dữ liệu có chủ đích (xem `docs/FEATURE_LOG.md`
+Section 15 mục "Ghi chú kỹ thuật"), không phải lỗi hệ thống.
+
+**User Free báo "xem quảng cáo xong vẫn không đổi được môn"**
+→ Token mở khoá (Redis, TTL 300 giây) có thể đã hết hạn giữa lúc xem quảng
+cáo xong và lúc bấm "Lưu" ở màn chọn môn (ví dụ user để màn hình đó quá lâu
+rồi mới bấm lưu). Yêu cầu user quay lại xem quảng cáo lần nữa. Kiểm tra
+nhanh còn hạn hay không (không xoá key khi kiểm tra):
+```bash
+redis-cli TTL "premium:ad-unlock:<userId>"
+# -2 = không tồn tại (hết hạn hoặc chưa xem), -1 = tồn tại vĩnh viễn (không nên xảy ra), >0 = còn N giây
+```
+
+**Streak freeze hiển thị `remaining` khác với số user tự đếm**
+→ Nhắc lại quy tắc mục 15.4: chỉ khoảng trống **đúng 1 ngày** mới dùng thẻ;
+khoảng trống 2 ngày trở lên luôn làm đứt streak (không dùng thẻ, vì streak
+coi như mất). User dễ nhầm "còn thẻ thì không bao giờ đứt streak" — cần giải
+thích rõ giới hạn "chỉ bắc cầu đúng 1 ngày" này.
