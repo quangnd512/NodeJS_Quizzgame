@@ -15,6 +15,13 @@ export default defineConfig({
         target: 'http://localhost:4000',
         changeOrigin: true,
       },
+      // Proxy ket noi Socket.io (Feature 016 - Thi dau doi khang) - can `ws: true`
+      // de proxy dung ca WebSocket upgrade, khong chi HTTP polling ban dau.
+      '/socket.io': {
+        target: 'http://localhost:4000',
+        changeOrigin: true,
+        ws: true,
+      },
     },
   },
 })
