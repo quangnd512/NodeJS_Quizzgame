@@ -17,6 +17,7 @@ import { adminUsersRouter } from './routes/admin-users.route.js';
 import { notificationRouter } from './routes/notification.route.js';
 import { submissionRouter } from './routes/submission.route.js';
 import { adminSubmissionRouter } from './routes/admin-submission.route.js';
+import { battleRouter } from './routes/battle.route.js';
 import type { ZodIssue } from 'zod';
 
 /**
@@ -109,6 +110,13 @@ const ERROR_CODE_TO_HTTP_STATUS: Readonly<Record<string, number>> = {
   SUBMISSION_NOT_PENDING: 409,
   SUBMISSION_RATE_LIMIT_EXCEEDED: 400,
   SUBMISSION_REJECT_NOTE_REQUIRED: 400,
+  // Thi dau doi khang (PvP Battle) — REST (GET /api/battle/*). Cac loi trong luc
+  // thi dau (join-queue, submit-answer...) di qua Socket.io `battle:error`, KHONG
+  // qua middleware nay.
+  BATTLE_INVALID_SUBJECT: 400,
+  BATTLE_INVALID_STAKE: 400,
+  BATTLE_INSUFFICIENT_POINTS: 409,
+  BATTLE_NOT_ENOUGH_QUESTIONS: 404,
 };
 
 /** Kiem tra 1 gia tri loi co phai la "custom error" co truong `code` (string) hay khong. */
@@ -161,6 +169,7 @@ export function createApp(): Application {
   app.use('/api/notifications', notificationRouter);
   app.use('/api/submissions', submissionRouter);
   app.use('/api/admin', adminSubmissionRouter);
+  app.use('/api/battle', battleRouter);
 
   // Route kiem tra suc khoe server
   app.get('/api/health', (_req: Request, res: Response) => {
