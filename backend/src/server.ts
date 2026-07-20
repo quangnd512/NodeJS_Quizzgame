@@ -1,14 +1,22 @@
 // Entry point cua backend QuizzGame - khoi tao Express server
+import { createServer } from 'node:http';
 import cron from 'node-cron';
 import { createApp } from './app.js';
 import { practiceService } from './services/practice/practice.service.js';
 import { premiumService } from './services/premium/premium.service.js';
+import { registerBattleNamespace } from './services/battle/battle.socket.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 
 const app = createApp();
 
-app.listen(PORT, () => {
+// Boc Express bang http.createServer thay vi app.listen() truc tiep - can thiet de
+// gan them Socket.io (namespace "/battle") vao CUNG 1 HTTP server voi REST API hien co
+// (Feature 016 - Thi dau doi khang - lan dau tien du an dung ket noi realtime).
+const httpServer = createServer(app);
+registerBattleNamespace(httpServer);
+
+httpServer.listen(PORT, () => {
   console.log(`[QuizzGame Backend] Server dang chay tai http://localhost:${PORT}`);
 });
 

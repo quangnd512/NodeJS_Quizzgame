@@ -102,3 +102,10 @@ export class BattleNotEnoughQuestionsError extends BattleError {
     super(`Khong du cau hoi trac nghiem cho mon '${subject}' de bat dau tran.`, 'BATTLE_NOT_ENOUGH_QUESTIONS');
   }
 }
+
+/** Payload cua 1 su kien Socket.io khong dung dinh dang mong doi (thieu truong/sai kieu). */
+export class BattleInvalidPayloadError extends BattleError {
+  constructor(detail: string) {
+    super(`Du lieu gui len khong hop le: ${detail}`, 'BATTLE_INVALID_PAYLOAD');
+  }
+}
