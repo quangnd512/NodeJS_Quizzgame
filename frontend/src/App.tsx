@@ -22,7 +22,12 @@ import {
   getUnreadCount, getNotifications, markNotificationAsRead, markAllNotificationsAsRead,
   createSubmission, getMySubmissions, updateSubmission, deleteSubmission,
   adminListSubmissions, adminApproveSubmission, adminRejectSubmission,
+  getBattleConfig, getBattleHistory,
 } from './lib/api.js';
+import { createBattleSocket } from './lib/battleSocket.js';
+import type {
+  BattleSocket, BattleMatchFoundPayload, BattleMatchEndedPayload, BattleQueueStatusPayload,
+} from './lib/battleSocket.js';
 import type {
   UserProfile, StartSessionResult, AnswerResult, CompleteResult,
   HistoryItem, SubjectStat, QuestionReportDto, ReportsSummary, ResolveReportQuestionUpdate, ReportFilterFacets,
@@ -35,6 +40,7 @@ import type {
   DashboardStats, AdminUserListItem, AdminUserDetail,
   NotificationItem, NotificationTargetScreen,
   SubmissionDto, SubmissionStatus, AdminSubmissionListItem, SubmissionCorrectAnswer,
+  BattleConfig, PaginatedBattleHistory, BattleHistoryItem, BattleResult,
 } from './lib/api.js';
 import './App.css';
 
@@ -52,7 +58,7 @@ const SUBJECTS = [
   { id: 'GDCD', name: 'Giáo dục công dân', emoji: '⚖️' },
 ];
 
-type Screen = 'loading' | 'login' | 'onboarding' | 'adGate' | 'profile' | 'practice' | 'exam' | 'admin' | 'leaderboard' | 'progress' | 'wrongAnswers' | 'submissions';
+type Screen = 'loading' | 'login' | 'onboarding' | 'adGate' | 'profile' | 'practice' | 'exam' | 'admin' | 'leaderboard' | 'progress' | 'wrongAnswers' | 'submissions' | 'battle' | 'battleHistory';
 
 function getInitials(name: string | null, email: string | null): string {
   const src = name ?? email ?? '?';
@@ -251,6 +257,7 @@ export default function App() {
           onProgress={() => setScreen('progress')}
           onWrongAnswers={() => setScreen('wrongAnswers')}
           onSubmissions={() => setScreen('submissions')}
+          onBattle={() => setScreen('battle')}
           onError={handleApiError}
           onLogout={() => void signOut(firebaseAuth)}
           resumeAlert={resumeAlert}
@@ -314,6 +321,22 @@ export default function App() {
         <SubmissionsPage
           sessionToken={sessionToken}
           onBack={() => setScreen('profile')}
+          onError={handleApiError}
+        />
+      )}
+      {screen === 'battle' && profile && (
+        <BattlePage
+          profile={profile}
+          sessionToken={sessionToken}
+          onBack={() => setScreen('profile')}
+          onHistory={() => setScreen('battleHistory')}
+          onError={handleApiError}
+        />
+      )}
+      {screen === 'battleHistory' && profile && (
+        <BattleHistoryPage
+          sessionToken={sessionToken}
+          onBack={() => setScreen('battle')}
           onError={handleApiError}
         />
       )}
@@ -530,7 +553,7 @@ function AdGatePage({
 // ─── ProfilePage ──────────────────────────────────────────────────────────────
 
 function ProfilePage({
-  profile, sessionToken, onProfileUpdate, onChangeSubjects, onPractice, onExam, onLeaderboard, onProgress, onWrongAnswers, onSubmissions, onError, onLogout,
+  profile, sessionToken, onProfileUpdate, onChangeSubjects, onPractice, onExam, onLeaderboard, onProgress, onWrongAnswers, onSubmissions, onBattle, onError, onLogout,
   resumeAlert, onResumeExam, onAbandonResume, unreadCount, onNotifClick,
 }: {
   profile: UserProfile;
@@ -543,6 +566,7 @@ function ProfilePage({
   onProgress: () => void;
   onWrongAnswers: () => void;
   onSubmissions: () => void;
+  onBattle: () => void;
   onError: (e: unknown) => void;
   onLogout: () => void;
   resumeAlert?: ActiveExamSessionInfo | null;
@@ -759,6 +783,9 @@ function ProfilePage({
         </button>
         <button className="btn-secondary btn-lg" onClick={onLeaderboard} style={{ background: 'linear-gradient(135deg,#f6d365,#fda085)', color: '#333', border: 'none' }}>
           🏆 Bảng xếp hạng
+        </button>
+        <button className="btn-secondary btn-lg" onClick={onBattle} style={{ background: 'linear-gradient(135deg,#ff6a6a,#8b0000)', color: '#fff', border: 'none' }}>
+          ⚔️ Thi đấu
         </button>
         <button className="btn-secondary btn-lg" onClick={onProgress} style={{ background: 'linear-gradient(135deg,#a8edea,#fed6e3)', color: '#333', border: 'none' }}>
           📊 Tiến độ của tôi
@@ -6071,6 +6098,678 @@ function NotificationPanel({
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── BattlePage (Feature 016 — Thi đấu đối kháng, Đợt 1/MVP) ────────────────
+// Component NÀY sở hữu 1 kết nối Socket.io DUY NHẤT trong suốt vòng đời của nó
+// (kết nối lúc mount, ngắt lúc unmount) — 4 "màn hình" vào trận/chờ ghép trận/
+// thi đấu/kết quả (TASK 11-14) chỉ là các "phase" nội bộ, KHÔNG phải Screen
+// riêng, để tránh phải kết nối lại Socket.io mỗi khi chuyển màn hình.
+
+type BattlePhase = 'setup' | 'queue' | 'play' | 'result';
+
+const BATTLE_QUEUE_CRITERIA_LABEL: Record<BattleQueueStatusPayload['currentCriteria'], string> = {
+  STRICT: 'Đang tìm đúng môn + đúng mức cược…',
+  SUBJECT_ONLY: 'Đã nới: tìm cùng môn, mọi mức cược…',
+  ANY: 'Đã nới: tìm mọi môn, mọi mức cược…',
+};
+
+const BATTLE_RESULT_LABEL: Record<BattleMatchEndedPayload['result'], { text: string; icon: string; cls: string }> = {
+  WIN: { text: 'Chiến thắng!', icon: '🏆', cls: 'battle-result-win' },
+  LOSE: { text: 'Thua cuộc', icon: '😢', cls: 'battle-result-lose' },
+  DRAW: { text: 'Hoà', icon: '🤝', cls: 'battle-result-draw' },
+  OPPONENT_LEFT_WIN: { text: 'Thắng — đối thủ mất kết nối', icon: '🏳️', cls: 'battle-result-win' },
+  CANCELLED_BOTH_LEFT: { text: 'Trận đấu bị huỷ', icon: '⚠️', cls: 'battle-result-draw' },
+};
+
+interface BattleQuestionState {
+  index: number;
+  text: string;
+  options: [string, string, string, string];
+  receivedAt: number;
+  selected: number | null;
+  correctOption: number | null;
+  myPointsEarned: number | null;
+}
+
+function BattlePage({
+  profile, sessionToken, onBack, onHistory, onError,
+}: {
+  profile: UserProfile;
+  sessionToken: string;
+  onBack: () => void;
+  onHistory: () => void;
+  onError: (e: unknown) => void;
+}) {
+  const socketRef = useRef<BattleSocket | null>(null);
+  const [phase, setPhase] = useState<BattlePhase>('setup');
+  const [socketReady, setSocketReady] = useState(false);
+  const [socketError, setSocketError] = useState('');
+
+  // Cấu hình (mức cược hợp lệ + số dư điểm)
+  const [config, setConfig] = useState<BattleConfig | null>(null);
+  const [configError, setConfigError] = useState('');
+
+  // Màn "vào trận" (TASK 11)
+  const defaultSubject = profile.subjects[0]?.id ?? SUBJECTS[0]!.id;
+  const [subject, setSubject] = useState(defaultSubject);
+  const [stake, setStake] = useState<number | null>(null);
+  const [roomCodeInput, setRoomCodeInput] = useState('');
+  const [setupBusy, setSetupBusy] = useState(false);
+
+  // Màn "chờ ghép trận" (TASK 12)
+  const [waitingSeconds, setWaitingSeconds] = useState(0);
+  const [criteria, setCriteria] = useState<BattleQueueStatusPayload['currentCriteria']>('STRICT');
+  const [myRoomCode, setMyRoomCode] = useState<string | null>(null);
+
+  // Màn "thi đấu" (TASK 13)
+  const [match, setMatch] = useState<BattleMatchFoundPayload | null>(null);
+  const [question, setQuestion] = useState<BattleQuestionState | null>(null);
+  const [myScore, setMyScore] = useState(0);
+  const [opponentScore, setOpponentScore] = useState(0);
+  const [opponentDisconnected, setOpponentDisconnected] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(20);
+
+  // Màn "kết quả" (TASK 14)
+  const [result, setResult] = useState<BattleMatchEndedPayload | null>(null);
+
+  // Tải cấu hình (mức cược + số dư điểm) — REST, KHÔNG qua socket
+  useEffect(() => {
+    let cancelled = false;
+    void getBattleConfig(sessionToken)
+      .then((cfg) => {
+        if (cancelled) return;
+        setConfig(cfg);
+        setStake((s) => s ?? cfg.stakes[0] ?? null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setConfigError(err instanceof Error ? err.message : 'Không tải được cấu hình thi đấu.');
+        // Loi 401 (phien het han) can duoc App() xu ly tap trung (dang xuat + bao loi toan cuc);
+        // cac loi khac (vd. mat mang tam thoi) chi hien banner cuc bo o tren, khong lam gian doan man hinh.
+        if (err instanceof ApiError && err.status === 401) onError(err);
+      });
+    return () => { cancelled = true; };
+  }, [sessionToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Kết nối Socket.io 1 LẦN DUY NHẤT khi component mount, ngắt khi unmount
+  // (rời màn hình Thi đấu = coi như "mất kết nối" phía backend, xử lý đúng
+  // như 1 lần disconnect bình thường — không cần logic đặc biệt gì thêm).
+  useEffect(() => {
+    const socket = createBattleSocket(sessionToken);
+    socketRef.current = socket;
+
+    socket.on('connect', () => { setSocketReady(true); setSocketError(''); });
+    socket.on('disconnect', () => { setSocketReady(false); });
+    socket.on('connect_error', (err: Error) => {
+      setSocketReady(false);
+      setSocketError(err.message || 'Không thể kết nối máy chủ thi đấu.');
+    });
+
+    socket.on('battle:queue-status', (payload) => {
+      setWaitingSeconds(payload.waitingSeconds);
+      setCriteria(payload.currentCriteria);
+      setSetupBusy(false);
+      setPhase((p) => (p === 'setup' ? 'queue' : p));
+    });
+
+    socket.on('battle:room-created', (payload) => {
+      setMyRoomCode(payload.roomCode);
+      setSetupBusy(false);
+      setPhase('queue');
+    });
+
+    socket.on('battle:match-found', (payload) => {
+      setMatch(payload);
+      setMyScore(0);
+      setOpponentScore(0);
+      setOpponentDisconnected(false);
+      setMyRoomCode(null);
+      setQuestion(null);
+      setSetupBusy(false);
+      setPhase('play');
+    });
+
+    socket.on('battle:question', (payload) => {
+      setQuestion({
+        index: payload.questionIndex,
+        text: payload.questionText,
+        options: payload.options,
+        receivedAt: Date.now(),
+        selected: null,
+        correctOption: null,
+        myPointsEarned: null,
+      });
+      setTimeLeft(20);
+      setOpponentDisconnected(false);
+    });
+
+    socket.on('battle:opponent-progress', (payload) => {
+      setOpponentScore(payload.opponentScore);
+    });
+
+    socket.on('battle:question-result', (payload) => {
+      setMyScore(payload.myTotalScore);
+      setQuestion((q) => (q && q.index === payload.questionIndex
+        ? { ...q, correctOption: payload.correctOption, myPointsEarned: payload.myPointsEarned }
+        : q));
+    });
+
+    socket.on('battle:opponent-disconnected', () => {
+      setOpponentDisconnected(true);
+    });
+
+    socket.on('battle:match-ended', (payload) => {
+      setResult(payload);
+      setPhase('result');
+    });
+
+    socket.on('battle:error', (payload) => {
+      setSetupBusy(false);
+      setSocketError(payload.message);
+    });
+
+    socket.connect();
+
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+    };
+  }, [sessionToken]);
+
+  // Đếm ngược 20s cục bộ cho câu hiện tại — CHỈ để hiển thị, server tự quyết định
+  // khi hết giờ thật (dùng thời gian server, xem battle.engine.service.ts).
+  useEffect(() => {
+    if (phase !== 'play' || !question || question.selected !== null) return;
+    if (timeLeft <= 0) return;
+    const id = setInterval(() => {
+      setTimeLeft((t) => (t <= 1 ? 0 : t - 1));
+    }, 1000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, question?.index, question?.selected]);
+
+  function handleFindMatch() {
+    if (!stake || !socketReady) return;
+    setSocketError('');
+    setSetupBusy(true);
+    socketRef.current?.emit('battle:join-queue', { subject, stake });
+  }
+
+  function handleCreateRoom() {
+    if (!stake || !socketReady) return;
+    setSocketError('');
+    setSetupBusy(true);
+    socketRef.current?.emit('battle:create-room', { subject, stake });
+  }
+
+  function handleJoinRoom() {
+    const code = roomCodeInput.trim().toUpperCase();
+    if (!code || !socketReady) return;
+    setSocketError('');
+    setSetupBusy(true);
+    socketRef.current?.emit('battle:join-room', { roomCode: code });
+  }
+
+  function handleCancelQueue() {
+    if (!myRoomCode) socketRef.current?.emit('battle:cancel-queue');
+    setPhase('setup');
+    setMyRoomCode(null);
+    setSetupBusy(false);
+  }
+
+  function handleSelectOption(idx: number) {
+    if (!question || question.selected !== null || !match) return;
+    const clientTimeMs = Date.now() - question.receivedAt;
+    setQuestion((q) => (q ? { ...q, selected: idx } : q));
+    socketRef.current?.emit('battle:submit-answer', {
+      matchId: match.matchId,
+      questionIndex: question.index,
+      selectedOption: idx,
+      clientTimeMs,
+    });
+  }
+
+  function handlePlayAgain() {
+    setPhase('setup');
+    setMatch(null);
+    setQuestion(null);
+    setResult(null);
+    setMyScore(0);
+    setOpponentScore(0);
+    // Làm mới số dư điểm hiển thị ở màn vào trận sau khi vừa cược/thắng/thua.
+    void getBattleConfig(sessionToken).then(setConfig).catch(() => { /* bỏ qua, không chặn UI */ });
+  }
+
+  return (
+    <div className="screen screen-battle">
+      <div className="page-header">
+        <button className="btn-back" onClick={onBack}>← Quay lại</button>
+        <h2 className="page-title" style={{ flex: 1 }}>⚔️ Thi đấu đối kháng</h2>
+        {phase === 'setup' && (
+          <button className="btn-link" onClick={onHistory}>Lịch sử</button>
+        )}
+      </div>
+
+      {socketError && (
+        <div className="report-error" style={{ margin: '0 1.25rem .5rem' }} onClick={() => setSocketError('')}>
+          ⚠️ {socketError}
+        </div>
+      )}
+
+      {phase === 'setup' && (
+        <BattleSetupPhase
+          subject={subject}
+          onSubjectChange={setSubject}
+          stake={stake}
+          onStakeChange={setStake}
+          config={config}
+          configError={configError}
+          roomCodeInput={roomCodeInput}
+          onRoomCodeInputChange={setRoomCodeInput}
+          busy={setupBusy}
+          socketReady={socketReady}
+          onFindMatch={handleFindMatch}
+          onCreateRoom={handleCreateRoom}
+          onJoinRoom={handleJoinRoom}
+        />
+      )}
+
+      {phase === 'queue' && (
+        <BattleQueuePhase
+          waitingSeconds={waitingSeconds}
+          criteria={criteria}
+          myRoomCode={myRoomCode}
+          onCancel={handleCancelQueue}
+        />
+      )}
+
+      {phase === 'play' && match && (
+        <BattlePlayPhase
+          match={match}
+          question={question}
+          myScore={myScore}
+          opponentScore={opponentScore}
+          opponentDisconnected={opponentDisconnected}
+          timeLeft={timeLeft}
+          onSelectOption={handleSelectOption}
+        />
+      )}
+
+      {phase === 'result' && result && (
+        <BattleResultPhase
+          result={result}
+          match={match}
+          onPlayAgain={handlePlayAgain}
+          onBack={onBack}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── BattleSetupPhase (TASK 11 — màn hình vào trận) ─────────────────────────
+
+function BattleSetupPhase({
+  subject, onSubjectChange, stake, onStakeChange, config, configError,
+  roomCodeInput, onRoomCodeInputChange, busy, socketReady, onFindMatch, onCreateRoom, onJoinRoom,
+}: {
+  subject: string;
+  onSubjectChange: (id: string) => void;
+  stake: number | null;
+  onStakeChange: (v: number) => void;
+  config: BattleConfig | null;
+  configError: string;
+  roomCodeInput: string;
+  onRoomCodeInputChange: (v: string) => void;
+  busy: boolean;
+  socketReady: boolean;
+  onFindMatch: () => void;
+  onCreateRoom: () => void;
+  onJoinRoom: () => void;
+}) {
+  const notEnoughPoints = !!(config && stake && config.currentPoints < stake);
+
+  return (
+    <div>
+      {config && (
+        <div className="points-card">
+          <span className="pts-label">Số dư điểm</span>
+          <span className="pts-num">{config.currentPoints.toLocaleString('vi-VN')}</span>
+          <span className="pts-unit">điểm</span>
+        </div>
+      )}
+      {configError && <p className="report-error" style={{ margin: '0 1.25rem' }}>{configError}</p>}
+
+      <section className="card-section">
+        <h3 className="section-title">Chọn môn thi đấu</h3>
+        <div className="practice-subjects">
+          {SUBJECTS.map((s) => (
+            <button
+              key={s.id}
+              className="practice-subject-card"
+              style={subject === s.id ? { borderColor: 'var(--accent,#4f8ef7)', borderWidth: 2 } : undefined}
+              onClick={() => onSubjectChange(s.id)}
+            >
+              <span className="ps-emoji">{s.emoji}</span>
+              <div className="ps-info"><span className="ps-name">{s.name}</span></div>
+              {subject === s.id && <span className="ps-arrow">✓</span>}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="card-section">
+        <h3 className="section-title">Chọn mức cược</h3>
+        <div className="chips">
+          {(config?.stakes ?? []).map((s) => (
+            <button
+              key={s}
+              className="chip"
+              style={stake === s
+                ? { background: 'var(--accent,#4f8ef7)', color: '#fff', cursor: 'pointer', border: 'none' }
+                : { cursor: 'pointer' }}
+              onClick={() => onStakeChange(s)}
+            >
+              {s.toLocaleString('vi-VN')} điểm
+            </button>
+          ))}
+        </div>
+        {notEnoughPoints && (
+          <p className="report-error" style={{ marginTop: '.5rem' }}>
+            Bạn không đủ điểm để cược mức này.
+          </p>
+        )}
+      </section>
+
+      <div style={{ padding: '0 1.25rem .75rem', display: 'flex', flexDirection: 'column', gap: '.625rem' }}>
+        <button
+          className="btn-primary btn-lg"
+          disabled={busy || !socketReady || !stake || notEnoughPoints}
+          onClick={onFindMatch}
+        >
+          {busy ? <Spinner /> : null} Tìm trận 🔍
+        </button>
+        <button
+          className="btn-secondary btn-lg"
+          disabled={busy || !socketReady || !stake || notEnoughPoints}
+          onClick={onCreateRoom}
+        >
+          Tạo phòng mời bạn 👥
+        </button>
+      </div>
+
+      <section className="card-section">
+        <h3 className="section-title">Vào phòng bằng mã</h3>
+        <div style={{ display: 'flex', gap: '.5rem' }}>
+          <input
+            className="field-input"
+            placeholder="Nhập mã 6 ký tự"
+            value={roomCodeInput}
+            maxLength={6}
+            onChange={(e) => onRoomCodeInputChange(e.target.value.toUpperCase())}
+            style={{ flex: 1, textTransform: 'uppercase' }}
+          />
+          <button
+            className="btn-secondary"
+            disabled={busy || !socketReady || roomCodeInput.trim().length === 0}
+            onClick={onJoinRoom}
+          >
+            Vào phòng
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// ─── BattleQueuePhase (TASK 12 — màn hình chờ ghép trận) ────────────────────
+
+function BattleQueuePhase({
+  waitingSeconds, criteria, myRoomCode, onCancel,
+}: {
+  waitingSeconds: number;
+  criteria: BattleQueueStatusPayload['currentCriteria'];
+  myRoomCode: string | null;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="screen-center" style={{ padding: '2rem 1.25rem', textAlign: 'center' }}>
+      <div className="loader-ring" />
+      {myRoomCode ? (
+        <>
+          <p style={{ margin: '1rem 0 .25rem', fontWeight: 600 }}>Đang chờ bạn bè vào phòng…</p>
+          <p style={{ fontSize: '2rem', letterSpacing: '.3em', fontWeight: 700, margin: '.5rem 0' }}>
+            {myRoomCode}
+          </p>
+          <p style={{ color: 'var(--muted)', fontSize: '.85rem' }}>
+            Gửi mã này cho bạn bè để vào thẳng trận, không qua hàng đợi.
+          </p>
+        </>
+      ) : (
+        <>
+          <p style={{ margin: '1rem 0 .25rem', fontWeight: 600 }}>Đang tìm đối thủ… {waitingSeconds}s</p>
+          <p style={{ color: 'var(--muted)', fontSize: '.85rem' }}>{BATTLE_QUEUE_CRITERIA_LABEL[criteria]}</p>
+          <p style={{ color: 'var(--muted)', fontSize: '.78rem', marginTop: '.5rem' }}>
+            Sau 30 giây không tìm được đối thủ, hệ thống sẽ tự ghép bạn với máy.
+          </p>
+        </>
+      )}
+      <button className="btn-secondary" style={{ marginTop: '1.5rem' }} onClick={onCancel}>
+        Huỷ tìm trận
+      </button>
+    </div>
+  );
+}
+
+// ─── BattlePlayPhase (TASK 13 — màn hình thi đấu realtime) ──────────────────
+
+function BattlePlayPhase({
+  match, question, myScore, opponentScore, opponentDisconnected, timeLeft, onSelectOption,
+}: {
+  match: BattleMatchFoundPayload;
+  question: BattleQuestionState | null;
+  myScore: number;
+  opponentScore: number;
+  opponentDisconnected: boolean;
+  timeLeft: number;
+  onSelectOption: (idx: number) => void;
+}) {
+  return (
+    <div className="practice-session">
+      <div className="ps-topbar">
+        <span className="ps-progress-text">
+          {question ? `Câu ${question.index + 1}/10` : 'Đang chuẩn bị…'}
+        </span>
+        <span className={`ps-timer ${timeLeft <= 5 ? 'danger' : ''}`}>{timeLeft}s</span>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '.5rem 1.25rem', fontSize: '.9rem' }}>
+        <span>🙂 Bạn: <strong>{myScore}</strong></span>
+        <span>{match.isBotMatch ? '🤖' : '🧑'} {match.opponentName}: <strong>{opponentScore}</strong></span>
+      </div>
+
+      {opponentDisconnected && (
+        <div className="report-error" style={{ margin: '0 1.25rem .5rem' }}>
+          ⚠️ Đối thủ mất kết nối, đang chờ tối đa 30 giây để họ quay lại…
+        </div>
+      )}
+
+      {!question ? (
+        <div className="screen-center" style={{ padding: '2rem' }}><Spinner /></div>
+      ) : (
+        <>
+          <div className="ps-question">{question.text}</div>
+          <div className="ps-options">
+            {question.options.map((opt, idx) => {
+              let cls = 'ps-option';
+              if (question.correctOption !== null) {
+                if (idx === question.correctOption) cls += ' correct';
+                else if (idx === question.selected) cls += ' wrong';
+                else cls += ' dimmed';
+              } else if (idx === question.selected) {
+                cls += ' dimmed';
+              }
+              return (
+                <button
+                  key={idx}
+                  className={cls}
+                  disabled={question.selected !== null}
+                  onClick={() => onSelectOption(idx)}
+                >
+                  <span className="opt-label">{OPTION_LABELS[idx]}</span>
+                  <span className="opt-text">{opt}</span>
+                </button>
+              );
+            })}
+          </div>
+          {question.selected !== null && question.correctOption === null && (
+            <p style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.85rem' }}>
+              Đã gửi đáp án, đang chờ đối thủ…
+            </p>
+          )}
+          {question.myPointsEarned !== null && (
+            <p style={{ textAlign: 'center', fontWeight: 600 }}>
+              +{question.myPointsEarned} điểm
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── BattleResultPhase (TASK 14 — màn hình kết quả) ──────────────────────────
+
+function BattleResultPhase({
+  result, match, onPlayAgain, onBack,
+}: {
+  result: BattleMatchEndedPayload;
+  match: BattleMatchFoundPayload | null;
+  onPlayAgain: () => void;
+  onBack: () => void;
+}) {
+  const label = BATTLE_RESULT_LABEL[result.result];
+  return (
+    <div className="screen-center" style={{ padding: '2rem 1.25rem', textAlign: 'center' }}>
+      <p style={{ fontSize: '3rem', margin: 0 }}>{label.icon}</p>
+      <h2 className={label.cls} style={{ margin: '.5rem 0' }}>{label.text}</h2>
+      <p style={{ color: 'var(--muted)' }}>
+        {match ? `${match.subject} · Cược ${match.stake.toLocaleString('vi-VN')} điểm` : ''}
+      </p>
+
+      <div style={{ display: 'flex', justifyContent: 'center', gap: '2rem', margin: '1.25rem 0' }}>
+        <div>
+          <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>Điểm của bạn</div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{result.myScore}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>Điểm đối thủ</div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{result.opponentScore}</div>
+        </div>
+      </div>
+
+      <p style={{ fontSize: '1.1rem', fontWeight: 600, color: result.pointsChange >= 0 ? 'var(--success,#22a06b)' : 'var(--color-error,#e53)' }}>
+        {result.pointsChange >= 0 ? '+' : ''}{result.pointsChange.toLocaleString('vi-VN')} điểm
+      </p>
+      <p style={{ color: 'var(--muted)' }}>Số dư mới: {result.newBalance.toLocaleString('vi-VN')} điểm</p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '.625rem', marginTop: '1.5rem' }}>
+        <button className="btn-primary btn-lg" onClick={onPlayAgain}>Chơi lại</button>
+        <button className="btn-secondary btn-lg" onClick={onBack}>Về trang chủ</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── BattleHistoryPage (TASK 15 — màn hình lịch sử trận đấu) ────────────────
+
+const BATTLE_HISTORY_PAGE_SIZE = 10;
+
+const BATTLE_HISTORY_RESULT_LABEL: Record<BattleResult, { text: string; cls: string }> = {
+  WIN: { text: 'Thắng', cls: 'score-high' },
+  LOSE: { text: 'Thua', cls: 'score-low' },
+  DRAW: { text: 'Hoà', cls: '' },
+};
+
+function BattleHistoryPage({
+  sessionToken, onBack, onError,
+}: {
+  sessionToken: string;
+  onBack: () => void;
+  onError: (e: unknown) => void;
+}) {
+  const [history, setHistory] = useState<PaginatedBattleHistory | null>(null);
+  const [page, setPage] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    void getBattleHistory(sessionToken, BATTLE_HISTORY_PAGE_SIZE, page * BATTLE_HISTORY_PAGE_SIZE)
+      .then((data) => { setHistory(data); setLoading(false); })
+      .catch((err) => { onError(err); setLoading(false); });
+  }, [sessionToken, page]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const totalPages = history ? Math.ceil(history.total / BATTLE_HISTORY_PAGE_SIZE) : 0;
+
+  return (
+    <div className="screen screen-progress">
+      <div className="page-header">
+        <button className="btn-back" onClick={onBack}>← Quay lại</button>
+        <h2 className="page-title">⚔️ Lịch sử thi đấu</h2>
+      </div>
+
+      <section className="card-section">
+        {loading ? (
+          <div className="progress-loading"><Spinner /> Đang tải…</div>
+        ) : !history || history.items.length === 0 ? (
+          <p className="empty">Chưa có trận đấu nào.</p>
+        ) : (
+          <>
+            <div className="progress-table-wrap">
+              <table className="progress-table">
+                <thead>
+                  <tr>
+                    <th>Môn</th>
+                    <th>Đối thủ</th>
+                    <th>Tỉ số</th>
+                    <th>Kết quả</th>
+                    <th>Điểm</th>
+                    <th>Ngày</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.items.map((item: BattleHistoryItem) => (
+                    <tr key={item.id}>
+                      <td>{SUBJECTS_MAP[item.subject]?.name ?? item.subject}</td>
+                      <td>{item.isBotMatch ? '🤖 Máy' : (item.opponentName ?? 'Người chơi')}</td>
+                      <td>{item.myScore} - {item.opponentScore}</td>
+                      <td>
+                        <span className={`exam-score-badge ${BATTLE_HISTORY_RESULT_LABEL[item.result].cls}`}>
+                          {BATTLE_HISTORY_RESULT_LABEL[item.result].text}
+                        </span>
+                      </td>
+                      <td style={{ color: item.pointsChange >= 0 ? 'var(--success,#22a06b)' : 'var(--color-error,#e53)' }}>
+                        {item.pointsChange >= 0 ? '+' : ''}{item.pointsChange.toLocaleString('vi-VN')}
+                      </td>
+                      <td className="exam-history-date">{new Date(item.completedAt).toLocaleDateString('vi-VN')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {totalPages > 1 && (
+              <div className="admin-pagination">
+                <button className="btn-secondary" disabled={page <= 0 || loading} onClick={() => setPage((p) => p - 1)}>← Trước</button>
+                <span>Trang {page + 1}/{totalPages}</span>
+                <button className="btn-secondary" disabled={page >= totalPages - 1 || loading} onClick={() => setPage((p) => p + 1)}>Sau →</button>
+              </div>
+            )}
+          </>
+        )}
+      </section>
     </div>
   );
 }
