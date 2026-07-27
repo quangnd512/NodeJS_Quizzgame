@@ -321,3 +321,75 @@ ORDER BY "completedAt" DESC LIMIT 30;
 - Kiểm tra `premiumExpiryWarnedAt` hiện tại của user — nếu đã có giá trị VÀ `premiumExpiresAt` không đổi từ lần cảnh báo trước, đây là hành vi đúng (không gửi trùng lặp cho cùng 1 hạn).
 - Nếu cần gửi cảnh báo thủ công ngay: gọi trực tiếp `premiumService.notifyExpiringPremiumUsers()` qua script debug, hoặc set `premiumExpiryWarnedAt = NULL` cho user đó rồi đợi lần chạy cron kế tiếp.
 - Xem log backend tìm dòng `[Scheduler] Da canh bao N user Premium sap het han.` để xác nhận cron có chạy đúng giờ không.
+
+## Lỗi liên quan đến Thi đấu đối kháng — PvP Quiz Battle (Feature 016)
+
+### 25. Bấm "Tìm trận" không có phản ứng gì / nút mãi bị disable
+
+**Triệu chứng**: User bấm "Tìm trận 🔍" hoặc "Tạo phòng mời bạn 👥" nhưng không thấy chuyển sang màn hình chờ ghép trận, nút vẫn hiện spinner mãi hoặc bị mờ (disabled).
+
+**Nguyên nhân phổ biến nhất**: Socket.io chưa kết nối xong (`socketReady=false`) — cả 2 nút này bị disable cho tới khi `socket.on('connect')` bắn ra. Thường do: (1) mạng chậm/chặn WebSocket (một số mạng công ty/trường học chặn cổng WebSocket, khiến client phải fallback về `polling` — chậm hơn đáng kể); (2) session token đã hết hạn, middleware xác thực socket từ chối kết nối (`connect_error`) nhưng FE không hiển thị rõ ràng lỗi này ở màn hình setup.
+
+**Giải pháp**:
+- Yêu cầu user F5 lại trang — nếu session token hết hạn, việc F5 sẽ kích hoạt luồng đăng nhập lại bình thường.
+- Kiểm tra console trình duyệt tìm log `connect_error` — nếu thấy `INVALID_SESSION_TOKEN`/`SESSION_USER_NOT_FOUND`, xác nhận đây đúng là vấn đề phiên đăng nhập.
+- Nếu mạng chặn WebSocket, ứng dụng vẫn hoạt động được qua `polling` (cấu hình fallback tự động trong `battleSocket.ts`) nhưng có độ trễ cao hơn — không phải lỗi, chỉ là trải nghiệm chậm hơn trên mạng đó.
+
+### 26. User báo "Không đủ điểm để cược" dù số dư hiển thị đủ
+
+**Triệu chứng**: Màn hình vào trận hiển thị số dư điểm đủ cho mức cược đã chọn, nhưng khi bấm "Tìm trận" vẫn nhận lỗi `BATTLE_INSUFFICIENT_POINTS`.
+
+**Nguyên nhân**: Số dư hiển thị ở màn hình setup được tải **1 lần** khi vào trang (`GET /api/battle/config`) — nếu user vừa tiêu điểm ở nơi khác (một tab/thiết bị khác, hoặc một trận Battle khác vừa kết thúc) SAU khi màn hình này đã tải xong, số hiển thị sẽ cũ. Server luôn validate lại số dư THẬT ngay lúc `battle:join-queue`/`battle:create-room` (không tin số hiển thị phía FE) — đây là hành vi đúng thiết kế (chặn đúng, chỉ là hiển thị cũ).
+
+**Giải pháp**: Yêu cầu user F5 lại màn hình Thi đấu đối kháng để tải lại số dư mới nhất trước khi thử lại.
+
+### 27. Đối thủ "biến mất" giữa trận nhưng không thấy banner mất kết nối
+
+**Triệu chứng**: 1 người chơi thoát app/mất mạng giữa trận, nhưng người còn lại không thấy banner "⚠️ Đối thủ mất kết nối..." xuất hiện.
+
+**Nguyên nhân phổ biến nhất**: Sự kiện `disconnect` của Socket.io có thể mất vài giây để server phát hiện (phụ thuộc heartbeat/ping timeout mặc định của Socket.io, không phải tức thời 100%) — nếu người còn lại kiểm tra ngay trong vài giây đầu, banner có thể chưa kịp hiện. Nguyên nhân khác (hiếm hơn): nếu người mất kết nối đóng app rồi MỞ LẠI rất nhanh (trong vài giây) trước khi server kịp xử lý `disconnect`, có thể server coi như chưa từng mất kết nối (reconnect quá nhanh).
+
+**Giải pháp**: Đây phần lớn là hành vi bình thường của độ trễ mạng, không phải bug. Chỉ cần điều tra thêm nếu banner **không bao giờ** xuất hiện dù đã chờ hơn 10-15 giây, kết hợp kiểm tra log backend tìm dòng `[battle.socket] User ... ngat ket noi` để xác nhận server có nhận được sự kiện `disconnect` hay không.
+
+### 28. Trận đấu "biến mất" hoàn toàn sau khi backend restart/deploy
+
+**Triệu chứng**: User đang thi đấu giữa chừng thì bị văng ra, vào lại không thấy trận đâu (không phải màn kết quả, không phải màn chờ — quay thẳng về màn setup).
+
+**Nguyên nhân**: Toàn bộ trạng thái "đang chơi" (câu hỏi, điểm tạm thời, hàng đợi, phòng riêng) sống **in-memory** trên process backend — restart/deploy backend giữa lúc có trận đang diễn ra sẽ xoá sạch trạng thái đó (xem `docs/FEATURE_LOG.md` Section 16 mục "Lưu ý / rủi ro"). Đây là giới hạn đã biết của Đợt 1/MVP, không phải bug.
+
+⚠️ **Phân biệt quan trọng (thay đổi phạm vi muộn — mục kỹ thuật #9)**: từ khi có `GET /api/battle/active`, chỉ **backend THỰC SỰ restart/crash** mới gây ra triệu chứng này. Nếu user chỉ đơn thuần F5/tắt mở lại tab/đăng nhập lại (backend vẫn sống bình thường) mà VẪN quay thẳng về màn setup thay vì tự động vào lại trận — đây KHÔNG còn là hành vi mong đợi nữa, cần điều tra như 1 bug thật (kiểm tra `GET /api/battle/active` có trả đúng `active:true` không, xem console lỗi phía FE).
+
+**Giải pháp**:
+- Không có cách khôi phục trận đang dở NẾU backend đã thực sự restart — user cần bắt đầu trận mới.
+- Điểm đã cược từ đầu trận **an toàn** (`PVP_LOCK_BET` đã ghi DB) nhưng cũng KHÔNG tự động hoàn — cần tra `point_transactions` (xem mục 16.3 trong `admin-guide.md`) để xác nhận có dòng `PVP_LOCK_BET` không kèm dòng thanh toán tương ứng, rồi hoàn thủ công nếu cần (liên hệ kỹ thuật).
+- Nên tránh deploy/restart backend vào khung giờ nhiều user đang thi đấu nếu có thể chọn thời điểm.
+
+### 29. Vào phòng bằng mã báo "Không tìm thấy phòng" dù bạn vừa gửi mã đúng
+
+**Triệu chứng**: User B nhập đúng mã 6 ký tự do user A gửi, nhưng nhận lỗi `BATTLE_ROOM_NOT_FOUND`.
+
+**Nguyên nhân phổ biến nhất** (theo thứ tự khả năng):
+1. User A đã bấm "Huỷ tìm trận" sau khi tạo phòng — phòng đã bị xoá khỏi server ngay lúc đó (hành vi đúng thiết kế, xem `docs/FEATURE_LOG.md` Section 16 mục kỹ thuật #5).
+2. User A đã mất kết nối (đóng tab/tắt app) trước khi B kịp vào — phòng của người tạo đã ngắt kết nối được coi là không còn hợp lệ.
+3. Mã phòng đã được dùng bởi người khác trước đó (chỉ dùng được 1 lần, xoá ngay sau khi có người vào thành công).
+4. User B gõ nhầm ký tự dễ nhầm lẫn — mã phòng **không dùng** các ký tự `0`, `O`, `1`, `I`, `L` (đã loại bỏ có chủ đích để tránh nhầm lẫn), nếu B tự gõ tay thay vì copy-paste có thể nhầm ký tự khác sang các ký tự này.
+
+**Giải pháp**: Yêu cầu A tạo lại phòng mới (mã mới) và gửi lại ngay cho B, đảm bảo B vào trong lúc A vẫn còn mở màn hình chờ (chưa bấm Huỷ, chưa thoát app).
+
+### 30. Báo lỗi "Bạn đang có 1 trận đấu khác chưa kết thúc" (`BATTLE_ALREADY_IN_MATCH`) dù không nghĩ mình đang chơi gì
+
+**Triệu chứng**: User bấm "Tìm trận"/"Tạo phòng"/"Vào phòng bằng mã" nhưng nhận `battle:error` mã `BATTLE_ALREADY_IN_MATCH`, dù họ khẳng định không đang thi đấu trận nào.
+
+**Nguyên nhân phổ biến nhất** (thay đổi phạm vi muộn — mục kỹ thuật #8, fix lỗ hổng bảo mật): hệ thống chặn 1 tài khoản tham gia 2 trận cùng lúc (`hasActiveMatch(userId)`), kể cả khi 2 kết nối đến từ 2 tab/thiết bị khác nhau của cùng 1 user. Trường hợp hay gặp: user mở app ở điện thoại VÀ máy tính cùng lúc, hoặc mở nhiều tab trình duyệt mà không để ý tab cũ vẫn còn 1 trận dang dở (có thể đã bị mất kết nối nhưng chưa hết 30 giây chờ nên trận vẫn tính là "sống").
+
+**Giải pháp**:
+- Kiểm tra `GET /api/battle/active` (xem mục 16.2 trong `admin-guide.md`) với session token của user — nếu `active:true`, xác nhận đúng họ đang có 1 trận sống ở nơi khác, hướng dẫn họ mở lại đúng thiết bị/tab đó để hoàn tất hoặc chờ hết 30 giây mất kết nối để trận tự xử lý xong.
+- Nếu `active:false` mà vẫn báo lỗi này — đây là bug thật cần báo cáo kỹ thuật (không phải hành vi mong đợi).
+
+### 31. Đối thủ trong "Lịch sử" hiện tên lạ, không nhớ đã đấu với ai — nghi ngờ dữ liệu sai
+
+**Triệu chứng**: User xem lại "Lịch sử" thấy tên đối thủ không quen thuộc (không phải bạn bè, không nhớ từng gặp), nghi ngờ hệ thống ghép sai hoặc hiện sai tên.
+
+**Nguyên nhân** (thay đổi phạm vi muộn — mục kỹ thuật #9): rất có thể đây là 1 trận đấu với **bot** (máy) — giao diện cố tình hiện tên giả kiểu người thật cho các trận này (không còn "Máy"/🤖), nên user không có cách nào tự phân biệt được qua giao diện. Đây là hành vi đúng thiết kế, không phải lỗi dữ liệu.
+
+**Giải pháp**: Không cần xử lý gì phía user (không có gì sai). Nếu cần XÁC NHẬN nội bộ đây đúng là trận với bot, tra trực tiếp cột `isBotMatch` trong bảng `battle_matches` cho `matchId` tương ứng (xem mục 16.2 trong `admin-guide.md`) — `isBotMatch=true` nghĩa là chắc chắn bot, bất kể tên hiển thị là gì.

@@ -1896,3 +1896,167 @@ redis-cli TTL "premium:ad-unlock:<userId>"
 khoảng trống 2 ngày trở lên luôn làm đứt streak (không dùng thẻ, vì streak
 coi như mất). User dễ nhầm "còn thẻ thì không bao giờ đứt streak" — cần giải
 thích rõ giới hạn "chỉ bắc cầu đúng 1 ngày" này.
+
+## 16. Thi đấu đối kháng — PvP Quiz Battle (Feature 016, Đợt 1/MVP)
+
+Feature 016 bổ sung chế độ thi đấu trực tiếp 2 người (hoặc 1 người + bot),
+cược điểm, realtime qua **Socket.io** (LẦN ĐẦU dự án dùng kết nối realtime —
+trước đó toàn bộ API đều là REST thuần). Không có màn hình quản trị riêng
+trong tab Admin ở Đợt 1/MVP này — mục này tập trung vào cách vận hành, cấu
+hình hạ tầng, và xử lý sự cố.
+
+### 16.1 Không cần cấu hình gì thêm để bật tính năng
+
+Khác với các Feature trước, Feature 016 **không có công tắc bật/tắt** và
+**không cần cấu hình admin nào** — tính năng luôn sẵn sàng ngay khi backend
+chạy, miễn là:
+- Có đủ **ít nhất 10 câu hỏi MCQ_4 đang `isActive=true`** trong Ngân hàng câu
+  hỏi cho môn học đó (nếu thiếu, user sẽ nhận lỗi `BATTLE_NOT_ENOUGH_QUESTIONS`
+  ngay khi hệ thống thử ghép trận — kiểm tra nhanh bằng SQL bên dưới).
+- Backend chỉ chạy **1 instance duy nhất** (xem mục 16.4).
+
+```sql
+-- Đếm số câu MCQ_4 active theo môn — môn nào < 10 sẽ không đấu được
+SELECT subject, COUNT(*) FROM question_bank
+WHERE "questionType" = 'MCQ_4' AND "isActive" = true
+GROUP BY subject
+ORDER BY subject;
+```
+
+### 16.2 Theo dõi trận đấu qua DB (không có UI admin riêng)
+
+Đợt 1/MVP chưa có màn hình admin để xem trận đang diễn ra hoặc can thiệp
+thủ công. Muốn tra cứu, dùng SQL trực tiếp:
+
+```sql
+-- Các trận đang diễn ra ngay lúc này (in-memory, DB chỉ có bản ghi WAITING/IN_PROGRESS
+-- tại thời điểm request, không phản ánh realtime câu hỏi/điểm số hiện tại)
+SELECT id, subject, stake, "player1Id", "player2Id", "isBotMatch", status, "createdAt"
+FROM battle_matches
+WHERE status IN ('WAITING', 'IN_PROGRESS')
+ORDER BY "createdAt" DESC;
+
+-- Lịch sử trận đã hoàn thành của 1 user cụ thể
+SELECT id, subject, stake, "isBotMatch", status, "winnerId", "player1Score", "player2Score", "completedAt"
+FROM battle_matches
+WHERE (("player1Id" = '<userId>') OR ("player2Id" = '<userId>'))
+  AND status = 'COMPLETED'
+ORDER BY "completedAt" DESC
+LIMIT 20;
+
+-- Đối soát lịch sử giao dịch điểm PvP của 1 user (khoá cược / thắng / hoà / huỷ)
+SELECT reason, delta, metadata, "createdAt" FROM point_transactions
+WHERE "userId" = '<userId>' AND reason LIKE 'PVP_%'
+ORDER BY "createdAt" DESC;
+```
+
+> ⚠️ **Trận `status = 'WAITING'` tồn tại quá lâu (nhiều phút) là bất thường**
+> — nghĩa là bản ghi được tạo nhưng chưa kịp cập nhật `IN_PROGRESS` (lẽ ra
+> luôn xảy ra trong CÙNG 1 transaction với việc tạo bản ghi, xem
+> `docs/FEATURE_LOG.md` Section 16 mục kỹ thuật #1). Nếu gặp, khả năng cao
+> backend đã crash/restart giữa lúc xử lý — an toàn để coi trận đó là bỏ dở
+> (không tính thắng/thua, không cần hoàn cược thủ công vì transaction rollback
+> đã đảm bảo KHÔNG có điểm nào bị trừ nếu bước tạo trận chưa hoàn tất).
+
+**Danh tính bot khi tra cứu (thay đổi phạm vi muộn — mục kỹ thuật #9 trong
+`FEATURE_LOG.md`):** cột `isBotMatch` trong `battle_matches` LUÔN phản ánh
+đúng sự thật, kể cả khi giao diện người dùng đã ẩn hoàn toàn (đối thủ hiện
+tên giả kiểu người thật thay vì "Máy"/🤖). Khi hỗ trợ user, luôn dùng
+`isBotMatch` từ DB để xác nhận có phải bot hay không — KHÔNG dựa vào tên
+hiển thị (tên giả tính từ `matchId`, không lưu cột riêng trong DB).
+
+**Kiểm tra 1 trận đang "sống" ngay lúc này (bổ sung — endpoint mới
+`GET /api/battle/active`, mục kỹ thuật #9):** nếu user báo "tôi đang thi đấu
+nhưng app bị treo/mất kết nối", có thể gọi trực tiếp endpoint này (kèm
+session token của user đó, hoặc yêu cầu user tự mở DevTools gọi) để xem
+ngay điểm số/câu hỏi hiện tại đang lưu trong bộ nhớ backend — hữu ích hơn
+tra SQL vì bảng `battle_matches` KHÔNG cập nhật realtime trong lúc trận
+đang `IN_PROGRESS` (chỉ ghi lúc bắt đầu và lúc kết thúc):
+```bash
+curl -H "Authorization: Bearer <sessionTokenCuaUser>" http://localhost:4000/api/battle/active
+# { "active": true, "match": { "matchId": "...", "myScore": 43, "question": {...}, ... } }
+# { "active": false, "match": null }  <- không còn trận nào "sống" trên backend hiện tại
+```
+Nếu `active:false` nhưng user khẳng định vẫn đang giữa trận, khả năng cao
+backend đã restart kể từ lúc trận bắt đầu (mất toàn bộ state in-memory) —
+xem mục 16.4.
+
+### 16.3 Đối soát điểm cược (escrow)
+
+Cơ chế thanh toán là "khoá cược rồi chia lại": lúc bắt đầu trận trừ đúng
+`stake` của mỗi người chơi thật (`PVP_LOCK_BET`), lúc kết thúc trả theo kết
+quả (`PVP_WIN` = +2×stake cho người thắng, `PVP_DRAW_REFUND` = +stake hoàn
+nguyên khi hoà, không có giao dịch nào thêm nếu thua). Nếu user thắc mắc về
+điểm bị trừ/cộng sai, luôn tra theo trình tự: 1 dòng `PVP_LOCK_BET` lúc bắt
+đầu mỗi trận + đúng 1 dòng thanh toán (`PVP_WIN`/`PVP_DRAW_REFUND`/
+`PVP_CANCELLED_REFUND`) lúc kết thúc — **không bao giờ có 2 dòng thanh toán
+cho cùng 1 `matchId`** (chống bởi CAS ở tầng DB, xem `docs/FEATURE_LOG.md`
+Section 16 mục kỹ thuật #3).
+
+```sql
+-- Toàn bộ giao dịch điểm liên quan 1 trận cụ thể — phải thấy đúng 1 LOCK_BET/người + 1 payout/người
+SELECT reason, "userId", delta, "createdAt" FROM point_transactions
+WHERE metadata->>'matchId' = '<matchId>'
+ORDER BY "createdAt" ASC;
+```
+
+### 16.4 Giới hạn hạ tầng cần biết
+
+- **Chỉ chạy đúng với 1 instance backend.** Hàng đợi ghép trận, phòng riêng,
+  và toàn bộ trạng thái "đang chơi" (câu hỏi, điểm tạm thời, timer) đều sống
+  **in-memory** trên process — KHÔNG dùng Redis/pub-sub. Nếu hạ tầng scale
+  lên nhiều instance (load balancer nhiều pod/container), tính năng này sẽ
+  hỏng (2 user ghép trận có thể rơi vào 2 instance khác nhau, không thấy
+  nhau). Đây là giới hạn đã biết của Đợt 1/MVP, không phải lỗi.
+- **Backend restart giữa lúc có trận đang diễn ra sẽ làm mất trận đó** —
+  không có cơ chế khôi phục. User sẽ thấy mất kết nối và cần thoát ra vào
+  lại từ đầu; điểm đã cược từ đầu trận **an toàn** (đã ghi DB), nhưng trận
+  dở dang sẽ không bao giờ tự "chốt" (mãi ở `WAITING`/`IN_PROGRESS`, xem
+  cảnh báo ở mục 16.2) — cần restart lại đúng lúc ít user đang thi đấu nhất
+  nếu có thể chọn thời điểm. **Lưu ý phân biệt** (mục kỹ thuật #9): điều này
+  CHỈ đúng khi backend THỰC SỰ restart — nếu user chỉ đơn thuần F5/tắt mở
+  lại tab/đăng nhập lại mà backend vẫn sống, `GET /api/battle/active` sẽ tự
+  đưa họ vào lại đúng trận (không cần hỗ trợ gì thêm). Chỉ cần can thiệp thủ
+  công (hoàn điểm) khi backend đã thực sự restart/crash.
+
+### 16.5 Xử lý sự cố thường gặp — Battle
+
+**User báo "bấm Tìm trận mà không vào được, báo lỗi không đủ câu hỏi"**
+→ Mã lỗi `BATTLE_NOT_ENOUGH_QUESTIONS`. Kiểm tra số câu MCQ_4 active của
+đúng môn đó bằng SQL ở mục 16.1 — cần bổ sung thêm câu hỏi vào Ngân hàng
+câu hỏi cho môn đó (ít nhất 10 câu, xem mục 8 "Ngân hàng câu hỏi").
+
+**User báo bị trừ điểm nhưng trận "biến mất", không thấy trong lịch sử**
+→ Kiểm tra `battle_matches` theo mục 16.2 — nếu status vẫn là `WAITING`
+hoặc `IN_PROGRESS` quá lâu, khả năng cao backend đã restart giữa trận. Kiểm
+tra điểm đã bị trừ chưa bằng SQL đối soát mục 16.3: nếu chỉ có dòng
+`PVP_LOCK_BET` mà KHÔNG có dòng thanh toán tương ứng, cược đó vẫn đang bị
+"khoá" (trừ trong ví nhưng chưa hoàn/chưa thua thật sự) — cần hoàn thủ công
+bằng cách cộng lại `stake` cho user đó qua thao tác cấp điểm nội bộ (liên hệ
+kỹ thuật, chưa có API admin riêng cho việc này ở Đợt 1).
+
+**User báo "đang đấu tự nhiên bị xử thua" dù nghĩ mình vẫn đang kết nối**
+→ Thường là mất kết nối tạm thời (mất mạng, chuyển tab quá 30 giây, đóng
+ứng dụng ở nền quá lâu trên di động khiến hệ điều hành ngắt kết nối) khiến
+hết thời hạn chờ 30 giây → xử thua kỹ thuật (`DISCONNECT_WIN` cho đối thủ).
+Đây là hành vi đúng thiết kế, không phải lỗi — giải thích cho user về cơ chế
+"chờ 30 giây trước khi xử thắng/thua kỹ thuật".
+
+**2 người chơi ghép trận nhưng báo thấy sai đối thủ / bị "ghép nhầm"**
+→ Cơ chế nới lỏng tiêu chí theo thời gian chờ (mục "Luồng chạy" trong
+`docs/FEATURE_LOG.md` Section 16) là **có chủ đích**: sau 10 giây, hệ thống
+có thể ghép khác mức cược đã chọn ban đầu (nhưng cùng môn); sau 20 giây có
+thể ghép khác cả môn lẫn cược. Đây không phải lỗi — nhắc user nếu muốn chắc
+chắn đúng môn+cược, nên chờ ghép trong 10 giây đầu hoặc dùng "Tạo phòng mời
+bạn" để tự chọn đối thủ.
+
+**User báo "bị chặn vào trận mới, báo lỗi đang có 1 trận khác chưa xong" dù
+không nghĩ mình đang chơi gì (mã lỗi mới `BATTLE_ALREADY_IN_MATCH`, mục kỹ
+thuật #8)** → Kiểm tra `getActiveMatchSnapshot` qua `GET /api/battle/active`
+(mục 16.2) với session token của user đó — nếu `active:true`, đúng là họ
+đang có 1 trận sống khác trên backend (có thể mở ở 1 tab/thiết bị khác đã
+quên, hoặc trận cũ chưa kịp kết thúc). Đây là cơ chế chặn có chủ đích (chống
+1 tài khoản vào 2 trận song song, bị khoá cược 2 lần) — hướng dẫn user thoát
+hẳn thiết bị/tab đang có trận cũ (hoặc chờ trận đó tự kết thúc) trước khi
+vào trận mới. Nếu `active:false` mà vẫn báo lỗi này, đây mới là bug thật
+cần điều tra thêm (không phải hành vi mong đợi).

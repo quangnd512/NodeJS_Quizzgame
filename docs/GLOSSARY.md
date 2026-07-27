@@ -1455,3 +1455,65 @@ if (result.getUTCDate() !== originalDay) {          // phát hiện đã tràn
 - 1 phần trong 1 response lớn hơn (VD: 2 mục thống kê trong `GET /api/progress/summary`, response còn nhiều field khác Free vẫn cần xem) → trả giá trị rỗng/mặc định cho phần đó, KHÔNG ném lỗi làm sập cả response.
 
 **Trong dự án này**: `getExamHistory` (API riêng) → `403 EXAM_HISTORY_PREMIUM_ONLY`. `getMyProgress` → `practiceStatsBySubject`/`scoreTrend` trả `[]` cho Free, các field khác (streak, điểm, xếp hạng...) vẫn trả bình thường.
+
+---
+
+## Thuật ngữ Feature 016 — Thi đấu đối kháng (PvP Quiz Battle, Đợt 1/MVP)
+
+### Deterministic Hashing cho dữ liệu hiển thị giả (Tên bot ổn định theo ID)
+
+**Định nghĩa**: Khi cần hiển thị 1 giá trị "giả" (tên, avatar giả...) nhưng phải giống hệt nhau ở mọi lần đọc lại (không được đổi giữa các lần request khác nhau), dùng 1 hàm băm THUẦN (không random) lấy 1 ID cố định (đã có sẵn) làm đầu vào, thay vì lưu thêm cột mới vào DB hoặc dùng `Math.random()`.
+
+**Trong dự án này**: `pickBotDisplayName(matchId)` (`battle.utils.ts`) băm chuỗi `matchId` (công thức `hash = hash*31 + charCode`, `>>> 0` để ép về số nguyên không dấu tránh index âm) rồi lấy `hash % 12` để chọn 1 trong 12 tên giả cố định. Cùng 1 `matchId` luôn ra cùng 1 tên — dù được gọi lúc đang chơi (`battle:match-found`), lúc xem lại Lịch sử (`GET /api/battle/history`), hay lúc tự động resume (`GET /api/battle/active`) — mà không cần thêm cột `botDisplayName` vào bảng `BattleMatch`.
+
+**Ví dụ**: `matchId = "abc123"` → băm ra 1 số cố định → `% 12` → luôn ra ví dụ "Trần Thị Bích" mỗi lần tính lại, không bao giờ đổi sang tên khác cho cùng trận đó.
+
+---
+
+### In-Memory Live State (Trạng thái sống trong RAM — giới hạn 1 instance)
+
+**Định nghĩa**: Toàn bộ trạng thái "đang diễn ra" của 1 phiên/trận (câu hỏi hiện tại, điểm tạm, timer...) được giữ trong 1 biến `Map`/object sống trong bộ nhớ RAM của tiến trình backend, KHÔNG ghi liên tục xuống DB — nhanh hơn nhiều so với query DB mỗi thao tác nhỏ, nhưng chỉ đúng khi hệ thống chạy **1 instance backend duy nhất** (không load-balance nhiều process).
+
+**Trong dự án này**: `liveMatches = new Map<matchId, LiveMatch>()` trong `battle.engine.service.ts` giữ toàn bộ trận đấu PvP đang diễn ra (câu hỏi đã chọn, điểm số, timer câu hỏi, timer mất kết nối). `battleQueueService` (hàng đợi ghép trận) cũng dùng cùng mẫu thiết kế này. Nếu backend restart hoặc scale ra 2 instance, dữ liệu này biến mất/không đồng bộ được — đây là nợ kỹ thuật đã ghi rõ trong comment code, chỉ cần giải quyết khi thực sự cần scale ngang (chuyển sang Redis).
+
+**Hệ quả cụ thể**: `GET /api/battle/active` (dùng cho tự động resume) chỉ trả đúng dữ liệu nếu socket reconnect quay lại ĐÚNG instance đang giữ trận đó trong RAM — nếu rơi vào instance khác, trả `active:false` dù trận thực ra vẫn đang chạy ở instance kia.
+
+---
+
+### Escrow Betting (Khoá cược rồi chia lại)
+
+**Định nghĩa**: Mẫu thiết kế cho các giao dịch "cược" — TRỪ điểm cược của các bên NGAY khi bắt đầu (không phải lúc kết thúc), giữ như "ký quỹ", rồi CỘNG điểm lại cho người thắng/hoà khi kết thúc — thay vì chỉ trừ của người thua lúc kết thúc.
+
+**Trong dự án này**: `createAndStartMatch()` gọi `deductPointsInTx` trừ đúng 1 lần `stake` của MỖI người chơi thật ngay khi trận bắt đầu (`PVP_LOCK_BET`). Lúc `settleMatch()` kết thúc, KHÔNG dùng `transferPoints` (vì điểm không còn nằm trong ví người thua để "chuyển" nữa) mà dùng `addPoints`: thắng +2×stake (hoàn của mình + ăn của đối thủ), hoà +stake (hoàn nguyên), thua +0 (đã mất từ bước khoá cược), huỷ trận +stake cho mỗi người thật đã tham gia (hoàn toàn bộ).
+
+**Vì sao chọn cách này thay vì trừ điểm người thua lúc kết thúc?** Để đảm bảo tại MỌI thời điểm trong lúc trận đang diễn ra, cả 2 người chơi đều KHÔNG THỂ tiêu số điểm đã cược vào việc khác (mua ưu đãi, vào trận PvP khác...) — điểm đã bị "khoá" thật sự trong tài khoản, không chỉ là 1 con số hiển thị tạm.
+
+---
+
+### Asymmetric Queue Matching (Ghép hàng đợi không đối xứng theo thời gian chờ)
+
+**Định nghĩa**: Khi ghép cặp 2 phần tử trong hàng đợi mà tiêu chí chấp nhận của MỖI phần tử phụ thuộc vào thời gian RIÊNG mà phần tử đó đã chờ (không phải 1 tiêu chí chung cho cả hàng đợi), phép ghép cặp phải kiểm tra CẢ HAI CHIỀU chấp nhận nhau — không được chỉ kiểm tra theo tiêu chí của 1 bên.
+
+**Trong dự án này**: `getQueueCriteria(waitedSeconds)` trả `STRICT` (<10s, cần đúng môn+cược), `SUBJECT_ONLY` (10-20s, cần đúng môn), `ANY` (≥20s, chấp nhận mọi môn/cược). Hàm `canMatch(a, b)` tính tiêu chí RIÊNG của `a` và `b` (dựa trên thời gian mỗi người đã chờ), rồi yêu cầu `acceptsCandidate(criteriaA, a, b) && acceptsCandidate(criteriaB, b, a)` — cả 2 chiều đều phải true.
+
+**Ví dụ**: A đã chờ 25s (tiêu chí ANY, dễ tính) nhưng B mới chờ 1s (tiêu chí STRICT, đòi đúng môn/cược) và 2 người chọn môn/cược khác nhau → dù A "dễ tính", B vẫn từ chối → KHÔNG ghép. Người mới vào hàng đợi không bị ghép ngẫu bậy chỉ vì có người khác đã chờ lâu.
+
+---
+
+### Optimistic UI Hydration từ REST Snapshot (Khởi tạo lạc quan trước khi Socket đồng bộ lại)
+
+**Định nghĩa**: Khi 1 component cần hiển thị NGAY dữ liệu của 1 phiên đang diễn ra (tránh màn hình trắng/giật cục), khởi tạo state ban đầu (`useState(() => ...)`) trực tiếp từ 1 snapshot đọc qua REST (nhanh, 1 request), biết trước rằng dữ liệu "thật" hơn sẽ đến ngay sau đó qua kênh realtime (Socket.io) và ghi đè lên.
+
+**Trong dự án này**: `BattlePage` nhận `initialResume` (từ `GET /api/battle/active`), dùng lazy initializer của `useState` để khởi tạo `match`, `question`, `myScore`, `opponentScore`, `timeLeft`... ngay từ snapshot đó (dòng 6234-6275, `App.tsx`). Vài chục/vài trăm ms sau, `attemptReconnectToActiveMatch()` phía server gửi lại `battle:question` + `battle:opponent-progress` qua socket mới kết nối, ghi đè state bằng dữ liệu chính xác nhất — người dùng gần như không thấy độ trễ nào.
+
+**Điểm cần lưu ý**: state khởi tạo từ `initialResume` chỉ được "tiêu thụ" đúng 1 lần lúc mount (`useEffect(..., [])` gọi `onResumeClear()` ngay) — nếu quên dòng này, lần sau vào lại màn Battle (dù để chơi trận mới) sẽ bị áp lại dữ liệu cũ.
+
+---
+
+### Grace Period Timer Coordination (Đồng bộ 2 đồng hồ đếm giờ độc lập)
+
+**Định nghĩa**: Khi 1 hệ thống có ≥2 timer chạy song song nhưng logic nghiệp vụ của chúng ràng buộc lẫn nhau (1 timer phải "biết" và phản ứng khi timer kia kích hoạt), cần chủ động tạm dừng (`clearTimeout` + gán `null`) timer A khi timer B bắt đầu, và khởi động LẠI (fresh, không phải resume) timer A khi điều kiện chờ của timer B kết thúc thành công.
+
+**Trong dự án này**: `questionTimer` (20.5s/câu) và `disconnectTimers` (30s chờ đối thủ mất kết nối) trong `battle.engine.service.ts` trước đây chạy hoàn toàn độc lập — khiến trận tự "nhảy câu" trước khi đủ 30s chờ. Sửa bằng cách: `onPlayerDisconnected()` tạm dừng `questionTimer` (`clearTimeout`, gán `null`) ngay khi bắt đầu đếm 30s; `attemptReconnectToActiveMatch()` khởi động LẠI `questionTimer` từ đầu (fresh 20.5s, không trừ thời gian đã mất kết nối) khi đối thủ quay lại kịp.
+
+**Rủi ro nếu sửa sai**: nếu quên khởi động lại timer ở bước reconnect, câu hỏi hiện tại sẽ treo vĩnh viễn (không bao giờ tự hết giờ) — chưa có unit test tự động bảo vệ luồng này, chỉ mới verify bằng tay.

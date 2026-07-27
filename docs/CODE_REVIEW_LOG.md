@@ -978,3 +978,212 @@ sửa lại mock, không phải test mới thêm). Build sạch (BE `tsc`).
 - `backend/src/routes/users.route.ts` — đổi thứ tự validate trước khi tiêu thụ token ad-unlock
 - `docs/TEST_CASES.md` — thêm 26 test case Feature 015
 - `docs/CODE_REVIEW_LOG.md` — file này
+
+---
+
+## Review: Feature 016 — Thi đấu đối kháng (PvP Quiz Battle, ĐỢT 1/MVP)
+
+**Ngày**: 2026-07-21
+**Reviewer**: S3-SoatLoi
+**Branch**: `feature/battle-mvp`
+**Files thay đổi**: 20 files — module Battle mới hoàn toàn (7 file service backend +
+route + migration + schema), lần đầu dự án dùng Socket.io (realtime), 3 file điểm
+tích luỹ (`points.types.ts` bổ sung 2 reason), FE 1 component lớn (4 phase) trong
+`App.tsx` + wrapper socket riêng.
+
+### Tiêu chí 8 điểm
+
+| # | Tiêu chí | Kết quả | Ghi chú |
+|---|----------|---------|---------|
+| 1 | Atomic transaction | 🔴 2 lỗi tìm thấy, đã sửa (xem bên dưới) | Trọng tâm review vì đây là module đầu tiên "khoá — rồi chia lại" tiền tệ giữa 2 người chơi thật |
+| 2 | Race condition | 🔴 1 lỗi tìm thấy, đã sửa (xem bên dưới) — còn lại ✅ Pass | Vòng lặp hàng đợi/trạng thái trận đấu nằm IN-MEMORY, đơn luồng Node.js, đã tự xác nhận `live.ended` chặn đúng trước khi có `await` nào xen giữa (không cần lock) — xem thêm phần "Đối chiếu thiết kế S1" |
+| 3 | Error handling | ✅ Pass (sau khi sửa #1) | Mọi custom error kế thừa `BattleError` đúng pattern, map đủ HTTP status ở `app.ts` (REST) và `battle:error` (Socket.io); mọi async handler socket đều có try/catch (`emitError`) |
+| 4 | Input validation | ✅ Pass | Payload Socket.io validate bằng Zod (`parsePayload`) trước khi dùng — không tin dữ liệu client; `subject`/`stake` validate qua `SUBJECT_CATALOG`/`BATTLE_STAKES`; không có raw query, toàn bộ qua Prisma ORM |
+| 5 | N+1 / Index | ✅ Pass | `getBattleHistory` gộp 1 query `findMany({id:{in:...}})` để lấy tên đối thủ (không N+1 theo từng dòng); index `[player1Id,createdAt]`/`[player2Id,createdAt]` phục vụ đúng 2 nhánh của `OR` trong truy vấn lịch sử |
+| 6 | TypeScript `any` | ✅ Pass | Rà toàn bộ diff (backend + frontend) — không có `any` nào; payload Socket.io FE/BE đều có interface riêng khớp nhau |
+| 7 | Edge cases | 🔴 2 lỗi tìm thấy, đã sửa (xem bên dưới) | Điểm âm không xảy ra được (escrow luôn trừ trước khi chơi); mất kết nối cả 2 cùng lúc, reconnect kịp trong 30s, thắng/thua/hoà với bot đều đã có test |
+| 8 | API contract | 🟡 2 điểm lệch nhỏ, đã cập nhật draft cho khớp code (không sửa code vì code đúng hơn) | Xem mục "Đối chiếu API contract" |
+
+### 🔴 Lỗi Atomic Transaction tìm thấy & đã sửa
+
+| # | Vị trí | Mô tả lỗi | Hậu quả nếu không sửa | Cách sửa |
+|---|--------|-----------|------------------------|----------|
+| 1 | `battle.match.service.ts` — `createAndStartMatch` | Tạo `BattleMatch` (status WAITING) rồi khoá cược 2 người bằng 2 lệnh `deductPoints` RIÊNG BIỆT (mỗi lệnh tự mở 1 transaction nhỏ của `pointsService`) — nếu khoá cược player2 thất bại giữa chừng, code "hoàn cược thủ công" cho player1 bằng 1 lệnh `addPoints` KHÁC nữa (transaction thứ 3) | Nếu bước "hoàn cược thủ công" TỰ NÓ thất bại (mất kết nối DB đúng lúc đó — hiếm nhưng có thể) → player1 mất `stake` điểm oan, trận bị đánh dấu ABANDONED, không cách nào tự phục hồi; kể cả khi hoàn thành công, vẫn có khoảng hở giữa 3 transaction rời rạc | Gộp TẤT CẢ (tạo match + khoá cược cả 2 + set status IN_PROGRESS) vào 1 `prisma.$transaction` duy nhất, dùng `deductPointsInTx` (đúng pattern có sẵn `ExamService.startExam`) — nếu bất kỳ bước nào lỗi, Postgres tự rollback TOÀN BỘ, không còn "trận ma" và không cần logic hoàn cược thủ công nữa |
+| 2 | `battle.match.service.ts` — `settleMatch` | Gọi `pointsService.addPoints(...)` (tự mở transaction riêng) để trả thưởng, RỒI MỚI gọi `prisma.battleMatch.update(...)` (transaction khác) để chốt status COMPLETED/ABANDONED | Nếu bước cập nhật status thất bại giữa chừng (mất kết nối DB, crash tiến trình...): điểm ĐÃ được trả nhưng trận vẫn hiển thị "IN_PROGRESS" MÃI MÃI — không xuất hiện trong lịch sử, không thể đối soát, và engine có thể coi trận vẫn đang diễn ra | Gộp toàn bộ (mọi `addPointsInTx` theo từng kịch bản + `updateMany` chốt status) vào 1 `prisma.$transaction`, đúng pattern `closeResult` của `ExamService.submitExam` |
+
+### 🔴 Lỗi Race Condition tìm thấy & đã sửa
+
+| # | Vị trí | Mô tả lỗi | Hậu quả nếu không sửa | Cách sửa |
+|---|--------|-----------|------------------------|----------|
+| 1 | `battle.match.service.ts` — `settleMatch` (gộp chung với sửa Atomic #2 ở trên) | Không có cơ chế chống gọi `settleMatch` 2 LẦN cho CÙNG 1 trận (engine đã có cờ `live.ended` in-memory chặn ở tầng gọi, nhưng đó là lớp bảo vệ DUY NHẤT — không có lớp thứ 2 ở tầng DB) | Nếu tầng engine có lỗi logic hiếm gặp (hoặc sau này scale nhiều instance backend, mỗi instance có `liveMatches` Map RIÊNG, không đồng bộ — đúng rủi ro S2 đã tự ghi chú trong bàn giao) khiến `settleMatch` bị gọi 2 lần → trả thưởng 2 LẦN cho cùng 1 trận | Bước "chốt" cuối cùng dùng `tx.battleMatch.updateMany({where:{id, status:'IN_PROGRESS'}})` làm CAS (compare-and-swap): lần gọi thứ 2 nhận `count=0` → ném lỗi `BattleMatchNotInProgressError` → Postgres rollback TOÀN BỘ transaction đó (kể cả các `addPointsInTx` vừa gọi) — không bao giờ trả điểm 2 lần |
+
+### 🔴 Lỗi Edge Case tìm thấy & đã sửa
+
+| # | Vị trí | Mô tả lỗi | Hậu quả nếu không sửa | Cách sửa |
+|---|--------|-----------|------------------------|----------|
+| 1 | `battle.match.service.ts` — `getBattleHistory` | Trường `result` (WIN/LOSE/DRAW) và `pointsChange` trả về cho FE được tính bằng cách SO SÁNH ĐIỂM SỐ thô (`myScore` vs `opponentScore`) — KHÔNG dựa vào `winnerId` thật sự đã lưu trong DB | Trận kết thúc do đối thủ **mất kết nối** (`DISCONNECT_WIN`) xử thắng kỹ thuật cho người còn lại BẤT KỂ điểm số lúc đó. Nếu người mất kết nối đang dẫn điểm, lịch sử sẽ hiện SAI: người thắng thật sự (do đối thủ rớt mạng) lại thấy "Thua" và điểm trừ (dù thực tế đã được CỘNG); người thua thật sự lại thấy "Thắng" và điểm cộng (dù thực tế đã bị TRỪ) — sai lệch trực tiếp với số dư điểm thật, gây hoang mang/khiếu nại | Đổi sang đọc `winnerId` (đã lưu đúng theo kết quả thanh toán thật) cho trận người-thật-vs-người-thật; CHỈ trận với bot mới quay lại so sánh điểm số (vì bot không có `userId` để gán vào `winnerId`, `winnerId=null` cho trận bot vừa có thể là "hoà" vừa có thể là "thua bot" — phải phân biệt bằng `isBotMatch`) |
+| 2 | `battle.engine.service.ts` — `handleCancelQueue` + `frontend/src/App.tsx` — `handleCancelQueue` | Người chơi tạo phòng riêng ("Mời bạn bè"), sau đó bấm "Huỷ tìm trận" trong lúc đang chờ — FE chỉ chuyển màn hình về `setup` cục bộ, KHÔNG emit sự kiện huỷ nào lên server (vì code cũ chỉ emit `battle:cancel-queue` khi KHÔNG có `myRoomCode`, cố tránh lỗi "không ở trong hàng đợi"); server cũng chỉ có logic huỷ cho nhánh hàng đợi thường, KHÔNG có gì xoá phòng riêng theo yêu cầu chủ động của người tạo | Phòng riêng "mồ côi" vẫn tồn tại trên server sau khi người tạo đã rời màn hình (trong đầu). Nếu ai đó SAU ĐÓ nhập đúng mã phòng cũ (vô tình lưu lại, hoặc chia sẻ nhầm) → vẫn vào được, kích hoạt `createAndStartMatch` → TRỪ ĐIỂM người tạo hoàn toàn ngoài ý muốn của họ (họ tưởng đã huỷ từ lâu) | Server: `handleCancelQueue` giờ LUÔN thử `removeRoomByCreatorSocketId` (đổi trả về `boolean`) TRƯỚC, sau đó thử `battleQueueService.cancel()` — chỉ báo lỗi cho client nếu CẢ HAI đều không có gì để huỷ. FE: bỏ điều kiện `if (!myRoomCode)`, luôn emit `battle:cancel-queue` bất kể đang ở trạng thái nào |
+
+### 🟡 Đối chiếu API contract (`docs/api/drafts/battle-mvp.yaml`)
+
+Đối chiếu từng endpoint/event với draft của S1 — implementation khớp gần như hoàn
+toàn (method/path/payload/error code đúng). 2 điểm lệch, cả 2 đều SỬA DRAFT cho
+khớp code (không sửa code) vì implementation của S2 đúng đắn/an toàn hơn ý định gốc:
+
+1. **`GET /api/battle/history` query param**: draft ghi `page`, code (cả FE lẫn BE,
+   nhất quán 2 chiều) dùng `limit`/`offset` — tự nhiên hơn khi kết hợp với field
+   `total` đã trả sẵn. Đã cập nhật draft.
+2. **Cơ chế thanh toán điểm**: draft ghi dùng `transferPoints` cho trận thắng người
+   thật — nhưng lúc kết thúc trận, cược của người thua ĐÃ bị trừ khỏi ví từ lúc BẮT
+   ĐẦU trận (mô hình escrow "khoá cược rồi chia lại"), không còn nằm đó để
+   "chuyển" nữa. S2 đã tự phát hiện + đổi sang `deductPoints`+`addPoints` (nay là
+   `deductPointsInTx`+`addPointsInTx`) và giải thích rõ trong comment đầu file — đã
+   xác nhận ĐÚNG với cả 5 kịch bản trong DoD (thắng người thật/thua/hoà/thắng
+   bot/mất kết nối) sau khi soát lại. Đã cập nhật draft + ghi rõ lý do.
+
+### Kết quả test tự động
+
+- **Unit test**: 276/276 PASS — đếm trực tiếp qua `vitest run --reporter=verbose`
+  (không suy đoán từ báo cáo S2): **201 test cũ** (baseline kế thừa từ Feature 015,
+  không đổi) + 33 `battle.utils.test.ts` (có sẵn từ S2) + 15
+  `battle.queue.service.test.ts` (có sẵn từ S2) + **27 mới
+  `battle.match.service.test.ts` (S3 bổ sung — S2 CHƯA viết test nào cho service
+  quan trọng nhất về tiền bạc)**. *(Lưu ý: bản bàn giao của S2 ghi "249/249 test cũ"
+  — số đo thực tế qua vitest cho ra 201, chênh lệch không rõ nguyên nhân, có thể do
+  đếm nhầm cách khác; đã dùng số đo trực tiếp làm chuẩn ở đây.)* 27 test mới bao
+  phủ: khoá/trả cược đúng-đủ transaction, chống thanh toán 2 lần (race condition
+  #1), cả 5 kịch bản `SettlementOutcome` (NORMAL thắng/thua/hoà, thắng/thua BOT,
+  DISCONNECT_WIN, CANCELLED), và đặc biệt 2 test regression trực tiếp cho bug lịch
+  sử trận (edge case #1) — thắng/thua kỹ thuật với điểm số NGƯỢC với kết quả thật.
+- **Build**: PASS — Backend `tsc --noEmit` sạch; Frontend `tsc -b` (build mode,
+  invoke trực tiếp binary local `node_modules/typescript/bin/tsc` — xem ghi chú môi
+  trường bên dưới) sạch.
+- **Lint**: Backend KHÔNG có cấu hình eslint (đã xác nhận `package.json` không có
+  script `lint`/dependency `eslint` — không phải thiếu sót của PR này, dự án chưa
+  từng lint backend). Frontend `eslint .` (invoke trực tiếp
+  `node node_modules/eslint/bin/eslint.js` — xem ghi chú môi trường) phát hiện 1 lỗi
+  thật `react-hooks/set-state-in-effect` ở `BattleHistoryPage` (gọi `setLoading(true)`
+  trực tiếp trong thân `useEffect`) — đã sửa theo đúng pattern đã dùng ở nơi khác
+  trong `App.tsx` (tách hàm `async loadHistory()` gọi qua `void loadHistory()` +
+  disable-comment có giải thích). Lint lại sau khi sửa: sạch.
+- **npm audit** (`--audit-level=high`): Backend 14 lỗ hổng, Frontend 2 lỗ hổng — đã
+  soát từng gói bằng `npm ls`, xác nhận TẤT CẢ đều bắt nguồn từ dependency có sẵn
+  từ trước (`firebase-admin`/`xlsx`/`multer` ở BE; `eslint`/`firebase` ở FE) —
+  KHÔNG có lỗ hổng nào từ `socket.io`/`socket.io-client` (dependency mới của
+  feature này). Chấp nhận rủi ro pre-existing như các vòng review trước.
+
+### Ghi chú môi trường (không phải lỗi code)
+
+- `node_modules/.bin/` của **frontend** bị thiếu gần hết symlink (chỉ còn `vite`,
+  thiếu cả `tsc` lẫn `eslint`) dù package vẫn nằm đầy đủ trong `node_modules/` —
+  install cục bộ không hoàn chỉnh. Hệ quả: `npm run build`/`npx tsc -b` vô tình gọi
+  `tsc` GLOBAL (`/usr/local/bin/tsc`, bản 5.3.3 cũ) thay vì bản local đúng
+  (`typescript@6.0.3`), gây lỗi giả `TS6046`/`TS5023`/`TS5069` (option không tồn
+  tại ở bản cũ) — đã xác nhận đây là lỗi môi trường bằng cách invoke trực tiếp
+  `node node_modules/typescript/bin/tsc -b` (bản đúng) → sạch hoàn toàn. Tương tự
+  phải invoke `node node_modules/eslint/bin/eslint.js` trực tiếp vì `npx eslint`
+  không tìm thấy `eslint.config.js` (do cũng bị lệch resolution). Đề xuất: chạy lại
+  `npm ci` ở thư mục `frontend/` để tái tạo đầy đủ `node_modules/.bin/` — không
+  thuộc phạm vi sửa của PR này (vấn đề máy cục bộ, không phải do code/commit nào).
+- Máy chạy tsc/vitest chậm hơn bình thường (vài chục giây đến vài phút cho mỗi lần
+  chạy) — nhất quán với ghi chú của các vòng review trước (nhiều session Claude
+  Code chạy song song), không phải lỗi code.
+
+### Files S3 đã sửa/thêm thêm
+
+- `backend/src/services/points/points.types.ts` — thêm 2 `PointReason` còn thiếu:
+  `PVP_CANCELLED_REFUND`, `PVP_DRAW_REFUND` (S2 dùng string literal tay, không có
+  trong enum, đi ngược lại quy ước đã ghi rõ ngay trong file này)
+- `backend/src/services/battle/battle.match.service.ts` — viết lại
+  `createAndStartMatch` + `settleMatch` dùng `prisma.$transaction` +
+  `deductPointsInTx`/`addPointsInTx` (sửa Atomic #1, #2 + Race Condition #1); sửa
+  `getBattleHistory` dùng `winnerId` thay vì so sánh điểm số (sửa Edge Case #1);
+  thay toàn bộ string literal `'PVP_...'` bằng `PointReason.*`
+   - `backend/src/services/battle/__tests__/battle.match.service.test.ts` — **file
+    test mới**, 27 test case (chưa từng có test nào cho service này trước đó)
+- `backend/src/services/battle/battle.queue.service.ts` —
+  `removeRoomByCreatorSocketId` đổi `void`→`boolean` + xoá TẤT CẢ phòng khớp (không
+  dừng ở phòng đầu tiên tìm thấy) — phục vụ sửa Edge Case #2
+- `backend/src/services/battle/battle.engine.service.ts` — `handleCancelQueue` xử
+  lý cả 2 trường hợp (hàng đợi thường + phòng riêng) — sửa Edge Case #2
+- `frontend/src/App.tsx` — `BattlePage.handleCancelQueue` luôn emit
+  `battle:cancel-queue` (sửa Edge Case #2); `BattleHistoryPage` tách hàm
+  `loadHistory()` (sửa lỗi lint `react-hooks/set-state-in-effect`)
+- `docs/api/drafts/battle-mvp.yaml` — sửa 2 điểm lệch contract (xem mục trên)
+- `docs/TEST_CASES.md` — thêm 28 test case Feature 016
+- `docs/CODE_REVIEW_LOG.md` — file này
+
+---
+
+## Review: Feature 016 — Thi đấu đối kháng (PvP Quiz Battle) — LÀM LẠI lần 1: bổ sung test tự động cho tầng điều phối realtime
+
+**Ngày**: 2026-07-27
+**Reviewer**: S3-SoatLoi
+**Branch**: `feature/battle-mvp`
+**Lý do làm lại** (theo `workflow/handoff/PENDING/S3.md` từ S8-GiamSat): S8 tự đọc
+code độc lập và xác nhận đúng như S5/S6 đã tự cảnh báo trong báo cáo bàn giao —
+`battle.engine.service.ts` (tầng ĐIỀU PHỐI realtime: đếm 30s mất kết nối,
+reconnect, phối hợp `questionTimer`/`disconnectTimer`, chặn 2 trận cùng lúc)
+**hoàn toàn không có test tự động**, vi phạm 1 dòng DoD gốc của S1 ("xử lý mất
+kết nối 30 giây — cả 2 nhánh"). Test cũ ở `battle.match.service.test.ts`
+(DISCONNECT_WIN/CANCELLED) chỉ test tầng THANH TOÁN sau khi outcome đã biết
+trước — không test tầng QUYẾT ĐỊNH khi nào outcome đó xảy ra. Đây chính xác là
+nơi 5/11 bug S5 tìm thấy bằng tay (đếm 30s, đồng bộ 2 đồng hồ, chặn 2 trận),
+đã sửa đúng nhưng không được test tự động bảo vệ lâu dài.
+
+### Việc đã làm
+
+Không sửa lại logic (S5 đã xác nhận thủ công logic hiện tại đúng) — **chỉ bổ
+sung test**. Viết mới `backend/src/services/battle/__tests__/battle.engine.service.test.ts`
+(6 test), giả lập tối thiểu 1 `Namespace` + các `Socket` Socket.io (chỉ đủ field
+`id`/`data.user`/`on`/`emit`/`join` mà `battle.engine.service.ts` thực sự dùng —
+module này chỉ export `registerBattleEventHandlers` + `getActiveMatchSnapshot`,
+không có state nào lộ ra ngoài để test trực tiếp), dùng `vi.useFakeTimers()` +
+`vi.advanceTimersByTimeAsync()` để điều khiển chính xác mốc 30s/20.5s mà không
+cần chờ thật. Mock hoàn toàn `battle.match.service.js` (đã có test riêng — ở đây
+chỉ cần xác nhận nó ĐƯỢC GỌI đúng tham số) + `prisma.user.findUnique` +
+`pointsService.getBalance`. Dùng thẳng `battleQueueService` thật (không mock,
+thuần in-memory) qua luồng tạo-phòng/vào-phòng để tạo 1 trận thật, tránh phải
+điều khiển vòng lặp hàng đợi 1 giây.
+
+Phủ đủ 5 kịch bản S8 yêu cầu:
+1. Mất kết nối, KHÔNG reconnect trong 30s → xử thắng kỹ thuật đúng chiều
+   `winnerIsPlayer1` (test cả 2 chiều: player1 mất kết nối và player2 mất kết nối)
+2. Mất kết nối rồi reconnect TRƯỚC 30s → không xử thua, điểm đã tích luỹ giữ
+   nguyên (assert chính xác 13đ = 10 cơ bản + 3 bonus tốc độ tối đa), disconnect
+   timer bị huỷ thật (chờ thêm 30s sau reconnect vẫn không settle), questionTimer
+   được khởi động lại (chờ đúng 20.5s kể từ lúc reconnect thấy câu tiếp theo được
+   gửi — chứng minh không bị "treo mãi mãi")
+3. **Bug #9**: trong lúc chờ 30s, vượt qua mốc 20.5s cũ mà KHÔNG tự "nhảy câu"
+   (không có `battle:question` mới nào được gửi cho tới khi hết hẳn 30s)
+4. Cả 2 cùng mất kết nối → huỷ trận (`CANCELLED`) NGAY LẬP TỨC, không đợi hết 30s
+   của bên thứ 2 (assert `settleMatch` được gọi ngay sau khi bên thứ 2 disconnect,
+   và KHÔNG bị gọi thêm lần nào khi thời gian trôi hết 30s còn lại — chống huỷ 2 lần)
+5. **Bug #10**: `hasActiveMatch()` chặn đúng `battle:join-queue`/`battle:create-room`/
+   `battle:join-room` khi user đã có 1 trận đang diễn ra (kể cả từ 1 socket/tab
+   thứ 2 của cùng user) → `battle:error` code `BATTLE_ALREADY_IN_MATCH`, không
+   gọi thêm `createAndStartMatch` nào
+
+Trong lúc viết test, KHÔNG phát hiện thêm bug thật nào mới — cả 6 test PASS ngay
+từ lần chạy đầu tiên, xác nhận logic hiện tại đúng như S5 đã kiểm tra thủ công.
+
+### Kết quả kiểm thử tự động
+
+- **Test mới**: `battle.engine.service.test.ts` — 6/6 PASS
+- **Toàn bộ backend**: 282/282 PASS (276 cũ + 6 mới), không có test nào bị hỏng
+- **Build**: `npx tsc --noEmit` sạch (backend)
+- **Lint**: backend không có cấu hình eslint (đã xác nhận từ vòng trước — không
+  thuộc phạm vi thay đổi của lần làm lại này, không đụng frontend)
+- **npm audit**: không có thay đổi dependency nào (chỉ thêm 1 file test) — kết quả
+  giữ nguyên như S8 đã xác nhận ở vòng trước (chỉ lỗ hổng pre-existing, không liên
+  quan socket.io)
+
+### Files đã thêm/sửa
+
+- `backend/src/services/battle/__tests__/battle.engine.service.test.ts` — **file
+  test mới**, 6 test case
+- `docs/TEST_CASES.md` — cập nhật ghi chú đầu mục Feature 016 (thêm dòng
+  `battle.engine.service.test.ts`); đánh dấu case #16, #28 nay có test tự động;
+  thêm case #29 (bug #9 — tạm dừng questionTimer khi chờ disconnect) và #30
+  (bug #10 — chặn 2 trận cùng lúc)
+- `docs/CODE_REVIEW_LOG.md` — file này

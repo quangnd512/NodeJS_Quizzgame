@@ -1457,3 +1457,140 @@ A: Không phải lỗi — nếu bạn là Premium và còn thẻ bảo hiểm c
 A: Lượt mở khoá có hiệu lực 5 phút — nếu bạn để màn hình chọn môn quá lâu
 trước khi bấm lưu, lượt mở khoá có thể đã hết hạn. Quay lại bấm "Đổi môn" và
 xem quảng cáo lần nữa.
+
+---
+
+## Thi đấu đối kháng — PvP Quiz Battle (Feature 016)
+
+**⚔️ Thi đấu đối kháng** là chế độ thi đấu trực tiếp với 1 người chơi khác
+(hoặc với máy nếu không tìm được ai), trả lời 10 câu hỏi trắc nghiệm, **cược
+điểm** — thắng ăn điểm của đối thủ, thua mất điểm đã cược, hoà hoàn lại y
+nguyên. Mở cho **tất cả tài khoản** (Free lẫn Premium đều dùng được như
+nhau ở phiên bản này).
+
+> ⚠️ **Cập nhật sau vòng test thủ công (thay đổi phạm vi)**: khi hệ thống
+> ghép bạn với máy (không tìm được người thật sau 30 giây), giao diện
+> **KHÔNG tiết lộ** điều đó — đối thủ hiện tên giả kiểu người thật, giống
+> hệt như đang đấu với 1 người thật, ở CẢ màn thi đấu lẫn màn lịch sử.
+> Người dùng bình thường không có cách nào biết chắc mình vừa đấu với máy
+> hay người thật (đây là quyết định sản phẩm có chủ đích, xem
+> `docs/FEATURE_LOG.md` Section 16 mục kỹ thuật #9). Tài liệu này vẫn giải
+> thích rõ hành vi thật của bot bên dưới để dev/tester hiểu đúng, nhưng khi
+> viết test case UI hoặc mô tả cho người dùng thật, KHÔNG được nhắc "máy"/
+> "bot" hay dùng icon 🤖.
+
+### Cách bắt đầu 1 trận đấu
+
+1. Vào menu chính → bấm **"⚔️ Thi đấu đối kháng"**.
+2. Chọn **môn thi đấu** (Toán, Văn, Anh...).
+3. Chọn **mức cược**: 50 / 100 / 200 / 500 điểm — số dư điểm hiện tại hiển
+   thị ngay phía trên để bạn biết mình đủ cược mức nào. Nếu không đủ điểm
+   cho mức đã chọn, nút "Tìm trận"/"Tạo phòng" sẽ bị khoá kèm cảnh báo.
+4. Chọn 1 trong 2 cách vào trận:
+   - **"Tìm trận 🔍"** — vào hàng đợi ghép trận tự động với người lạ.
+   - **"Tạo phòng mời bạn 👥"** — tạo 1 mã phòng 6 ký tự, gửi cho bạn bè để
+     họ nhập mã vào thẳng trận với bạn (không qua hàng đợi).
+   - Hoặc nếu bạn bè đã gửi mã cho bạn, nhập mã vào ô **"Vào phòng bằng mã"**
+     rồi bấm **"Vào phòng"**.
+
+### Màn hình chờ ghép trận
+
+- Nếu bạn bấm "Tìm trận", màn hình hiện đếm giờ chờ + trạng thái hiện tại:
+  trong 10 giây đầu hệ thống chỉ ghép người **cùng môn + cùng mức cược**; từ
+  giây 10-20 nới lỏng ghép người **cùng môn, bất kỳ mức cược**; từ giây
+  20-30 ghép **bất kỳ ai**. Nếu vẫn không tìm được đối thủ sau **30 giây**,
+  hệ thống tự động ghép bạn với **máy** — nhưng giao diện hiện tên đối thủ
+  giống hệt người thật (tên giả kiểu người Việt, luôn giống nhau nếu bạn
+  xem lại đúng trận đó trong Lịch sử), KHÔNG có bất kỳ dấu hiệu nào cho biết
+  đây là máy.
+- Nếu bạn tạo phòng mời bạn bè, màn hình hiện mã phòng để bạn gửi cho bạn bè
+  — trận sẽ bắt đầu ngay khi họ nhập đúng mã.
+- Bấm **"Huỷ tìm trận"** bất cứ lúc nào để rời hàng đợi/xoá phòng đã tạo,
+  không mất điểm gì (chưa cược cho tới khi trận thật sự bắt đầu).
+
+### Trong lúc thi đấu
+
+- Mỗi câu hỏi có **20 giây** để trả lời, đồng hồ đếm ngược hiển thị trên
+  cùng — càng trả lời **đúng và nhanh** càng được nhiều điểm (10 điểm cơ
+  bản + tối đa 3 điểm thưởng tốc độ = tối đa 13 điểm/câu, 130 điểm cả trận).
+- Trả lời sai hoặc để hết giờ không bấm → 0 điểm câu đó, tự động chuyển câu
+  tiếp theo.
+- Điểm của đối thủ được cập nhật realtime ngay khi họ trả lời xong (bạn
+  KHÔNG thấy đáp án họ chọn, chỉ thấy điểm).
+- Nếu đối thủ **mất kết nối** giữa trận, bạn sẽ thấy banner đếm ngược thật
+  theo giây "Đối thủ mất kết nối, đang chờ 30s… 29s… 28s…" (khi về 0 đổi
+  thành "đang xử lý…") — nếu họ quay lại kịp, trận tiếp tục bình thường
+  (không ai mất điểm đã có, KHÔNG bị tự động chuyển sang câu mới trong lúc
+  chờ); nếu không, bạn **thắng kỹ thuật** khi hết 30 giây.
+- Nếu chính bạn bị mất kết nối (rớt mạng, lỡ tắt tab), chỉ cần **mở lại ứng
+  dụng/đăng nhập lại trong vòng 30 giây** — hệ thống **tự động** đưa bạn vào
+  thẳng lại đúng trận đang chơi (điểm số, câu hỏi hiện tại được khôi phục
+  ngay), bạn KHÔNG cần tự bấm lại vào "Thi đấu đối kháng". Nếu bạn quay lại
+  **trễ hơn 30 giây** (trận đã tự kết thúc do bạn bị xử thua/thắng kỹ thuật
+  hoặc huỷ), ứng dụng sẽ tự động hiện thẳng màn kết quả của trận đó thay vì
+  im lặng bỏ qua.
+
+### Kết thúc trận
+
+Sau khi cả 2 trả lời đủ 10 câu (hoặc 1 bên thắng/thua kỹ thuật), màn hình
+kết quả hiện ra:
+- Kết quả: **Thắng 🎉 / Thua 😢 / Hoà 🤝**
+- Điểm số của bạn và đối thủ.
+- Số điểm được cộng/trừ và **số dư điểm mới** sau trận.
+- Bấm **"Chơi lại"** để vào ngay màn chọn môn/mức cược tiếp theo, hoặc **"Về
+  trang chủ"**.
+
+### Xem lịch sử trận đấu
+
+Bấm **"Lịch sử"** ở góc màn hình vào trận để xem lại các trận đã đấu: môn
+học, mức cược, tên đối thủ (kể cả trận đấu với máy cũng hiện tên giả kiểu
+người thật, KHÔNG có gì phân biệt được với trận đấu người thật), điểm số 2
+bên, kết quả và số điểm được/mất từng trận — sắp xếp mới nhất lên đầu, xem
+được nhiều trang nếu đã đấu nhiều trận.
+
+### Câu hỏi thường gặp
+
+**Q: Vì sao tôi thua dù điểm số đang cao hơn đối thủ lúc đó?**
+
+A: Có thể đối thủ đã **mất kết nối và không quay lại kịp trong 30 giây** —
+trường hợp này người mất kết nối luôn bị xử thua (thua kỹ thuật), bất kể
+điểm số ai đang cao hơn lúc đó.
+
+**Q: Cược điểm có bị mất luôn không nếu tôi thoát giữa trận?**
+
+A: Nếu bạn không quay lại trong vòng 30 giây kể từ lúc mất kết nối, bạn sẽ
+bị xử **thua kỹ thuật** và mất đúng số điểm đã cược — giống như thua bình
+thường. Nếu cả 2 người cùng mất kết nối trong lúc chờ nhau, trận sẽ bị huỷ
+và **hoàn lại nguyên cược** cho cả 2 (không tính thắng/thua).
+
+**Q: Tôi vừa tạo phòng nhưng đổi ý, mã phòng còn dùng được không?**
+
+A: Không — bấm "Huỷ tìm trận" sẽ xoá mã phòng ngay trên hệ thống. Nếu bạn
+bè cầm mã cũ nhập lại, họ sẽ nhận thông báo "Không tìm thấy phòng".
+
+**Q: Đấu với máy có gì khác đấu với người thật?**
+
+A: Luật chơi giống hệt nhau (10 câu, cùng cách tính điểm, cùng mức cược) và
+giao diện KHÔNG hiện bất kỳ dấu hiệu nào để phân biệt (tên đối thủ giống
+người thật cả lúc chơi lẫn lúc xem lại lịch sử). Về bản chất kỹ thuật: máy
+trả lời đúng khoảng 65% số câu, thời gian suy nghĩ ngẫu nhiên 3-18 giây/câu.
+Nếu bạn thua, bạn chỉ mất đúng số điểm đã cược (máy không có "ví điểm"
+riêng); nếu thắng, bạn được thưởng 100% số điểm đã cược.
+
+**Q: Tôi thoát app giữa trận, lúc mở lại tự nhiên bị đưa thẳng vào 1 trận/1
+màn kết quả tôi không nhớ — có phải lỗi không?**
+
+A: Không phải lỗi — đây là tính năng "tự động vào lại trận đang dở": nếu
+trận vẫn còn đang diễn ra (bạn quay lại trong 30 giây), ứng dụng tự đưa bạn
+vào lại đúng trận đó. Nếu trận đã kết thúc trong lúc bạn rời đi (thắng/thua
+kỹ thuật do mất kết nối), ứng dụng tự hiện màn kết quả của trận đó để bạn
+không bỏ lỡ thông tin thắng/thua/điểm số thay đổi.
+
+**Q: Tôi đang thi đấu ở 1 thiết bị, mở app ở thiết bị/tab khác thì báo lỗi
+"Bạn đang có 1 trận đấu khác chưa kết thúc" — vì sao?**
+
+A: Hệ thống chỉ cho phép bạn tham gia **1 trận tại 1 thời điểm** trên cùng
+tài khoản — mở 2 kết nối cùng lúc để vào 2 trận song song sẽ bị chặn (mã lỗi
+`BATTLE_ALREADY_IN_MATCH`), để tránh bị cược điểm 2 lần cho cùng 1 tài
+khoản. Hãy hoàn tất hoặc thoát hẳn trận đang chơi ở thiết bị/tab kia trước
+khi vào trận mới.

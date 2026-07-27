@@ -800,3 +800,76 @@
 | 24 | **Race condition**: 2 admin cùng `grant-premium` cho 1 user gần như đồng thời | request thứ 2 đọc dữ liệu đã cũ | CAS tự động đọc lại giá trị mới nhất và tính lại (tối đa 5 lần thử) — KHÔNG mất 1 trong 2 lần cấp (trước khi sửa: lần ghi sau "đè" mất hoàn toàn lần ghi trước) |
 | 25 | **Race condition**: xung đột CAS liên tục vượt quá số lần thử tối đa (cực hiếm) | `updateMany` luôn trả count=0 | 409 `PREMIUM_GRANT_CONFLICT` |
 | 26 | grantPremiumMonths — user biến mất giữa lúc CAS đọc lại (cực hiếm) | `findUnique` trả null | `PREMIUM_USER_NOT_FOUND` (404) |
+
+---
+
+## Test Cases: Thi đấu đối kháng — PvP Quiz Battle, ĐỢT 1/MVP (Feature 016)
+
+> Branch `feature/battle-mvp`. Test tự động: `battle.utils.test.ts` (33, có sẵn từ S2),
+> `battle.queue.service.test.ts` (15, có sẵn từ S2), `battle.match.service.test.ts`
+> (27, bổ sung ở vòng review S3 lần 1 — S2 chưa viết test cho service quan trọng
+> nhất về tiền bạc: khoá/trả cược, atomic transaction, chống thanh toán 2 lần, lịch
+> sử trận), `battle.engine.service.test.ts` (**6, mới bổ sung ở vòng review S3 lần
+> 2** — theo yêu cầu làm lại của S8: tầng ĐIỀU PHỐI realtime (đếm 30s mất kết nối,
+> reconnect, phối hợp questionTimer/disconnectTimer, chặn 2 trận cùng lúc) trước đó
+> chỉ được xác minh THỦ CÔNG bởi S5, không có test tự động nào bảo vệ — xem #16,
+> #28 (nay có test tự động), #29, #30 bên dưới). Danh sách dưới đây chỉ liệt kê các
+> kịch bản Ý NGHĨA NGHIỆP VỤ quan trọng nhất (không liệt kê hết toàn bộ test case —
+> xem trực tiếp code test để đầy đủ).
+
+### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | GET /api/battle/config | user bất kỳ | `{ stakes: [50,100,200,500], currentPoints }` |
+| 2 | createAndStartMatch — người thật vs người thật | subject/stake hợp lệ, cả 2 đủ điểm | tạo `BattleMatch` status→`IN_PROGRESS`, trừ đúng `stake` của CẢ 2 (reason `PVP_LOCK_BET`), TRONG 1 transaction duy nhất |
+| 3 | createAndStartMatch — vs bot | player2Id=null, isBotMatch=true | CHỈ trừ điểm player1, không đụng đến "ví" nào khác |
+| 4 | settleMatch — NORMAL, player1 thắng điểm số | player1Score > player2Score | +2×stake cho player1 (`PVP_WIN`), `winnerId=player1Id`, status→`COMPLETED` |
+| 5 | settleMatch — NORMAL, hoà giữa 2 người thật | điểm bằng nhau | hoàn `stake` cho CẢ 2 (`PVP_DRAW_REFUND`), `winnerId=null` |
+| 6 | settleMatch — DISCONNECT_WIN | 1 bên mất kết nối quá 30s | +2×stake cho người còn lại (`PVP_WIN`, metadata `viaDisconnect:true`), **KHÔNG phụ thuộc điểm số lúc đó** |
+| 7 | settleMatch — CANCELLED (cả 2 mất kết nối) | — | hoàn `stake` cho MỖI người thật đã tham gia (`PVP_CANCELLED_REFUND`), status→`ABANDONED` |
+| 8 | Ghép trận — nới lỏng tiêu chí theo thời gian chờ | 0-10s / 10-20s / 20-30s | STRICT (đúng môn+cược) → SUBJECT_ONLY (đúng môn) → ANY (bất kỳ) |
+| 9 | Chấm điểm theo thời gian SERVER | trả lời càng nhanh trong 20s | bonus tốc độ 0-3 điểm cộng vào 10 điểm cơ bản (tối đa 13đ/câu) |
+
+### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 10 | settleMatch — NORMAL, thua BOT | isBotMatch=true, player2Score(bot) > player1Score | **KHÔNG** gọi thanh toán điểm nào cả (bot không có ví), `winnerId=null` dù không phải hoà |
+| 11 | settleMatch — NORMAL, thắng BOT | player1Score > player2Score(bot) | +2×stake cho player1, `winnerId=player1Id` (thưởng 100% cược, không trừ của ai) |
+| 12 | **Bug đã sửa**: GET /api/battle/history — trận thắng kỹ thuật do đối thủ mất kết nối, điểm số đang THẤP HƠN đối thủ | `winnerId=mình`, `myScore < opponentScore` | `result: "WIN"`, `pointsChange: +stake` — PHẢI đọc từ `winnerId` đã lưu, **KHÔNG được so sánh điểm số** (bản trước dùng so sánh điểm số nên hiện SAI thành "LOSE" trong trường hợp này) |
+| 13 | **Bug đã sửa**: GET /api/battle/history — thua kỹ thuật dù điểm số đang CAO HƠN đối thủ | `winnerId=đối thủ`, `myScore > opponentScore` | `result: "LOSE"`, `pointsChange: -stake` (tương tự #12, chiều ngược lại) |
+| 14 | GET /api/battle/history — thua trận với BOT | isBotMatch=true, `winnerId` luôn null (bot không có userId) | `result: "LOSE"` (suy từ so sánh điểm số CHỈ RIÊNG cho trận bot) — không được hiểu nhầm `winnerId=null` thành hoà |
+| 15 | **Bug đã sửa**: bấm "Huỷ tìm trận" trong lúc đang chờ bạn bè vào phòng riêng vừa tạo | đã tạo phòng (có `myRoomCode`), bấm Huỷ | phòng bị xoá khỏi server ngay — ai đó nhập đúng mã SAU KHI đã huỷ sẽ nhận `BATTLE_ROOM_NOT_FOUND`, **KHÔNG** còn vào được và trừ điểm người tạo ngoài ý muốn (bản trước chỉ xử lý nhánh hàng đợi thường, để phòng "mồ côi") |
+| 16 | Reconnect kịp trong 30s (nay có test tự động — `battle.engine.service.test.ts`) | mất kết nối rồi mở lại đúng userId, TRƯỚC 30s | gán lại socket, huỷ đếm giờ, gửi lại câu hỏi hiện tại nếu chưa trả lời, KHÔNG mất điểm đã tích luỹ, questionTimer câu hiện tại được khởi động lại (fresh) — không bị "treo" mãi mãi |
+| 17 | GET /api/battle/history — limit/offset không hợp lệ (NaN, âm) | `limit=NaN, offset=-5` | dùng mặc định an toàn `limit=20, offset=0`, không lỗi 500 |
+| 18 | GET /api/battle/history — limit vượt trần | `limit=9999` | chặn về tối đa 50 |
+| 29 | **Bug đã sửa #9** (nay có test tự động): questionTimer (20.5s/câu) PHẢI bị tạm dừng trong lúc đang chờ 30s mất kết nối | 1 bên mất kết nối, chờ vượt qua mốc 20.5s cũ NHƯNG chưa hết 30s grace | KHÔNG tự động "nhảy câu" (không gửi `battle:question` mới) trong lúc đang chờ — trước đây 2 đồng hồ chạy độc lập khiến trận tự advance sai lúc |
+
+### Error Cases
+| # | Mô tả | Input | Expected HTTP/Kết quả | Expected Error Code |
+|---|-------|-------|------------------------|----------------------|
+| 19 | join-queue — môn học không hợp lệ | `subject: "KHONG_TON_TAI"` | `battle:error` | `BATTLE_INVALID_SUBJECT` |
+| 20 | join-queue — mức cược không hợp lệ | `stake: 999` | `battle:error` | `BATTLE_INVALID_STAKE` |
+| 21 | join-queue/create-room — không đủ điểm | `currentPoints < stake` | `battle:error`, KHÔNG vào hàng đợi | `BATTLE_INSUFFICIENT_POINTS` |
+| 22 | createAndStartMatch — không đủ 10 câu MCQ_4 active cho môn đã chọn | pool < 10 câu | throw, KHÔNG tạo `BattleMatch`, KHÔNG đụng transaction/điểm ai cả | `BATTLE_NOT_ENOUGH_QUESTIONS` |
+| 23 | **Race condition**: createAndStartMatch — điểm player2 thay đổi đúng lúc khoá cược (rất hiếm, đã qua bước check trước đó) | `deductPointsInTx` player2 throw `PointsInsufficientError` giữa transaction | Postgres tự rollback TOÀN BỘ (kể cả dòng `BattleMatch` vừa tạo và phần đã trừ của player1) — KHÔNG còn "trận ma" WAITING mồ côi, KHÔNG cần hoàn cược thủ công | `BATTLE_INSUFFICIENT_POINTS` |
+| 24 | **Race condition**: settleMatch bị gọi 2 lần cho CÙNG 1 trận (lỗi logic hiếm gặp ở tầng engine, hoặc phòng khi sau này scale nhiều instance) | lần gọi thứ 2, `updateMany` điều kiện `status:'IN_PROGRESS'` trả `count=0` | lần 2 rollback TOÀN BỘ transaction (kể cả các `addPointsInTx` vừa gọi trong CÙNG transaction đó) — KHÔNG BAO GIỜ trả điểm 2 lần cho 1 trận | `BATTLE_MATCH_NOT_IN_PROGRESS` |
+| 25 | submit-answer — gửi cho câu hỏi không còn hiệu lực (đã qua câu khác) hoặc đã trả lời rồi | `questionIndex` cũ, hoặc trả lời 2 lần cùng 1 câu | `battle:error`, KHÔNG cộng điểm 2 lần | `BATTLE_INVALID_PAYLOAD` |
+| 26 | join-room — mã phòng không tồn tại / đã bị dùng / người tạo đã ngắt kết nối | `roomCode` sai hoặc phòng đã bị xoá | `battle:error` | `BATTLE_ROOM_NOT_FOUND` |
+| 27 | join-room — tự vào phòng của chính mình | `roomCode` do chính user này tạo | `battle:error` | `BATTLE_CANNOT_JOIN_OWN_ROOM` |
+| 28 | Cả 2 người mất kết nối trong lúc cùng chờ (grace period chồng nhau) (nay có test tự động) | socket A disconnect, sau đó socket B (đối thủ) cũng disconnect trước khi A hết 30s | huỷ trận NGAY (không đợi hết 30s của B), hoàn cược cả 2 | outcome `CANCELLED` |
+| 30 | **Bug đã sửa #10** (nay có test tự động): user đang có 1 trận đang diễn ra thử vào trận thứ 2 (mở tab/thiết bị khác) | `battle:join-queue` / `battle:create-room` / `battle:join-room` khi `hasActiveMatch(userId)===true` | `battle:error`, KHÔNG tạo trận mới, KHÔNG khoá cược lần 2 | `BATTLE_ALREADY_IN_MATCH` |
+
+### Thay đổi phạm vi muộn — xác nhận thủ công bởi S5 (chưa có test tự động phía FE — dự án không có bộ test frontend)
+> Bổ sung theo yêu cầu làm lại của S8 (2026-07-27): 2 thay đổi phạm vi phát sinh trong lúc
+> S5 test thủ công (ẩn danh tính bot, tự động vào lại trận đang dở) đã có test tự động phía
+> BACKEND (xem #16/#28/#29/#30 ở trên + `battle.match.service.test.ts` dòng ~436 cho
+> `opponentName` bot). 4 kịch bản dưới đây là phần S5 đã tự tay xác nhận qua UI thật/DB
+> nhưng CHƯA từng được liệt kê thành dòng riêng trong bảng test case của tài liệu này.
+
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| B1 | Ẩn hoàn toàn danh tính bot khỏi UI | Vào trận với bot (chờ đủ 30s không ai ghép) | Tên đối thủ hiện tên giả kiểu người thật (`pickBotDisplayName(matchId)`, ví dụ "Nguyễn Minh Anh") ở CẢ màn thi đấu LẪN màn lịch sử — KHÔNG còn chữ "Máy" hay icon 🤖 ở bất kỳ đâu trên UI. `isBotMatch=true` vẫn có trong dữ liệu trả về (không ảnh hưởng tính điểm/đối soát nội bộ) |
+| B2 | Cùng 1 trận bot, xem lại nhiều lần (đang chơi vs xem lịch sử sau đó) | Ghi lại `matchId` lúc đang chơi, so với tên hiện trong `GET /api/battle/history` sau khi trận kết thúc | Tên đối thủ giả hiển thị **giống hệt nhau** cả 2 lần (deterministic theo `matchId`, không đổi ngẫu nhiên mỗi lần đọc) |
+| B3 | Tự động vào lại trận đang dở — quay lại KỊP trong 30s | Đang thi đấu (trận với người thật), F5 lại trang hoặc đăng nhập lại trong vòng 30 giây | `GET /api/battle/active` trả `active:true` kèm snapshot (điểm số, câu hỏi hiện tại, số giây còn lại) → app tự động vào thẳng màn thi đấu ĐÚNG trận đó, không cần bấm gì, không mất điểm đã tích luỹ |
+| B4 | Tự động vào lại trận đang dở — quay lại TRỄ hơn 30s | Mất kết nối giữa trận, quay lại sau khi đã quá 30s (trận đã bị xử thắng/thua kỹ thuật hoặc huỷ) | `GET /api/battle/active` trả `active:false` (trận không còn "sống"); app phát hiện `matchId` nhớ trong `localStorage` (`battle_active_match_id`) không khớp trận đang sống nào → tự động tra `GET /api/battle/history` và hiện THẲNG màn kết quả của trận vừa kết thúc đó — đúng thiết kế "thua/huỷ kỹ thuật", KHÔNG "resume" lại được trận đã kết thúc |
+| B5 | **Bug đã sửa #7-8** (FE): banner mất kết nối phải đếm ngược đúng theo giây thật, không đứng yên | Đối thủ mất kết nối, quan sát banner từ giây 0 → 30 | Banner hiện "đang chờ 30s… 29s… 28s…" đếm lùi mỗi giây thật (`disconnectSecondsLeft`, chỉ để hiển thị — server luôn tự quyết định xử thắng/thua ở đúng 30s thật theo `BATTLE_DISCONNECT_GRACE_MS`, không phụ thuộc đồng hồ FE); khi đếm về 0, chữ đổi thành "đang xử lý…" thay vì hiện vô nghĩa "chờ 0s" |
