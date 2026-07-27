@@ -22,7 +22,7 @@ import {
   getUnreadCount, getNotifications, markNotificationAsRead, markAllNotificationsAsRead,
   createSubmission, getMySubmissions, updateSubmission, deleteSubmission,
   adminListSubmissions, adminApproveSubmission, adminRejectSubmission,
-  getBattleConfig, getBattleHistory,
+  getBattleConfig, getBattleHistory, getActiveBattleMatch,
 } from './lib/api.js';
 import { createBattleSocket } from './lib/battleSocket.js';
 import type {
@@ -40,7 +40,7 @@ import type {
   DashboardStats, AdminUserListItem, AdminUserDetail,
   NotificationItem, NotificationTargetScreen,
   SubmissionDto, SubmissionStatus, AdminSubmissionListItem, SubmissionCorrectAnswer,
-  BattleConfig, PaginatedBattleHistory, BattleHistoryItem, BattleResult,
+  BattleConfig, PaginatedBattleHistory, BattleHistoryItem, BattleResult, ActiveBattleMatchSnapshot,
 } from './lib/api.js';
 import './App.css';
 
@@ -60,6 +60,15 @@ const SUBJECTS = [
 
 type Screen = 'loading' | 'login' | 'onboarding' | 'adGate' | 'profile' | 'practice' | 'exam' | 'admin' | 'leaderboard' | 'progress' | 'wrongAnswers' | 'submissions' | 'battle' | 'battleHistory';
 
+/** localStorage key nhớ matchId đang chơi dở — dùng để phát hiện "trận vừa kết thúc
+ * trong lúc mình rời app" khi không còn thấy trận đó "sống" ở GET /api/battle/active. */
+const BATTLE_ACTIVE_MATCH_KEY = 'battle_active_match_id';
+
+/** Trạng thái khôi phục trận Thi đấu đối kháng sau khi tải lại trang/đăng nhập lại (Fix S5). */
+type BattleResumeState =
+  | { kind: 'live'; snapshot: ActiveBattleMatchSnapshot }
+  | { kind: 'ended'; item: BattleHistoryItem; currentPoints: number };
+
 function getInitials(name: string | null, email: string | null): string {
   const src = name ?? email ?? '?';
   return src.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('');
@@ -76,6 +85,11 @@ export default function App() {
   const [globalError, setGlobalError]   = useState('');
   // Bài thi đang dở — kiểm tra ngay sau khi đăng nhập để hiển thị ngay trên ProfilePage
   const [resumeAlert, setResumeAlert]   = useState<ActiveExamSessionInfo | null>(null);
+  // Trận Thi đấu đối kháng đang dở (Fix S5) — kiểm tra ngay sau khi đăng nhập, TỰ ĐỘNG
+  // đưa thẳng vào lại trận (khác bài thi chỉ hiện banner hỏi) vì Battle realtime nhạy
+  // thời gian hơn. 'live' = trận còn đang diễn ra (còn giờ) -> vào lại màn thi đấu;
+  // 'ended' = trận đã kết thúc trong lúc rời app -> hiện thẳng màn kết quả.
+  const [battleResume, setBattleResume] = useState<BattleResumeState | null>(null);
   // Thông báo
   const [unreadCount, setUnreadCount]   = useState(0);
   const [notifOpen, setNotifOpen]       = useState(false);
@@ -92,6 +106,7 @@ export default function App() {
         setSessionToken('');
         setProfile(null);
         setResumeAlert(null);
+        setBattleResume(null);
         setUnreadCount(0);
         prevUnreadRef.current = -1;
         return;
@@ -110,6 +125,36 @@ export default function App() {
           // để hiển thị thông báo ngay trên ProfilePage (không cần vào trang thi trước)
           const { session: active } = await getActiveExamSession(result.token).catch(() => ({ session: null }));
           if (active) setResumeAlert(active);
+
+          // Fix S5: kiểm tra trận Thi đấu đối kháng đang dở — KHÁC bài thi (tự động
+          // vào thẳng lại trận, không chỉ hiện banner hỏi), vì Battle realtime nhạy
+          // thời gian hơn nhiều so với bài thi (câu hỏi tự hết giờ sau 20s).
+          const battleCheck = await getActiveBattleMatch(result.token).catch(() => ({ active: false, match: null }));
+          if (battleCheck.active && battleCheck.match) {
+            setBattleResume({ kind: 'live', snapshot: battleCheck.match });
+            setScreen('battle');
+            return;
+          }
+          // Không còn trận nào đang sống trên backend — kiểm tra xem có phải trận
+          // VỪA kết thúc trong lúc mình rời app không (nhớ qua localStorage từ lần
+          // chơi trước), để hiện thẳng màn kết quả thay vì im lặng bỏ qua.
+          const rememberedMatchId = localStorage.getItem(BATTLE_ACTIVE_MATCH_KEY);
+          if (rememberedMatchId) {
+            localStorage.removeItem(BATTLE_ACTIVE_MATCH_KEY);
+            try {
+              const [hist, cfg] = await Promise.all([
+                getBattleHistory(result.token, 20, 0),
+                getBattleConfig(result.token),
+              ]);
+              const item = hist.items.find((it) => it.id === rememberedMatchId);
+              if (item) {
+                setBattleResume({ kind: 'ended', item, currentPoints: cfg.currentPoints });
+                setScreen('battle');
+                return;
+              }
+            } catch { /* bỏ qua — không chặn luồng đăng nhập bình thường */ }
+          }
+
           setScreen('profile');
         }
       } catch (err) {
@@ -330,7 +375,10 @@ export default function App() {
           sessionToken={sessionToken}
           onBack={() => setScreen('profile')}
           onHistory={() => setScreen('battleHistory')}
+          onProfileUpdate={setProfile}
           onError={handleApiError}
+          initialResume={battleResume}
+          onResumeClear={() => setBattleResume(null)}
         />
       )}
       {screen === 'battleHistory' && profile && (
@@ -6135,25 +6183,41 @@ interface BattleQuestionState {
 }
 
 function BattlePage({
-  profile, sessionToken, onBack, onHistory, onError,
+  profile, sessionToken, onBack, onHistory, onProfileUpdate, onError, initialResume, onResumeClear,
 }: {
   profile: UserProfile;
   sessionToken: string;
   onBack: () => void;
   onHistory: () => void;
+  onProfileUpdate: (p: UserProfile) => void;
   onError: (e: unknown) => void;
+  /** Fix S5: nếu khác null, đưa thẳng vào lại đúng trận đang dở (hoặc màn kết quả
+   * nếu trận vừa kết thúc trong lúc rời app) thay vì luôn bắt đầu từ màn setup. */
+  initialResume?: BattleResumeState | null;
+  onResumeClear?: () => void;
 }) {
   const socketRef = useRef<BattleSocket | null>(null);
-  const [phase, setPhase] = useState<BattlePhase>('setup');
+  const [phase, setPhase] = useState<BattlePhase>(() => {
+    if (initialResume?.kind === 'live') return 'play';
+    if (initialResume?.kind === 'ended') return 'result';
+    return 'setup';
+  });
   const [socketReady, setSocketReady] = useState(false);
   const [socketError, setSocketError] = useState('');
+  // Cac loi lien quan den "Vao phong bang ma" (BATTLE_CANNOT_JOIN_OWN_ROOM,
+  // BATTLE_ROOM_NOT_FOUND) hien rieng bang modal (thay vi banner chung o dau
+  // trang) theo yeu cau S5 - de nguoi dung KHONG bo sot, vi day deu la thao
+  // tac go/dan ma de nham lan (ma sai, ma cua chinh minh...).
+  const [roomErrorModal, setRoomErrorModal] = useState<{ title: string; body: string } | null>(null);
 
   // Cấu hình (mức cược hợp lệ + số dư điểm)
   const [config, setConfig] = useState<BattleConfig | null>(null);
   const [configError, setConfigError] = useState('');
 
-  // Màn "vào trận" (TASK 11)
-  const defaultSubject = profile.subjects[0]?.id ?? SUBJECTS[0]!.id;
+  // Màn "vào trận" (TASK 11) — chỉ mặc định vào môn học viên ĐÃ chọn ở trang cá
+  // nhân (profile.subjects); KHÔNG fallback sang SUBJECTS[0] toàn cục, vì môn
+  // đó có thể không nằm trong danh sách môn học viên đang ôn.
+  const defaultSubject = profile.subjects[0]?.id ?? '';
   const [subject, setSubject] = useState(defaultSubject);
   const [stake, setStake] = useState<number | null>(null);
   const [roomCodeInput, setRoomCodeInput] = useState('');
@@ -6164,16 +6228,74 @@ function BattlePage({
   const [criteria, setCriteria] = useState<BattleQueueStatusPayload['currentCriteria']>('STRICT');
   const [myRoomCode, setMyRoomCode] = useState<string | null>(null);
 
-  // Màn "thi đấu" (TASK 13)
-  const [match, setMatch] = useState<BattleMatchFoundPayload | null>(null);
-  const [question, setQuestion] = useState<BattleQuestionState | null>(null);
-  const [myScore, setMyScore] = useState(0);
-  const [opponentScore, setOpponentScore] = useState(0);
-  const [opponentDisconnected, setOpponentDisconnected] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(20);
+  // Màn "thi đấu" (TASK 13) — khởi tạo optimistic từ initialResume (Fix S5) nếu có,
+  // sẽ được dữ liệu THẬT từ server ghi đè gần như ngay lập tức qua socket (reconnect
+  // tự resend câu hỏi/điểm số) - chỉ để tránh "nháy" màn hình trống/0 điểm lúc đầu.
+  const [match, setMatch] = useState<BattleMatchFoundPayload | null>(() => {
+    if (initialResume?.kind === 'live') {
+      const s = initialResume.snapshot;
+      return { matchId: s.matchId, subject: s.subject, stake: s.stake, opponentName: s.opponentName, isBotMatch: s.isBotMatch };
+    }
+    if (initialResume?.kind === 'ended') {
+      const it = initialResume.item;
+      return { matchId: it.id, subject: it.subject, stake: it.stake, opponentName: it.opponentName ?? 'Người chơi', isBotMatch: it.isBotMatch };
+    }
+    return null;
+  });
+  const [question, setQuestion] = useState<BattleQuestionState | null>(() => {
+    const q = initialResume?.kind === 'live' ? initialResume.snapshot.question : null;
+    if (!q) return null;
+    return {
+      index: q.questionIndex, text: q.questionText, options: q.options,
+      receivedAt: Date.now(), selected: null, correctOption: null, myPointsEarned: null,
+    };
+  });
+  const [myScore, setMyScore] = useState(() => {
+    if (initialResume?.kind === 'live') return initialResume.snapshot.myScore;
+    if (initialResume?.kind === 'ended') return initialResume.item.myScore;
+    return 0;
+  });
+  const [opponentScore, setOpponentScore] = useState(() => {
+    if (initialResume?.kind === 'live') return initialResume.snapshot.opponentScore;
+    if (initialResume?.kind === 'ended') return initialResume.item.opponentScore;
+    return 0;
+  });
+  const [opponentDisconnected, setOpponentDisconnected] = useState(
+    () => initialResume?.kind === 'live' && initialResume.snapshot.opponentDisconnected,
+  );
+  // Dem nguoc so giay con lai cua grace period mat ket noi - fix S5: truoc day banner
+  // chi hien text tinh "cho toi da 30 giay", KHONG co dong ho dem nguoc thuc, khien
+  // nguoi choi khong biet dang o giay thu may -> cam giac "dung hinh" du server da
+  // xu ly tuc thi (da do bang timestamp, do tre server = 0ms).
+  const [disconnectSecondsLeft, setDisconnectSecondsLeft] = useState(
+    () => (initialResume?.kind === 'live' && initialResume.snapshot.opponentDisconnected ? 30 : 0),
+  );
+  const [timeLeft, setTimeLeft] = useState(
+    () => (initialResume?.kind === 'live' ? initialResume.snapshot.question?.secondsLeft ?? 20 : 20),
+  );
 
   // Màn "kết quả" (TASK 14)
-  const [result, setResult] = useState<BattleMatchEndedPayload | null>(null);
+  const [result, setResult] = useState<BattleMatchEndedPayload | null>(() => {
+    if (initialResume?.kind !== 'ended') return null;
+    const it = initialResume.item;
+    return {
+      result: it.result, myScore: it.myScore, opponentScore: it.opponentScore,
+      pointsChange: it.pointsChange, newBalance: initialResume.currentPoints,
+    };
+  });
+
+  // Fix S5: tieu thu `initialResume` DUY NHAT 1 LAN luc mount - bao App() xoa state
+  // nay di de lan sau vao lai man Battle (VD bam "Chơi lại"/"Về trang chủ" roi vao
+  // lai) KHONG bi ap dung lai gia tri cu.
+  useEffect(() => {
+    if (initialResume) onResumeClear?.();
+    // Dam bao marker localStorage van dung (phong truong hop bi mat vi ly do nao do)
+    // khi vao lai dung 1 tran con song.
+    if (initialResume?.kind === 'live') {
+      localStorage.setItem(BATTLE_ACTIVE_MATCH_KEY, initialResume.snapshot.matchId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Tải cấu hình (mức cược + số dư điểm) — REST, KHÔNG qua socket
   useEffect(() => {
@@ -6226,10 +6348,14 @@ function BattlePage({
       setMyScore(0);
       setOpponentScore(0);
       setOpponentDisconnected(false);
+      setDisconnectSecondsLeft(0);
       setMyRoomCode(null);
       setQuestion(null);
       setSetupBusy(false);
       setPhase('play');
+      // Fix S5: nhớ matchId đang chơi để phát hiện "trận vừa kết thúc trong lúc
+      // rời app" nếu tải lại trang mà không còn thấy trận này "sống" nữa.
+      localStorage.setItem(BATTLE_ACTIVE_MATCH_KEY, payload.matchId);
     });
 
     socket.on('battle:question', (payload) => {
@@ -6244,10 +6370,18 @@ function BattlePage({
       });
       setTimeLeft(20);
       setOpponentDisconnected(false);
+      setDisconnectSecondsLeft(0);
     });
 
     socket.on('battle:opponent-progress', (payload) => {
       setOpponentScore(payload.opponentScore);
+      // Fix S5: day la bang chung doi thu dang HOAT DONG (vua tra loi CAU HIEN TAI,
+      // HOAC vua ket noi lai - ca 2 truong hop server deu ban su kien nay ngay lap
+      // tuc). Truoc day banner "doi thu mat ket noi" CHI tat khi co CAU HOI MOI, nen
+      // neu doi thu ket noi lai nhung chua kip tra loi/cau hoi chua doi, nguoi con lai
+      // van thay banner "dung hinh" du doi thu da quay lai that.
+      setOpponentDisconnected(false);
+      setDisconnectSecondsLeft(0);
     });
 
     socket.on('battle:question-result', (payload) => {
@@ -6257,18 +6391,43 @@ function BattlePage({
         : q));
     });
 
-    socket.on('battle:opponent-disconnected', () => {
+    socket.on('battle:opponent-disconnected', (payload) => {
       setOpponentDisconnected(true);
+      // Fix S5: dong ho dem nguoc THAT (khop dung gracePeriodSeconds server gui ve,
+      // hien tai luon la 30) - truoc day banner chi ghi tinh "cho toi da 30 giay",
+      // khong ro dang o giay thu may, de gay cam giac "dung hinh"/cho qua lau du
+      // server xu ly tuc thi (da do bang timestamp: do tre server = 0ms).
+      setDisconnectSecondsLeft(payload.gracePeriodSeconds);
     });
 
     socket.on('battle:match-ended', (payload) => {
       setResult(payload);
       setPhase('result');
+      // Lam moi profile.points (hien thi o trang ca nhan) - bo sung fix S5:
+      // BattlePage truoc day KHONG lam viec nay (khac PracticePage/ExamPage
+      // da co san onProfileUpdate), khien "Số dư điểm" o trang ca nhan hien
+      // SAI (van la so du TRUOC tran) sau khi thang/thua PvP.
+      void getMyProfile(sessionToken).then(onProfileUpdate).catch(() => { /* bo qua, khong chan UI */ });
+      // Tran da ket thuc binh thuong (khong phai do rời app) - xoa marker resume,
+      // khong con gi de "vua ket thuc trong luc roi app" nua.
+      localStorage.removeItem(BATTLE_ACTIVE_MATCH_KEY);
     });
 
     socket.on('battle:error', (payload) => {
       setSetupBusy(false);
-      setSocketError(payload.message);
+      if (payload.code === 'BATTLE_CANNOT_JOIN_OWN_ROOM') {
+        setRoomErrorModal({
+          title: 'Không thể vào phòng của chính bạn',
+          body: 'Mã này do chính bạn tạo ra — hãy gửi mã cho bạn bè để họ nhập, bạn không thể tự vào phòng của mình.',
+        });
+      } else if (payload.code === 'BATTLE_ROOM_NOT_FOUND') {
+        setRoomErrorModal({
+          title: 'Không tìm thấy phòng',
+          body: 'Mã phòng này không tồn tại, đã bị huỷ, hoặc người tạo phòng đã mất kết nối. Kiểm tra lại mã hoặc nhờ bạn bè tạo phòng mới.',
+        });
+      } else {
+        setSocketError(payload.message);
+      }
     });
 
     socket.connect();
@@ -6290,6 +6449,16 @@ function BattlePage({
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, question?.index, question?.selected]);
+
+  // Dem nguoc so giay con lai khi doi thu mat ket noi - CHI de hien thi (server tu
+  // quyet dinh xu thang ky thuat sau dung 30s that, xem BATTLE_DISCONNECT_GRACE_MS).
+  useEffect(() => {
+    if (!opponentDisconnected || disconnectSecondsLeft <= 0) return;
+    const id = setInterval(() => {
+      setDisconnectSecondsLeft((s) => (s <= 1 ? 0 : s - 1));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [opponentDisconnected, disconnectSecondsLeft]);
 
   function handleFindMatch() {
     if (!stake || !socketReady) return;
@@ -6314,7 +6483,12 @@ function BattlePage({
   }
 
   function handleCancelQueue() {
-    if (!myRoomCode) socketRef.current?.emit('battle:cancel-queue');
+    // Luon bao server huy — dung cho ca 2 truong hop "dang trong hang doi thuong" LAN
+    // "dang cho ban be vao phong rieng vua tao" (server tu xu ly ca 2, xem
+    // handleCancelQueue trong battle.engine.service.ts). Truoc day chi emit khi KHONG
+    // co myRoomCode -> bam "Huy" luc dang cho phong rieng khong xoa phong tren server,
+    // de lai phong "mo coi" van co the bi nguoi khac vao va tru diem ngoai y muon.
+    socketRef.current?.emit('battle:cancel-queue');
     setPhase('setup');
     setMyRoomCode(null);
     setSetupBusy(false);
@@ -6359,8 +6533,21 @@ function BattlePage({
         </div>
       )}
 
+      {roomErrorModal && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" onClick={() => setRoomErrorModal(null)}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 400 }}>
+            <h3 className="modal-title">{roomErrorModal.title}</h3>
+            <p className="modal-body">{roomErrorModal.body}</p>
+            <div className="modal-actions">
+              <button className="btn-primary" onClick={() => setRoomErrorModal(null)}>Đã hiểu</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {phase === 'setup' && (
         <BattleSetupPhase
+          subjects={profile.subjects}
           subject={subject}
           onSubjectChange={setSubject}
           stake={stake}
@@ -6393,6 +6580,7 @@ function BattlePage({
           myScore={myScore}
           opponentScore={opponentScore}
           opponentDisconnected={opponentDisconnected}
+          disconnectSecondsLeft={disconnectSecondsLeft}
           timeLeft={timeLeft}
           onSelectOption={handleSelectOption}
         />
@@ -6413,9 +6601,10 @@ function BattlePage({
 // ─── BattleSetupPhase (TASK 11 — màn hình vào trận) ─────────────────────────
 
 function BattleSetupPhase({
-  subject, onSubjectChange, stake, onStakeChange, config, configError,
+  subjects, subject, onSubjectChange, stake, onStakeChange, config, configError,
   roomCodeInput, onRoomCodeInputChange, busy, socketReady, onFindMatch, onCreateRoom, onJoinRoom,
 }: {
+  subjects: { id: string; name: string }[];
   subject: string;
   onSubjectChange: (id: string) => void;
   stake: number | null;
@@ -6431,6 +6620,7 @@ function BattleSetupPhase({
   onJoinRoom: () => void;
 }) {
   const notEnoughPoints = !!(config && stake && config.currentPoints < stake);
+  const noSubjectChosen = subjects.length === 0;
 
   return (
     <div>
@@ -6445,20 +6635,29 @@ function BattleSetupPhase({
 
       <section className="card-section">
         <h3 className="section-title">Chọn môn thi đấu</h3>
-        <div className="practice-subjects">
-          {SUBJECTS.map((s) => (
-            <button
-              key={s.id}
-              className="practice-subject-card"
-              style={subject === s.id ? { borderColor: 'var(--accent,#4f8ef7)', borderWidth: 2 } : undefined}
-              onClick={() => onSubjectChange(s.id)}
-            >
-              <span className="ps-emoji">{s.emoji}</span>
-              <div className="ps-info"><span className="ps-name">{s.name}</span></div>
-              {subject === s.id && <span className="ps-arrow">✓</span>}
-            </button>
-          ))}
-        </div>
+        {noSubjectChosen ? (
+          <p className="empty">
+            Bạn chưa chọn môn học nào ở trang cá nhân — vào "Đổi môn" để chọn môn trước khi thi đấu.
+          </p>
+        ) : (
+          <div className="practice-subjects">
+            {subjects.map((s) => {
+              const info = SUBJECTS_MAP[s.id] ?? { name: s.name, emoji: '📘' };
+              return (
+                <button
+                  key={s.id}
+                  className="practice-subject-card"
+                  style={subject === s.id ? { borderColor: 'var(--accent,#4f8ef7)', borderWidth: 2 } : undefined}
+                  onClick={() => onSubjectChange(s.id)}
+                >
+                  <span className="ps-emoji">{info.emoji}</span>
+                  <div className="ps-info"><span className="ps-name">{info.name}</span></div>
+                  {subject === s.id && <span className="ps-arrow">✓</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       <section className="card-section">
@@ -6487,14 +6686,14 @@ function BattleSetupPhase({
       <div style={{ padding: '0 1.25rem .75rem', display: 'flex', flexDirection: 'column', gap: '.625rem' }}>
         <button
           className="btn-primary btn-lg"
-          disabled={busy || !socketReady || !stake || notEnoughPoints}
+          disabled={busy || !socketReady || !stake || notEnoughPoints || noSubjectChosen}
           onClick={onFindMatch}
         >
           {busy ? <Spinner /> : null} Tìm trận 🔍
         </button>
         <button
           className="btn-secondary btn-lg"
-          disabled={busy || !socketReady || !stake || notEnoughPoints}
+          disabled={busy || !socketReady || !stake || notEnoughPoints || noSubjectChosen}
           onClick={onCreateRoom}
         >
           Tạo phòng mời bạn 👥
@@ -6552,8 +6751,10 @@ function BattleQueuePhase({
         <>
           <p style={{ margin: '1rem 0 .25rem', fontWeight: 600 }}>Đang tìm đối thủ… {waitingSeconds}s</p>
           <p style={{ color: 'var(--muted)', fontSize: '.85rem' }}>{BATTLE_QUEUE_CRITERIA_LABEL[criteria]}</p>
+          {/* An hoan toan danh tinh bot khoi nguoi choi (quyet dinh san pham) - KHONG con
+              bao truoc "se ghep voi may" sau 30s, tranh lo thong tin truoc khi vao tran. */}
           <p style={{ color: 'var(--muted)', fontSize: '.78rem', marginTop: '.5rem' }}>
-            Sau 30 giây không tìm được đối thủ, hệ thống sẽ tự ghép bạn với máy.
+            Hệ thống sẽ tự động tìm đối thủ phù hợp nhất cho bạn.
           </p>
         </>
       )}
@@ -6567,13 +6768,14 @@ function BattleQueuePhase({
 // ─── BattlePlayPhase (TASK 13 — màn hình thi đấu realtime) ──────────────────
 
 function BattlePlayPhase({
-  match, question, myScore, opponentScore, opponentDisconnected, timeLeft, onSelectOption,
+  match, question, myScore, opponentScore, opponentDisconnected, disconnectSecondsLeft, timeLeft, onSelectOption,
 }: {
   match: BattleMatchFoundPayload;
   question: BattleQuestionState | null;
   myScore: number;
   opponentScore: number;
   opponentDisconnected: boolean;
+  disconnectSecondsLeft: number;
   timeLeft: number;
   onSelectOption: (idx: number) => void;
 }) {
@@ -6588,12 +6790,21 @@ function BattlePlayPhase({
 
       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '.5rem 1.25rem', fontSize: '.9rem' }}>
         <span>🙂 Bạn: <strong>{myScore}</strong></span>
-        <span>{match.isBotMatch ? '🤖' : '🧑'} {match.opponentName}: <strong>{opponentScore}</strong></span>
+        {/* An hoan toan danh tinh bot khoi nguoi choi (quyet dinh san pham) - LUON hien
+            icon nguoi that, KHONG con phan biet theo match.isBotMatch nua. */}
+        <span>🧑 {match.opponentName}: <strong>{opponentScore}</strong></span>
       </div>
 
       {opponentDisconnected && (
         <div className="report-error" style={{ margin: '0 1.25rem .5rem' }}>
-          ⚠️ Đối thủ mất kết nối, đang chờ tối đa 30 giây để họ quay lại…
+          {/* Fix S5: dong ho dem nguoc THAT thay vi text tinh "cho toi da 30 giay" -
+              giup nguoi choi biet ro dang o giay thu may, tranh cam giac "dung hinh".
+              Khi ve 0 (dong ho client co the lech vai tram ms so voi server) - BO SO,
+              khong hien "cho 0s" (doc vo nghia). KHONG lap lai/reset 30s moi vi server
+              CHI co DUNG 1 lan 30 giay that (BATTLE_DISCONNECT_GRACE_MS) - het thoi
+              gian nay server tu xu thang/huy tran, khong gia han them. */}
+          ⚠️ Đối thủ mất kết nối
+          {disconnectSecondsLeft > 0 ? `, đang chờ ${disconnectSecondsLeft}s để họ quay lại…` : ', đang xử lý…'}
         </div>
       )}
 
@@ -6625,14 +6836,22 @@ function BattlePlayPhase({
               );
             })}
           </div>
-          {question.selected !== null && question.correctOption === null && (
-            <p style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.85rem' }}>
-              Đã gửi đáp án, đang chờ đối thủ…
-            </p>
-          )}
           {question.myPointsEarned !== null && (
             <p style={{ textAlign: 'center', fontWeight: 600 }}>
               +{question.myPointsEarned} điểm
+            </p>
+          )}
+          {/* Sua theo yeu cau S5: TRUOC day thong bao "dang cho doi thu" bien mat NGAY
+              khi minh nhan duoc ket qua cham diem cua CHINH MINH (correctOption khac
+              null) - nhung cau hoi CHUA CHAC da chuyen tiep, vi server van cho doi thu
+              tra loi (hoac het gio) roi moi advance. Gap nay khien man hinh nhu "dung
+              hinh" khong ro ly do. Gio hien thong bao LIEN TUC tu luc chon dap an cho
+              toi khi cau hoi thuc su chuyen (question.selected reset ve null). */}
+          {question.selected !== null && (
+            <p style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.85rem' }}>
+              {question.correctOption === null
+                ? 'Đã gửi đáp án, đang chấm điểm…'
+                : 'Đang chờ đối thủ trả lời câu này…'}
             </p>
           )}
         </>
@@ -6705,12 +6924,20 @@ function BattleHistoryPage({
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  async function loadHistory(): Promise<void> {
     setLoading(true);
-    void getBattleHistory(sessionToken, BATTLE_HISTORY_PAGE_SIZE, page * BATTLE_HISTORY_PAGE_SIZE)
-      .then((data) => { setHistory(data); setLoading(false); })
-      .catch((err) => { onError(err); setLoading(false); });
-  }, [sessionToken, page]); // eslint-disable-line react-hooks/exhaustive-deps
+    try {
+      const data = await getBattleHistory(sessionToken, BATTLE_HISTORY_PAGE_SIZE, page * BATTLE_HISTORY_PAGE_SIZE);
+      setHistory(data);
+    } catch (err) {
+      onError(err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- loadHistory() goi API va setState de dong bo voi page (cung pattern voi AdminSubmissionsPage.load())
+  useEffect(() => { void loadHistory(); }, [sessionToken, page]);
 
   const totalPages = history ? Math.ceil(history.total / BATTLE_HISTORY_PAGE_SIZE) : 0;
 
@@ -6744,7 +6971,10 @@ function BattleHistoryPage({
                   {history.items.map((item: BattleHistoryItem) => (
                     <tr key={item.id}>
                       <td>{SUBJECTS_MAP[item.subject]?.name ?? item.subject}</td>
-                      <td>{item.isBotMatch ? '🤖 Máy' : (item.opponentName ?? 'Người chơi')}</td>
+                      {/* An hoan toan danh tinh bot khoi nguoi choi (quyet dinh san pham) -
+                          KHONG con phan biet theo item.isBotMatch, luon hien opponentName
+                          (backend da tra ve ten gia GIONG NGUOI THAT cho tran voi bot). */}
+                      <td>{item.opponentName ?? 'Người chơi'}</td>
                       <td>{item.myScore} - {item.opponentScore}</td>
                       <td>
                         <span className={`exam-score-badge ${BATTLE_HISTORY_RESULT_LABEL[item.result].cls}`}>

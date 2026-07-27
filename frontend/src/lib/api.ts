@@ -1416,3 +1416,32 @@ export async function getBattleHistory(
   return request<PaginatedBattleHistory>(`/api/battle/history?${params.toString()}`, sessionToken);
 }
 
+/** Snapshot 1 trận ĐANG DIỄN RA (nếu có) — dùng để tự động đưa người dùng vào lại
+ * đúng trận sau khi tải lại trang/đăng nhập lại (Fix S5). */
+export interface ActiveBattleMatchSnapshot {
+  matchId: string;
+  subject: string;
+  stake: number;
+  opponentName: string;
+  isBotMatch: boolean;
+  myScore: number;
+  opponentScore: number;
+  opponentDisconnected: boolean;
+  question: {
+    questionIndex: number;
+    questionText: string;
+    options: [string, string, string, string];
+    secondsLeft: number;
+  } | null;
+}
+
+export interface ActiveBattleMatchResponse {
+  active: boolean;
+  match: ActiveBattleMatchSnapshot | null;
+}
+
+/** GET /api/battle/active — trận đang diễn ra của user hiện tại (nếu có) */
+export async function getActiveBattleMatch(sessionToken: string): Promise<ActiveBattleMatchResponse> {
+  return request<ActiveBattleMatchResponse>('/api/battle/active', sessionToken);
+}
+

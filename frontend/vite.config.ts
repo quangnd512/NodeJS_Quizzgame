@@ -5,6 +5,10 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
+    // Lang nghe ca IPv4 (127.0.0.1) lan IPv6 (::1) - mac dinh Vite chi bind
+    // "localhost" (co the chi phan giai IPv6 tren mot so may), khien trinh
+    // duyet/OS uu tien IPv4 khong ket noi duoc ("khong vao duoc").
+    host: true,
     // Proxy cac request /api sang backend Express de tranh loi CORS khi dev
     proxy: {
       '/api': {
