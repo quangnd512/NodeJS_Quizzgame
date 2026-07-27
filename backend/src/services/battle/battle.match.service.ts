@@ -19,18 +19,28 @@
 //       + Thua: KHONG duoc gi them (da mat dung `stake` tu buoc khoa cuoc).
 //       + Huy tran (ca 2 mat ket noi): +stake cho MOI nguoi that da tham gia
 //         (hoan toan bo, khong tinh thang/thua).
+//
+// ATOMICITY (sua boi S3): moi thao tac tra/khoa diem O TREN deu di kem 1 thay doi
+// trang thai BattleMatch tuong ung (WAITING->IN_PROGRESS luc khoa cuoc, IN_PROGRESS->
+// COMPLETED/ABANDONED luc tra) - CA HAI nam trong CUNG 1 prisma.$transaction (dung
+// deductPointsInTx/addPointsInTx, giong pattern ExamService.startExam/submitExam) de
+// khong bao gio xay ra tinh trang "da tra/tru diem nhung chua kip cap nhat trang thai
+// tran" (hoac nguoc lai) neu co loi giua chung. Xem chi tiet trong tung ham.
 // ============================================================================
 import { prisma } from '../../lib/prisma.js';
 import { pointsService } from '../points/points.service.js';
+import { OptimisticLockError, OptimisticLockRetryableError, PointsInsufficientError } from '../points/points.errors.js';
+import { PointReason } from '../points/points.types.js';
 import { isValidSubjectId } from '../users/users.types.js';
 import {
   BattleInsufficientPointsError,
   BattleInvalidStakeError,
   BattleInvalidSubjectError,
   BattleMatchNotFoundError,
+  BattleMatchNotInProgressError,
   BattleNotEnoughQuestionsError,
 } from './battle.errors.js';
-import { shuffleOptionsWithAnswer } from './battle.utils.js';
+import { pickBotDisplayName, shuffleOptionsWithAnswer } from './battle.utils.js';
 import {
   BATTLE_QUESTIONS_PER_MATCH,
   BATTLE_STAKES,
@@ -44,6 +54,19 @@ const QUESTION_POOL_SIZE = 200;
 
 /** So dong lich su toi da tra ve moi trang (chan client keo qua nhieu cung luc). */
 const MAX_HISTORY_LIMIT = 50;
+
+/**
+ * So lan retry toi da khi gap optimistic lock conflict luc khoa/tra cuoc PvP
+ * (cung gia tri + cung ly do voi MAX_EXAM_RETRY trong exam.service.ts — xem
+ * PointsService.deductPointsInTx/addPointsInTx).
+ */
+const MAX_BATTLE_RETRY = 10;
+
+/** Delay voi jitter ngan de giam xac suat "thundering herd" khi retry (cung pattern voi exam.service.ts). */
+function delayJitter(): Promise<void> {
+  const ms = 10 + Math.random() * 40;
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export interface BattleLiveQuestion {
   questionBankId: string;
@@ -141,56 +164,70 @@ export interface CreateAndStartMatchParams {
  * Tao 1 tran dau moi trong DB + khoa cuoc (deductPoints) cua (cac) nguoi choi that,
  * dong thoi chon san bo 10 cau hoi (da xao dap an) de engine dung ngay khi bat dau thi dau.
  *
- * Neu khoa cuoc that bai giua chung (vi du diem thay doi dung luc nay - rat hiem vi da
- * kiem tra truoc khi vao hang doi) -> hoan lai phan da tru (neu co) va danh dau tran
- * ABANDONED, nem loi ra ngoai de caller bao loi cho client.
+ * QUAN TRONG (sua boi S3 — xem CODE_REVIEW_LOG.md): tao tran + khoa cuoc CA HAI nguoi
+ * choi nam TRONG CUNG 1 `prisma.$transaction` (dung `deductPointsInTx`, giong het pattern
+ * `ExamService.startExam`) thay vi 2 buoc rieng + "hoan cuoc thu cong" nhu ban truoc. Neu
+ * khoa cuoc that bai giua chung (vi du diem thay doi dung luc nay - rat hiem vi da kiem
+ * tra truoc khi vao hang doi), Postgres TU DONG rollback toan bo (ke ca dong BattleMatch
+ * vua tao) — khong con "tran ma" WAITING mo coi, cung khong con rui ro "hoan cuoc thu cong"
+ * tu no that bai giua chung lam mat diem oan cua nguoi choi.
+ *
+ * @throws BattleInsufficientPointsError neu 1 trong 2 nguoi khong (con) du diem luc nay
+ * @throws BattleNotEnoughQuestionsError neu khong du 10 cau MCQ_4 active cho mon nay
  */
 export async function createAndStartMatch(
   params: CreateAndStartMatchParams,
 ): Promise<{ matchId: string; questions: BattleLiveQuestion[] }> {
   const questions = await selectMatchQuestions(params.subject);
 
-  const match = await prisma.battleMatch.create({
-    data: {
-      subject: params.subject,
-      stake: params.stake,
-      player1Id: params.player1Id,
-      player2Id: params.player2Id,
-      isBotMatch: params.isBotMatch,
-      status: 'WAITING',
-      roomCode: params.roomCode ?? null,
-    },
-  });
-
-  let player1Locked = false;
-  try {
-    await pointsService.deductPoints(params.player1Id, params.stake, 'PVP_LOCK_BET', { matchId: match.id });
-    player1Locked = true;
-
-    if (!params.isBotMatch && params.player2Id) {
-      await pointsService.deductPoints(params.player2Id, params.stake, 'PVP_LOCK_BET', { matchId: match.id });
-    }
-  } catch (err) {
-    // Rollback phan da tru (neu co) va huy tran vua tao - khong de "tran ma" khong ai tra cuoc.
-    if (player1Locked) {
-      await pointsService
-        .addPoints(params.player1Id, params.stake, 'PVP_CANCELLED_REFUND', {
-          matchId: match.id,
-          reason: 'start_failed',
-        })
-        .catch((refundErr: unknown) => {
-          console.error('[battle.match.service] Loi hoan cuoc sau khi tao tran that bai:', refundErr);
+  for (let attempt = 1; attempt <= MAX_BATTLE_RETRY; attempt++) {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        const match = await tx.battleMatch.create({
+          data: {
+            subject: params.subject,
+            stake: params.stake,
+            player1Id: params.player1Id,
+            player2Id: params.player2Id,
+            isBotMatch: params.isBotMatch,
+            status: 'WAITING',
+            roomCode: params.roomCode ?? null,
+          },
         });
+
+        try {
+          await pointsService.deductPointsInTx(tx, params.player1Id, params.stake, PointReason.PVP_LOCK_BET, {
+            matchId: match.id,
+          });
+          if (!params.isBotMatch && params.player2Id) {
+            await pointsService.deductPointsInTx(tx, params.player2Id, params.stake, PointReason.PVP_LOCK_BET, {
+              matchId: match.id,
+            });
+          }
+        } catch (err) {
+          if (err instanceof PointsInsufficientError) {
+            throw new BattleInsufficientPointsError(err.required, err.available);
+          }
+          throw err;
+        }
+
+        await tx.battleMatch.update({ where: { id: match.id }, data: { status: 'IN_PROGRESS' } });
+
+        return { matchId: match.id, questions };
+      });
+    } catch (err) {
+      if (err instanceof OptimisticLockRetryableError) {
+        if (attempt === MAX_BATTLE_RETRY) {
+          throw new OptimisticLockError(`battle-start:${params.player1Id}`, MAX_BATTLE_RETRY);
+        }
+        await delayJitter();
+        continue;
+      }
+      throw err;
     }
-    await prisma.battleMatch
-      .update({ where: { id: match.id }, data: { status: 'ABANDONED', completedAt: new Date() } })
-      .catch(() => {});
-    throw err;
   }
 
-  await prisma.battleMatch.update({ where: { id: match.id }, data: { status: 'IN_PROGRESS' } });
-
-  return { matchId: match.id, questions };
+  throw new OptimisticLockError(`battle-start:${params.player1Id}`, MAX_BATTLE_RETRY);
 }
 
 /** Ghi 1 dong log cau tra loi (playerId = null neu la bot). */
@@ -234,60 +271,102 @@ export interface SettleMatchResult {
 /**
  * Thanh toan diem + cap nhat trang thai cuoi cung cho 1 tran dau. Xem giai thich
  * thuat toan "khoa cuoc roi chia lai" o dau file.
+ *
+ * QUAN TRONG (sua boi S3 — xem CODE_REVIEW_LOG.md): TOAN BO viec tra diem
+ * (addPointsInTx) + "chot" trang thai tran (status COMPLETED/ABANDONED) nam
+ * TRONG CUNG 1 `prisma.$transaction`, giong het pattern `closeResult` trong
+ * `ExamService.submitExam`. Ban truoc goi `pointsService.addPoints` (tu mo
+ * transaction rieng) RỒI MOI `prisma.battleMatch.update` (transaction khac) —
+ * neu buoc thu 2 that bai giua chung (mat ket noi DB, process crash...), diem
+ * DA duoc tra nhung tran van hien "IN_PROGRESS" mai mai (khong xuat hien trong
+ * lich su, khong the doi soat). Buoc "chot" cuoi cung dung `updateMany` VOI
+ * DIEU KIEN `status: 'IN_PROGRESS'` con dong vai tro 1 CAS (compare-and-swap):
+ * neu ham nay vo tinh duoc goi 2 lan cho CUNG 1 tran (engine dung co `live.ended`
+ * chan truoc, day la lop bao ve thu 2 o tang DB — vd. phong khi sau nay scale
+ * nhieu instance backend), lan thu 2 se nhan count=0 va NEM LOI, khien Postgres
+ * rollback TOAN BO transaction do (ke ca cac addPointsInTx vua goi ben tren) —
+ * khong bao gio tra diem 2 lan cho cung 1 tran.
+ *
+ * @throws BattleMatchNotInProgressError neu tran khong (con) o trang thai
+ *         IN_PROGRESS luc "chot" (da duoc settle boi 1 lan goi khac truoc do)
  */
 export async function settleMatch(params: SettleMatchParams): Promise<SettleMatchResult> {
   const { matchId, player1Id, player2Id, isBotMatch, stake, player1Score, player2Score, outcome } = params;
 
-  if (outcome.type === 'CANCELLED') {
-    await pointsService.addPoints(player1Id, stake, 'PVP_CANCELLED_REFUND', { matchId });
-    if (!isBotMatch && player2Id) {
-      await pointsService.addPoints(player2Id, stake, 'PVP_CANCELLED_REFUND', { matchId });
-    }
-    await prisma.battleMatch.update({
-      where: { id: matchId },
-      data: { status: 'ABANDONED', winnerId: null, player1Score, player2Score, completedAt: new Date() },
-    });
-    return { winnerId: null, status: 'ABANDONED' };
-  }
+  for (let attempt = 1; attempt <= MAX_BATTLE_RETRY; attempt++) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      return await prisma.$transaction(async (tx) => {
+        let winnerId: string | null = null;
+        let finalStatus: 'COMPLETED' | 'ABANDONED' = 'COMPLETED';
 
-  let winnerId: string | null = null;
+        if (outcome.type === 'CANCELLED') {
+          finalStatus = 'ABANDONED';
+          await pointsService.addPointsInTx(tx, player1Id, stake, PointReason.PVP_CANCELLED_REFUND, { matchId });
+          if (!isBotMatch && player2Id) {
+            await pointsService.addPointsInTx(tx, player2Id, stake, PointReason.PVP_CANCELLED_REFUND, { matchId });
+          }
+        } else if (outcome.type === 'DISCONNECT_WIN') {
+          winnerId = outcome.winnerIsPlayer1 ? player1Id : player2Id;
+          if (winnerId) {
+            await pointsService.addPointsInTx(tx, winnerId, stake * 2, PointReason.PVP_WIN, {
+              matchId,
+              viaDisconnect: true,
+            });
+          }
+        } else {
+          // NORMAL: so sanh diem so sau khi da tra loi du (hoac het) 10 cau.
+          if (player1Score > player2Score) {
+            winnerId = player1Id;
+            await pointsService.addPointsInTx(tx, player1Id, stake * 2, PointReason.PVP_WIN, {
+              matchId,
+              vsBot: isBotMatch,
+              opponentId: player2Id,
+            });
+          } else if (player2Score > player1Score) {
+            // Bot khong co vi diem -> chi thanh toan neu doi thu la nguoi that.
+            if (!isBotMatch && player2Id) {
+              winnerId = player2Id;
+              await pointsService.addPointsInTx(tx, player2Id, stake * 2, PointReason.PVP_WIN, {
+                matchId,
+                opponentId: player1Id,
+              });
+            }
+            // isBotMatch && bot thang: khong ai duoc gi them - player1 da mat dung `stake` tu buoc khoa cuoc.
+          } else {
+            // Hoa - hoan cuoc cho MOI nguoi that (ke ca truong hop vs bot: nguoi that van duoc hoan).
+            await pointsService.addPointsInTx(tx, player1Id, stake, PointReason.PVP_DRAW_REFUND, {
+              matchId,
+              vsBot: isBotMatch,
+            });
+            if (!isBotMatch && player2Id) {
+              await pointsService.addPointsInTx(tx, player2Id, stake, PointReason.PVP_DRAW_REFUND, { matchId });
+            }
+          }
+        }
 
-  if (outcome.type === 'DISCONNECT_WIN') {
-    winnerId = outcome.winnerIsPlayer1 ? player1Id : player2Id;
-    if (winnerId) {
-      await pointsService.addPoints(winnerId, stake * 2, 'PVP_WIN', { matchId, viaDisconnect: true });
-    }
-  } else {
-    // NORMAL: so sanh diem so sau khi da tra loi du (hoac het) 10 cau.
-    if (player1Score > player2Score) {
-      winnerId = player1Id;
-      await pointsService.addPoints(player1Id, stake * 2, 'PVP_WIN', {
-        matchId,
-        vsBot: isBotMatch,
-        opponentId: player2Id,
+        const closeResult = await tx.battleMatch.updateMany({
+          where: { id: matchId, status: 'IN_PROGRESS' },
+          data: { status: finalStatus, winnerId, player1Score, player2Score, completedAt: new Date() },
+        });
+        if (closeResult.count === 0) {
+          throw new BattleMatchNotInProgressError(matchId);
+        }
+
+        return { winnerId, status: finalStatus };
       });
-    } else if (player2Score > player1Score) {
-      // Bot khong co vi diem -> chi thanh toan neu doi thu la nguoi that.
-      if (!isBotMatch && player2Id) {
-        winnerId = player2Id;
-        await pointsService.addPoints(player2Id, stake * 2, 'PVP_WIN', { matchId, opponentId: player1Id });
+    } catch (err) {
+      if (err instanceof OptimisticLockRetryableError) {
+        if (attempt === MAX_BATTLE_RETRY) throw new OptimisticLockError(matchId, MAX_BATTLE_RETRY);
+        // eslint-disable-next-line no-await-in-loop
+        await delayJitter();
+        continue;
       }
-      // isBotMatch && bot thang: khong ai duoc gi them - player1 da mat dung `stake` tu buoc khoa cuoc.
-    } else {
-      // Hoa - hoan cuoc cho MOI nguoi that (kho ca truong hop vs bot: nguoi that van duoc hoan).
-      await pointsService.addPoints(player1Id, stake, 'PVP_DRAW_REFUND', { matchId, vsBot: isBotMatch });
-      if (!isBotMatch && player2Id) {
-        await pointsService.addPoints(player2Id, stake, 'PVP_DRAW_REFUND', { matchId });
-      }
+      throw err;
     }
   }
 
-  await prisma.battleMatch.update({
-    where: { id: matchId },
-    data: { status: 'COMPLETED', winnerId, player1Score, player2Score, completedAt: new Date() },
-  });
-
-  return { winnerId, status: 'COMPLETED' };
+  throw new OptimisticLockError(matchId, MAX_BATTLE_RETRY);
 }
 
 /** GET /api/battle/config — muc cuoc hop le + so du diem hien tai. */
@@ -335,7 +414,18 @@ export async function getBattleHistory(userId: string, limit: number, offset: nu
     const myScore = isPlayer1 ? r.player1Score : r.player2Score;
     const opponentScore = isPlayer1 ? r.player2Score : r.player1Score;
     const opponentId = isPlayer1 ? r.player2Id : r.player1Id;
-    const result: 'WIN' | 'LOSE' | 'DRAW' = myScore > opponentScore ? 'WIN' : myScore < opponentScore ? 'LOSE' : 'DRAW';
+
+    // QUAN TRONG (sua boi S3): KHONG duoc suy result tu viec so sanh diem so don thuan
+    // cho tran nguoi that vs nguoi that — tran ket thuc do doi thu MAT KET NOI (xu thang
+    // ky thuat, xem SettlementOutcome 'DISCONNECT_WIN' trong settleMatch) tra thang cho
+    // NGUOI CON LAI bat ke diem so luc do (vd. nguoi mat ket noi dang dan diem van bi xu
+    // thua) — so sanh diem se cho ra ket qua SAI, ngược voi diem thuc te da thanh toan.
+    // `winnerId` da luu DUNG nguoi thang thuc su (bang) nen dung truc tiep — CHI TRU
+    // truong hop tran voi bot: bot khong co userId nen KHONG the la winnerId (`winnerId`
+    // luon null neu bot thang), buoc phai quay lai so sanh diem so cho rieng truong hop nay.
+    const result: 'WIN' | 'LOSE' | 'DRAW' = r.isBotMatch
+      ? (myScore > opponentScore ? 'WIN' : myScore < opponentScore ? 'LOSE' : 'DRAW')
+      : (r.winnerId === userId ? 'WIN' : r.winnerId === null ? 'DRAW' : 'LOSE');
     const pointsChange = result === 'WIN' ? r.stake : result === 'LOSE' ? -r.stake : 0;
 
     return {
@@ -343,7 +433,11 @@ export async function getBattleHistory(userId: string, limit: number, offset: nu
       subject: r.subject,
       stake: r.stake,
       isBotMatch: r.isBotMatch,
-      opponentName: r.isBotMatch ? null : (opponentId ? nameById.get(opponentId) ?? 'Người chơi' : null),
+      // An hoan toan danh tinh bot khoi nguoi choi (quyet dinh san pham) - dung ten gia
+      // GIONG NGUOI THAT (deterministic theo matchId, xem pickBotDisplayName) thay vi
+      // null/"Máy". `isBotMatch` van giu nguyen trong response cho muc dich doi soat noi
+      // bo (xem admin-guide.md muc 16) - CHI khong con dung o tang hien thi FE.
+      opponentName: r.isBotMatch ? pickBotDisplayName(r.id) : (opponentId ? nameById.get(opponentId) ?? 'Người chơi' : null),
       myScore,
       opponentScore,
       result,

@@ -69,6 +69,38 @@ export interface PaginatedBattleHistory {
   total: number;
 }
 
+/**
+ * Snapshot 1 tran ĐANG DIỄN RA của user (nếu có) — dùng để FE tự động đưa
+ * người dùng vào lại đúng trận sau khi tải lại trang/đăng nhập lại (Fix S5:
+ * trước đây phải tự bấm vào lại "Thi đấu", không có tín hiệu gì báo có trận
+ * đang dở). Đọc trực tiếp từ state in-memory `liveMatches` (battle.engine.service.ts)
+ * — CHỈ đúng khi trận thực sự còn sống trên process backend hiện tại.
+ */
+export interface ActiveBattleMatchSnapshot {
+  matchId: string;
+  subject: string;
+  stake: number;
+  opponentName: string;
+  isBotMatch: boolean;
+  myScore: number;
+  opponentScore: number;
+  opponentDisconnected: boolean;
+  /** null nếu mình VỪA trả lời câu hiện tại (đang chờ câu tiếp theo/đối thủ). */
+  question: {
+    questionIndex: number;
+    questionText: string;
+    options: [string, string, string, string];
+    /** Số giây còn lại ước tính của câu hiện tại — để FE không reset về 20s "ảo". */
+    secondsLeft: number;
+  } | null;
+}
+
+/** Response cua GET /api/battle/active. */
+export interface ActiveBattleMatchResponse {
+  active: boolean;
+  match: ActiveBattleMatchSnapshot | null;
+}
+
 // ---------------------------------------------------------------------------
 // Payload cac su kien Socket.io (namespace /battle) — khop voi docs/api/drafts/battle-mvp.yaml
 // ---------------------------------------------------------------------------

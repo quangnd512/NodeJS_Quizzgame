@@ -54,6 +54,18 @@ export class BattleNotInQueueError extends BattleError {
   }
 }
 
+/**
+ * User da co 1 tran ĐANG DIỄN RA (con song trong `liveMatches`) nhung lai thu
+ * vao hang doi/tao phong/vao phong MOT TRAN KHAC (Fix S5 — phat hien qua
+ * script kiem tra bao mat: truoc day KHONG co kiem tra nay, 1 user co the mo
+ * 2 ket noi/tab cung tai khoan va vao duoc 2 tran cung luc, khoa cuoc 2 lan).
+ */
+export class BattleAlreadyInMatchError extends BattleError {
+  constructor() {
+    super('Ban dang co 1 tran dau khac chua ket thuc, khong the vao tran moi.', 'BATTLE_ALREADY_IN_MATCH');
+  }
+}
+
 /** Khong tim thay phong voi ma da nhap (chua tung tao, da bi huy, hoac da du nguoi). */
 export class BattleRoomNotFoundError extends BattleError {
   constructor(roomCode: string) {

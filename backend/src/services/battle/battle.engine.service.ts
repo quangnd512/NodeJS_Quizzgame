@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
 import { pointsService } from '../points/points.service.js';
 import {
+  BattleAlreadyInMatchError,
   BattleError,
   BattleInvalidPayloadError,
   BattleMatchNotInProgressError,
@@ -39,10 +40,13 @@ import {
   BATTLE_BOT_MIN_ANSWER_MS,
   BATTLE_DISCONNECT_GRACE_MS,
   BATTLE_QUESTION_TIME_LIMIT_MS,
+  type ActiveBattleMatchSnapshot,
   type BattleMatchResult,
   type BattleQuestionEvent,
 } from './battle.types.js';
-import { computeQuestionPoints, decideBotAnswer, determineOutcome, randomBotDelayMs } from './battle.utils.js';
+import {
+  computeQuestionPoints, decideBotAnswer, determineOutcome, pickBotDisplayName, randomBotDelayMs,
+} from './battle.utils.js';
 
 /** So miligiay du them cho timer cau hoi phia server (tranh sai lech vai chuc ms voi client). */
 const QUESTION_TIMER_BUFFER_MS = 500;
@@ -156,6 +160,7 @@ function emitError(socket: AuthenticatedBattleSocket, err: unknown): void {
 
 async function handleJoinQueue(socket: AuthenticatedBattleSocket, user: User, rawPayload: unknown): Promise<void> {
   try {
+    if (hasActiveMatch(user.id)) throw new BattleAlreadyInMatchError();
     const { subject, stake } = parsePayload(joinQueueSchema, rawPayload);
     validateSubjectAndStake(subject, stake);
     await assertSufficientPoints(user.id, stake);
@@ -167,16 +172,29 @@ async function handleJoinQueue(socket: AuthenticatedBattleSocket, user: User, ra
   }
 }
 
+/**
+ * Xu ly "Huy tim tran" — nguoi dung co the dang o 1 trong 2 trang thai KHONG loai
+ * tru lan nhau tu goc nhin server (FE chi hien thi 1 trong 2 UI cung luc, nhung
+ * KHONG co gi dam bao chung dong bo 100%): dang trong hang doi thuong, HOAC dang
+ * cho ban be vao phong rieng vua tao. Thu ca 2 (best-effort, khong nem loi cho
+ * nhanh khong khop) — chi bao loi cho client neu CA HAI deu khong co gi de huy
+ * (bug da tim thay boi S3: ban truoc chi xu ly nhanh hang doi, khien phong rieng
+ * "mo coi" tren server neu nguoi dung bam Huy trong luc dang cho ban be vao phong —
+ * ai do sau nay nhap dung ma phong van vao duoc, tru diem nguoi tao ngoai y muon).
+ */
 function handleCancelQueue(socket: AuthenticatedBattleSocket, user: User): void {
+  const roomRemoved = battleQueueService.removeRoomByCreatorSocketId(socket.id);
+
   try {
     battleQueueService.cancel(user.id);
   } catch (err) {
-    emitError(socket, err);
+    if (!roomRemoved) emitError(socket, err);
   }
 }
 
 async function handleCreateRoom(socket: AuthenticatedBattleSocket, user: User, rawPayload: unknown): Promise<void> {
   try {
+    if (hasActiveMatch(user.id)) throw new BattleAlreadyInMatchError();
     const { subject, stake } = parsePayload(createRoomSchema, rawPayload);
     validateSubjectAndStake(subject, stake);
     await assertSufficientPoints(user.id, stake);
@@ -195,6 +213,7 @@ async function handleJoinRoom(
   rawPayload: unknown,
 ): Promise<void> {
   try {
+    if (hasActiveMatch(user.id)) throw new BattleAlreadyInMatchError();
     const { roomCode } = parsePayload(joinRoomSchema, rawPayload);
     const room = battleQueueService.joinRoom(roomCode.trim().toUpperCase(), user.id);
 
@@ -369,7 +388,10 @@ async function startBotMatch(namespace: Namespace, waitingPlayer: WaitingPlayer)
       matchId,
       subject: live.subject,
       stake: live.stake,
-      opponentName: 'Máy',
+      // An hoan toan danh tinh bot khoi nguoi choi (quyet dinh san pham) -
+      // dung ten gia GIONG NGUOI THAT thay vi "Máy", isBotMatch van gui ve
+      // de FE khong con dung de hien icon rieng nua (xem BattlePlayPhase).
+      opponentName: pickBotDisplayName(matchId),
       isBotMatch: true,
     });
 
@@ -561,6 +583,72 @@ function resolveSlotByUserId(live: LiveMatch, userId: string): PlayerSlot | null
   return null;
 }
 
+/**
+ * User co dang O TRONG 1 tran CON SONG (chua ket thuc) hay khong - dung de
+ * chan vao hang doi/tao phong/vao phong THU 2 khi da co 1 tran dang dien ra
+ * (Fix S5 - phat hien qua script kiem tra bao mat: truoc day 1 user co the mo
+ * 2 ket noi/tab cung tai khoan va vao duoc 2 tran cung luc, khoa cuoc 2 lan).
+ */
+function hasActiveMatch(userId: string): boolean {
+  for (const live of liveMatches.values()) {
+    if (live.ended) continue;
+    if (resolveSlotByUserId(live, userId)) return true;
+  }
+  return false;
+}
+
+/**
+ * Tra ve snapshot tran ĐANG DIỄN RA cua 1 user (neu co) - dung boi
+ * `GET /api/battle/active` de FE tu dong dua nguoi dung vao lai dung tran sau
+ * khi tai lai trang/dang nhap lai (Fix S5). Doc THUAN state in-memory, khong
+ * cham DB - chi dung khi backend van CON SONG voi trang thai tran do (dung
+ * y he han che 1-instance da ghi trong FEATURE_LOG.md).
+ */
+export function getActiveMatchSnapshot(userId: string): ActiveBattleMatchSnapshot | null {
+  for (const live of liveMatches.values()) {
+    if (live.ended) continue;
+    const slot = resolveSlotByUserId(live, userId);
+    if (!slot) continue;
+
+    const otherSlot: PlayerSlot = slot === 'player1' ? 'player2' : 'player1';
+    const opponent = otherSlot === 'player1' ? live.player1 : live.player2;
+    const myScore = slot === 'player1' ? live.player1Score : live.player2Score;
+    const opponentScore = slot === 'player1' ? live.player2Score : live.player1Score;
+
+    // An hoan toan danh tinh bot (quyet dinh san pham, giong emitMatchFound/getBattleHistory)
+    // - bot khong co LiveMatchPlayer (player2=null) nen khong co san displayName de dung.
+    const opponentName = live.isBotMatch
+      ? pickBotDisplayName(live.matchId)
+      : (opponent?.displayName ?? 'Người chơi');
+
+    const currentQuestion = live.questions[live.currentQuestionIndex];
+    let question: ActiveBattleMatchSnapshot['question'] = null;
+    if (currentQuestion && !live.answeredThisQuestion.has(slot)) {
+      const elapsedMs = Date.now() - live.questionSentAtMs;
+      const secondsLeft = Math.max(0, Math.ceil((BATTLE_QUESTION_TIME_LIMIT_MS - elapsedMs) / 1000));
+      question = {
+        questionIndex: live.currentQuestionIndex,
+        questionText: currentQuestion.questionText,
+        options: currentQuestion.options as [string, string, string, string],
+        secondsLeft,
+      };
+    }
+
+    return {
+      matchId: live.matchId,
+      subject: live.subject,
+      stake: live.stake,
+      opponentName,
+      isBotMatch: live.isBotMatch,
+      myScore,
+      opponentScore,
+      opponentDisconnected: live.disconnectTimers.has(otherSlot),
+      question,
+    };
+  }
+  return null;
+}
+
 function computeResultForPlayer(
   slot: PlayerSlot,
   live: LiveMatch,
@@ -673,6 +761,17 @@ function onPlayerDisconnected(namespace: Namespace, live: LiveMatch, slot: Playe
     namespace.sockets.get(opponent.socketId)?.emit('battle:opponent-disconnected', { gracePeriodSeconds: 30 });
   }
 
+  // Fix S5: TAM DUNG timer cau hoi hien tai trong luc cho doi thu ket noi lai - truoc
+  // day timer 20.5s/cau van chay doc lap voi grace period 30s mat ket noi, khien tran
+  // van tu dong "advance" sang cau tiep theo (0 diem cho ben mat ket noi) truoc khi du
+  // 30s trung, buoc nguoi con lai phai tiep tuc tra loi them cau moi trong luc tuong
+  // la dang "cho" doi thu. Se khoi dong lai (fresh) khi doi thu ket noi lai thanh cong
+  // (xem attemptReconnectToActiveMatch) hoac tran ket thuc han khi het 30s.
+  if (live.questionTimer) {
+    clearTimeout(live.questionTimer);
+    live.questionTimer = null;
+  }
+
   const timer = setTimeout(() => {
     live.disconnectTimers.delete(slot);
     void handleDisconnectGraceExpired(namespace, live, slot);
@@ -738,6 +837,18 @@ function attemptReconnectToActiveMatch(namespace: Namespace, socket: Authenticat
         questionText: currentQuestion.questionText,
         options: currentQuestion.options as [string, string, string, string],
       });
+    }
+
+    // Fix S5: KHOI DONG LAI (fresh) timer cau hoi da bi tam dung luc mat ket noi (xem
+    // onPlayerDisconnected) - neu khong, cau hoi hien tai se KHONG BAO GIO tu ket thuc
+    // (khong con timer nao dang chay) trong truong hop ca 2 da tra loi xong tu truoc
+    // luc mat ket noi. Chi cap thoi gian moi khi tran chua ket thuc va van con dung
+    // cau hien tai (phong truong hop hiem: reconnect dung luc cau da hoan tat).
+    const questionIndexAtReconnect = live.currentQuestionIndex;
+    if (currentQuestion && live.answeredThisQuestion.size < 2) {
+      live.questionTimer = setTimeout(() => {
+        handleQuestionTimeout(namespace, live, questionIndexAtReconnect);
+      }, BATTLE_QUESTION_TIME_LIMIT_MS + QUESTION_TIMER_BUFFER_MS);
     }
     break;
   }

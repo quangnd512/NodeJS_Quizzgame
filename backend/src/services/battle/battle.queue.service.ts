@@ -172,14 +172,26 @@ export class BattleQueueService {
     return room;
   }
 
-  /** Xoa phong theo socketId cua nguoi tao - dung khi ho ngat ket noi truoc khi co ai vao (tranh ro ri bo nho). */
-  public removeRoomByCreatorSocketId(socketId: string): void {
+  /**
+   * Xoa (cac) phong do socket nay tao - dung khi: (1) ho ngat ket noi truoc khi co ai
+   * vao (tranh ro ri bo nho), hoac (2) ho chu dong bam "Huy" tren man hinh cho (xem
+   * `battle:cancel-queue` trong battle.engine.service.ts).
+   *
+   * Xoa TAT CA phong khop (khong dung sau khi tim thay 1 cai) - phong truong hop hiem
+   * gap 1 socket tao nhieu phong lien tiep (vd. bam "Tao phong" nhieu lan) truoc khi
+   * co ai vao bat ky phong nao trong so do - tranh de sot phong "mo coi" khac.
+   *
+   * @returns true neu co it nhat 1 phong da bi xoa (dung de phan biet "khong co gi de huy").
+   */
+  public removeRoomByCreatorSocketId(socketId: string): boolean {
+    let removedAny = false;
     for (const [code, room] of this.roomsByCode) {
       if (room.creatorSocketId === socketId) {
         this.roomsByCode.delete(code);
-        return;
+        removedAny = true;
       }
     }
+    return removedAny;
   }
 
   public get pendingRoomCount(): number {

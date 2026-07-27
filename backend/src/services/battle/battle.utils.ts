@@ -131,6 +131,34 @@ export function generateRoomCode(): string {
   return code;
 }
 
+/**
+ * Danh sach ten hien thi GIA cho doi thu la BOT — quyet dinh san pham: AN
+ * HOAN TOAN danh tinh "may/bot" khoi nguoi choi that (khong hien ten "Máy",
+ * khong hien icon rieng o BAT KY dau, ca luc dang choi lan trong Lich su),
+ * de tran voi bot cam giac giong het tran voi nguoi that. Du lieu goc
+ * `isBotMatch=true` VAN duoc luu day du trong DB de tinh diem dung (bot
+ * khong co vi diem) va phuc vu doi soat noi bo qua SQL — CHI an o tang
+ * hien thi (UI + cac API tra ve cho client), khong lien quan bao mat.
+ */
+const BOT_DISPLAY_NAMES = [
+  'Nguyễn Minh Anh', 'Trần Thị Bích', 'Lê Hoàng Long', 'Phạm Thu Hà',
+  'Vũ Đức Huy', 'Đặng Ngọc Mai', 'Bùi Quang Vinh', 'Hoàng Thị Nga',
+  'Đỗ Tuấn Kiệt', 'Ngô Phương Linh', 'Đinh Văn Khoa', 'Lý Thị Thảo',
+];
+
+/**
+ * Chon 1 ten hien thi gia CHO BOT, DETERMINISTIC theo `matchId` — cung 1
+ * tran se luon ra cung 1 ten moi lan doc lai (luc dang choi va sau nay xem
+ * lai trong Lich su van khop nhau), khong can them cot moi trong DB.
+ */
+export function pickBotDisplayName(matchId: string): string {
+  let hash = 0;
+  for (let i = 0; i < matchId.length; i++) {
+    hash = (hash * 31 + matchId.charCodeAt(i)) >>> 0;
+  }
+  return BOT_DISPLAY_NAMES[hash % BOT_DISPLAY_NAMES.length]!;
+}
+
 /** So sanh diem 2 nguoi choi -> ket qua tu goc nhin nguoi choi thu 1 (`mine`). */
 export function determineOutcome(myScore: number, opponentScore: number): 'WIN' | 'LOSE' | 'DRAW' {
   if (myScore > opponentScore) return 'WIN';
