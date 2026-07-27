@@ -120,8 +120,50 @@ Hall of Fame:
 - Toàn Năng: tách riêng, đánh dấu ⭐ đặc biệt
 
 == KỸ THUẬT ==
-- Socket.io (đã có trong tech stack) cho realtime
+- Socket.io (đã có trong tech stack, CHƯA cài package thật — chỉ mới có comment placeholder
+  trong auth.middleware.ts/jwt.ts/auth.errors.ts nhắc "dùng chung JWT session token cho cả
+  HTTP và Socket.io sau này") cho realtime
 - transferPoints (đã có trong PointsService) cho chuyển điểm cược
 - Ngân hàng câu hỏi (đã có) cho nội dung
 - DB mới cần: battle_sessions, battle_elo, battle_seasons, hall_of_fame
 - ELO per subject: lưu theo cặp (userId, subjectId)
+
+== CẬP NHẬT 2026-07-19 — GIẢI QUYẾT ĐỘ TRỄ GHÉP TRẬN (người dùng xác nhận) ==
+Vấn đề: giai đoạn đầu ít người chơi cùng lúc → khó ghép trận thật ngay lập tức.
+Giải pháp đã CHỐT (kết hợp cả 3):
+1. Bot fallback: sau ~10-15s không tìm được người thật → tự động ghép với bot giả lập
+   (tốc độ trả lời + tỉ lệ đúng random theo độ khó chọn trước). Trận đấu bot: vẫn cho điểm
+   thưởng bình thường nhưng KHÔNG tính ELO (hoặc tính hệ số rất thấp) để tránh cày bot lên hạng ảo.
+2. Nới lỏng tiêu chí ghép trận dần theo thời gian chờ: 0-10s chỉ ghép đúng môn+đúng mức cược;
+   10-20s nới ra đúng môn/mọi mức cược; >20s nới ra mọi môn/mọi cược; sau đó mới rơi vào bot
+   nếu vẫn không có ai.
+3. Mời bạn bè qua link/mã phòng luôn có sẵn như phương án phụ (đã có trong kế hoạch gốc).
+Ghost replay (đấu với bản ghi trận đấu thật của người chơi khác) → để dành làm v2 sau, không
+làm ngay vì cần hạ tầng ghi/phát lại riêng, phức tạp hơn 2 giải pháp trên.
+
+== CẬP NHẬT 2026-07-19 — ĐỐI CHIẾU VỚI KHUNG FREE/PREMIUM THẬT (Feature 015 đã xong) ==
+Kế hoạch gốc viết TRƯỚC KHI có Khung Free/Premium thật — khi lên task chi tiết, PHẢI dùng
+đúng cơ chế đã xây (isUserPremium(), premiumExpiresAt, premium.service.ts...), KHÔNG tự chế
+cờ Free/Premium riêng cho Battle. Đồng thời người dùng đã chốt thêm 1 quyền lợi Premium liên
+quan trực tiếp tới Battle: "Ưu tiên ghép trận nhanh hơn / ít rơi vào bot hơn" (xem file
+S1_saved_plan_premium_ads_expansion.md) — cần tích hợp vào thuật toán ghép trận ở mục trên
+(ví dụ: Premium được nới lỏng tiêu chí NHANH HƠN Free, hoặc ưu tiên ghép với người thật
+trước trong hàng đợi). Ngoài ra còn 1 ý tưởng quảng cáo liên quan Battle: "Free thua trận →
+xem quảng cáo để đấu lại ngay" — cũng cần tính đến khi thiết kế luồng kết thúc trận.
+
+== CẬP NHẬT 2026-07-20 — CHIA 2 ĐỢT (người dùng xác nhận) ==
+ĐỢT 1 (Feature 016, đang làm ngay bây giờ — xem PENDING/S2.md khi bàn giao): MVP chơi được cơ
+bản — ghép trận (bot fallback sau 30s + nới lỏng tiêu chí + mời bạn qua mã phòng), 10 câu/trận
+20s/câu, cược điểm 50/100/200/500đ CHUNG cho mọi người (chưa phân biệt Free/Premium), thắng
+người thật ăn cược, thắng bot +100% cược, hòa hoàn cược, đối thủ mất kết nối → chờ 30 GIÂY
+(đã sửa từ đề xuất ban đầu 15s) trước khi xử thắng kỹ thuật. KHÔNG có ELO/danh hiệu/mùa
+giải/Hall of Fame ở đợt này.
+
+ĐỢT 2 (đã dời xuống làm CUỐI CÙNG trong toàn bộ roadmap, sau cả "Tối ưu Frontend" — xem
+workflow/handoff/PENDING/S1_priority_order.md): toàn bộ phần còn lại của kế hoạch gốc —
+hệ ELO theo môn, danh hiệu (Đồng/Bạc/Vàng/Kim Cương/Huyền Thoại), mùa giải 3 tháng/4 mùa,
+phần thưởng cuối mùa, danh hiệu "Toàn Năng", tích hợp Bảng xếp hạng 2 tab, VÀ toàn bộ phần
+phân biệt Free/Premium cho Battle (mức cược riêng, số trận/ngày riêng, ưu tiên ghép trận
+nhanh hơn cho Premium, xem lịch sử trận Premium-only, "Free thua → xem quảng cáo đấu lại
+ngay"). Khi tới lượt Đợt 2, S1 cần đối chiếu lại DB schema đã tạo ở Đợt 1 (BattleMatch...)
+để mở rộng chứ không tạo lại từ đầu.

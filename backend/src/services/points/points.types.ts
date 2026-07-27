@@ -57,7 +57,9 @@ export const PointReason = {
   THI_THU_RESULT: 'THI_THU_RESULT', // Cong/khong doi diem theo ket qua thi thu
   PVP_LOCK_BET: 'PVP_LOCK_BET', // Khoa diem cuoc khi tao/vao phong PvP
   PVP_WIN: 'PVP_WIN', // Nhan diem cuoc cua doi thu khi thang PvP
-  PVP_LOSE: 'PVP_LOSE', // Mat diem cuoc khi thua PvP
+  PVP_LOSE: 'PVP_LOSE', // Mat diem cuoc khi thua PvP (KHONG dung truc tiep - phan anh qua viec KHONG co addPoints nao khac sau PVP_LOCK_BET, xem battle.match.service.ts)
+  PVP_CANCELLED_REFUND: 'PVP_CANCELLED_REFUND', // Hoan lai dung phan da cuoc khi tran PvP bi huy (vd. ca 2 mat ket noi)
+  PVP_DRAW_REFUND: 'PVP_DRAW_REFUND', // Hoan lai dung phan da cuoc khi tran PvP hoa
   TRANSFER_OUT: 'TRANSFER_OUT', // Diem di chuyen ra (ben gui trong transferPoints)
   TRANSFER_IN: 'TRANSFER_IN', // Diem di chuyen vao (ben nhan trong transferPoints)
   REWARDED_VIDEO_BONUS: 'REWARDED_VIDEO_BONUS', // Thuong xem video quang cao

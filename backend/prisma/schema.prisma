@@ -713,3 +713,106 @@ model Notification {
   @@index([userId, isRead, createdAt])
   @@map("notifications")
 }
+
+// ============================================================================
+// MODULE THI DAU DOI KHANG (PvP Quiz Battle) — Feature 016, DOT 1/MVP
+// ============================================================================
+// Ghi chu quan trong: trang thai "dang choi" (cau hoi da shuffle, diem tam thoi,
+// timer 20s/cau, hang doi ghep tran...) duoc quan ly IN-MEMORY tren process
+// backend (xem battle.queue.service.ts / battle.engine.service.ts) - CHUA dung
+// Redis vi hien chi chay 1 instance. 2 bang duoi day chi luu KET QUA cuoi cung
+// (persist) de tra cuu lich su - KHONG dung de "chay" tran dau.
+
+/// Bang luu 1 tran dau doi khang (PvP) - tao khi 2 nguoi (hoac 1 nguoi + bot)
+/// bat dau tran, cap nhat khi ket thuc (thang/thua/hoa/huy).
+model BattleMatch {
+  id     String @id @default(uuid())
+
+  /// Ma mon hoc thi dau (khop SUBJECT_CATALOG) - ca 2 nguoi cung mon.
+  subject String
+
+  /// Muc cuoc diem (chung cho moi nguoi o Dot 1: 50/100/200/500).
+  stake  Int
+
+  /// Nguoi choi 1 (nguoi tao/vao truoc). LUON la nguoi that.
+  player1Id String
+
+  /// Nguoi choi 2 - null NEU day la tran voi bot (isBotMatch = true).
+  player2Id String?
+
+  /// true = doi thu la bot (khong ghep duoc nguoi that sau 30 giay cho).
+  isBotMatch Boolean @default(false)
+
+  /// Trang thai tran: WAITING (vua tao, chua bat dau cau 1) | IN_PROGRESS
+  /// (dang thi dau) | COMPLETED (da xong, da thanh toan diem) | ABANDONED
+  /// (huy tran - vi du ca 2 cung mat ket noi trong luc cho 30s).
+  status String @default("WAITING")
+
+  /// ID nguoi thang (player1Id hoac player2Id). null = hoa HOAC tran chua xong
+  /// HOAC tran bi huy (ABANDONED) - phan biet qua truong `status`.
+  winnerId String?
+
+  /// Diem so cuoi cung cua nguoi choi 1 (tong 10 cau, toi da 130).
+  player1Score Int @default(0)
+
+  /// Diem so cuoi cung cua nguoi choi 2 (0 neu la bot - bot khong luu diem rieng
+  /// trong MVP nay, chi dung de xac dinh thang/thua qua winnerId).
+  player2Score Int @default(0)
+
+  /// Ma phong 6 ky tu (chu+so) - dung khi tao phong rieng moi ban be, bo qua
+  /// hang doi thuong. null = tran duoc ghep qua hang doi (khong phai phong rieng).
+  roomCode String? @unique
+
+  createdAt   DateTime  @default(now())
+
+  /// Thoi diem tran ket thuc (COMPLETED/ABANDONED) - null neu con dang dien ra.
+  completedAt DateTime?
+
+  answers BattleAnswer[]
+
+  /// Truy van lich su tran cua 1 user (la player1) theo thu tu moi nhat.
+  @@index([player1Id, createdAt])
+  /// Truy van lich su tran cua 1 user (la player2) theo thu tu moi nhat.
+  @@index([player2Id, createdAt])
+  @@map("battle_matches")
+}
+
+/// Bang luu tung cau tra loi trong 1 tran dau - dung de audit/thong ke sau nay
+/// (Dot 1 CHUA dung de hien thi chi tiet tung cau trong lich su, chi luu de
+/// doi soat neu can). Ghi 1 dong / nguoi choi / cau hoi (bot cung co dong rieng,
+/// playerId = null).
+model BattleAnswer {
+  id String @id @default(uuid())
+
+  /// Tran dau ma cau tra loi nay thuoc ve.
+  matchId String
+
+  /// ID nguoi tra loi - null NEU day la cau tra loi cua BOT.
+  playerId String?
+
+  /// Vi tri cau hoi trong tran (0-9, tran co dung 10 cau).
+  questionIndex Int
+
+  /// ID cau hoi trong Ngan hang cau hoi (QuestionBank) - nguon cau hoi duy nhat cho Battle.
+  questionBankId String
+
+  /// Chi so lua chon da chon (0-3, theo thu tu DA SHUFFLE dung chung cho ca 2 nguoi).
+  selectedOption Int
+
+  /// Tra loi dung hay sai.
+  isCorrect Boolean
+
+  /// So diem (trong tran, KHONG phai diem tich luy) dat duoc o cau nay:
+  /// 0 neu sai/qua gio, toi da 13 neu dung + bonus toc do (10 co ban + 0-3 bonus).
+  pointsEarned Int
+
+  /// Thoi diem SERVER nhan duoc cau tra loi (dung de tinh bonus toc do -
+  /// KHONG dung clientTimeMs client gui len, chi hien thi).
+  answeredAt DateTime @default(now())
+
+  match BattleMatch @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  /// Truy van tat ca cau tra loi cua 1 tran, theo thu tu cau hoi.
+  @@index([matchId, questionIndex])
+  @@map("battle_answers")
+}

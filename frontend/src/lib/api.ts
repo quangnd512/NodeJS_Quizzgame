@@ -1370,3 +1370,78 @@ export async function markAllNotificationsAsRead(
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Thi đấu đối kháng (PvP Battle) — Feature 016, Đợt 1/MVP
+// Phần REST "không realtime" (cấu hình + lịch sử). Luồng chơi thực tế (ghép trận,
+// câu hỏi, nộp đáp án, kết thúc trận) đi qua Socket.io — xem lib/battleSocket.ts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface BattleConfig {
+  stakes: number[];
+  currentPoints: number;
+}
+
+/** GET /api/battle/config — mức cược hợp lệ + số dư điểm hiện tại */
+export async function getBattleConfig(sessionToken: string): Promise<BattleConfig> {
+  return request<BattleConfig>('/api/battle/config', sessionToken);
+}
+
+export type BattleResult = 'WIN' | 'LOSE' | 'DRAW';
+
+export interface BattleHistoryItem {
+  id: string;
+  subject: string;
+  stake: number;
+  isBotMatch: boolean;
+  opponentName: string | null;
+  myScore: number;
+  opponentScore: number;
+  result: BattleResult;
+  pointsChange: number;
+  completedAt: string;
+}
+
+export interface PaginatedBattleHistory {
+  items: BattleHistoryItem[];
+  total: number;
+}
+
+/** GET /api/battle/history?limit=&offset= — lịch sử trận đã đấu, phân trang */
+export async function getBattleHistory(
+  sessionToken: string,
+  limit = 20,
+  offset = 0,
+): Promise<PaginatedBattleHistory> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  return request<PaginatedBattleHistory>(`/api/battle/history?${params.toString()}`, sessionToken);
+}
+
+/** Snapshot 1 trận ĐANG DIỄN RA (nếu có) — dùng để tự động đưa người dùng vào lại
+ * đúng trận sau khi tải lại trang/đăng nhập lại (Fix S5). */
+export interface ActiveBattleMatchSnapshot {
+  matchId: string;
+  subject: string;
+  stake: number;
+  opponentName: string;
+  isBotMatch: boolean;
+  myScore: number;
+  opponentScore: number;
+  opponentDisconnected: boolean;
+  question: {
+    questionIndex: number;
+    questionText: string;
+    options: [string, string, string, string];
+    secondsLeft: number;
+  } | null;
+}
+
+export interface ActiveBattleMatchResponse {
+  active: boolean;
+  match: ActiveBattleMatchSnapshot | null;
+}
+
+/** GET /api/battle/active — trận đang diễn ra của user hiện tại (nếu có) */
+export async function getActiveBattleMatch(sessionToken: string): Promise<ActiveBattleMatchResponse> {
+  return request<ActiveBattleMatchResponse>('/api/battle/active', sessionToken);
+}
+

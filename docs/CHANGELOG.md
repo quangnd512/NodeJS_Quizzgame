@@ -5,6 +5,50 @@
 
 ---
 
+## [Unreleased] — Thi đấu đối kháng — PvP Quiz Battle, Đợt 1/MVP (Feature 016)
+
+**Branch:** `feature/battle-mvp`
+**Ngày:** 2026-07-22 (cập nhật 2026-07-27 — thay đổi phạm vi muộn sau vòng test thủ công của S5)
+
+### Added
+
+- **Thi đấu đối kháng (PvP Quiz Battle)**: chế độ thi đấu trực tiếp 2 người chơi (hoặc 1 người + bot), 10 câu MCQ_4 cùng môn, trả lời realtime, cược điểm (50/100/200/500, giống nhau cho mọi user ở Đợt 1)
+- **Kết nối realtime Socket.io** — LẦN ĐẦU dự án dùng kết nối realtime (trước đó toàn bộ API là REST thuần), namespace `/battle`, xác thực tái sử dụng JWT session token nội bộ hiện có
+- **Ghép trận tự động**, nới lỏng tiêu chí dần theo thời gian chờ (0-10s đúng môn+cược → 10-20s đúng môn → 20-30s bất kỳ), tự động ghép với **bot** (tỉ lệ đúng ~65%) sau 30 giây không tìm được đối thủ
+- **Mời bạn bè qua mã phòng** 6 ký tự — bỏ qua hàng đợi thường
+- **Chấm điểm theo THỜI GIAN SERVER** (không tin thời gian client gửi lên) — 10 điểm cơ bản + bonus tốc độ 0-3 điểm/câu đúng, tối đa 130 điểm/trận
+- **Xử lý mất kết nối**: chờ 30 giây, xử thắng kỹ thuật nếu không quay lại kịp, huỷ hoàn cược nếu cả 2 cùng mất kết nối, reconnect giữ nguyên điểm đã tích luỹ nếu quay lại kịp
+- **3 endpoint REST**: `GET /api/battle/config` (mức cược hợp lệ + số dư điểm), `GET /api/battle/history` (lịch sử trận, phân trang, mở cho tất cả — chưa khoá Premium ở Đợt 1), `GET /api/battle/active` (**mới**, xem mục "Thay đổi phạm vi muộn" bên dưới)
+- **DB mới**: model `BattleMatch`, `BattleAnswer`; 4 giá trị `PointReason` mới (`PVP_LOCK_BET`, `PVP_WIN`, `PVP_CANCELLED_REFUND`, `PVP_DRAW_REFUND`)
+- Màn hình FE mới: chọn môn/cược, chờ ghép trận, thi đấu realtime, kết quả, lịch sử trận đấu
+
+### Fixed (phát hiện trong review S3, trước khi merge)
+
+- Tạo trận + khoá cược là 3 bước rời rạc kèm "hoàn cược thủ công" khi lỗi → gộp thành 1 transaction duy nhất (giống pattern `ExamService.startExam`), tránh "trận ma" mồ côi nếu lỗi giữa chừng
+- Trả điểm và chốt trạng thái trận là 2 bước tách rời → gộp 1 transaction, tránh tình trạng "đã trả điểm nhưng trận mãi IN_PROGRESS" nếu lỗi giữa chừng
+- Race condition: bổ sung Compare-And-Swap ở tầng DB chống thanh toán điểm 2 lần cho cùng 1 trận (trước đây chỉ có cờ in-memory, không đủ khi scale nhiều instance)
+- Lịch sử trận đấu suy sai kết quả thắng/thua khi có thắng kỹ thuật do mất kết nối (so sánh điểm số thô thay vì dùng `winnerId` đã lưu)
+- Bug rò rỉ phòng: bấm "Huỷ tìm trận" trong lúc chờ bạn bè vào phòng riêng không xoá phòng trên server — người khác vẫn nhập được mã, trừ điểm ngoài ý muốn
+
+### Fixed (phát hiện bằng tay trong vòng test thủ công của S5, sau đó bổ sung test tự động theo yêu cầu làm lại của S8)
+
+- 2 đồng hồ đếm giờ (20.5s/câu và 30s chờ mất kết nối) chạy độc lập → trận tự "nhảy câu" 0 điểm oan trước khi đủ 30 giây thật; sửa: tạm dừng hẳn đồng hồ câu hỏi trong lúc chờ, khởi động lại (fresh) khi đối thủ kết nối lại
+- Lỗ hổng bảo mật: 1 user mở 2 kết nối cùng tài khoản có thể vào được 2 trận cùng lúc, khoá cược 2 lần → chặn bằng `hasActiveMatch()`, mã lỗi mới `BATTLE_ALREADY_IN_MATCH`
+
+### Changed — thay đổi phạm vi muộn (theo yêu cầu người dùng phát sinh trong lúc S5 test thủ công, không phải bug)
+
+- **Ẩn hoàn toàn danh tính bot khỏi người chơi**: đối thủ bot không còn hiện "Máy 🤖" — nay hiện 1 trong 12 tên giả kiểu người thật, deterministic theo `matchId` (khớp nhau lúc đang chơi và lúc xem lại lịch sử). Áp dụng ở `battle:match-found`, `GET /api/battle/history`, `GET /api/battle/active`. `isBotMatch` vẫn đúng sự thật trong response, chỉ tầng hiển thị bị "nguỵ trang"
+- **Tự động vào lại trận đang dở** sau khi tải lại trang/đăng nhập lại: endpoint mới `GET /api/battle/active` đọc state in-memory, tự đưa user vào thẳng đúng trận nếu còn sống, hoặc hiện thẳng màn kết quả nếu trận đã tự kết thúc trong lúc rời app (dùng `localStorage` để phát hiện)
+- Đếm ngược mất kết nối hiện đúng theo giây thật ("chờ 30s… 29s…"), không còn đứng yên tĩnh; đổi thành "đang xử lý…" khi về 0
+
+### Docs
+
+- Cập nhật `docs/api/drafts/battle-mvp.yaml` khớp 2 điểm lệch so với implementation: phân trang `limit/offset` (không phải `page`), mô hình thanh toán escrow (không dùng `transferPoints`); bổ sung endpoint `/active` + mã lỗi mới + ghi chú ẩn danh tính bot
+- Merge contract Battle vào `docs/api/openapi.yaml` (nay 3 REST endpoint + extension `x-socketio-namespaces` mô tả toàn bộ sự kiện Socket.io — OpenAPI 3.0 không có cú pháp chuẩn cho WebSocket/Socket.io), bump v1.7.0→v1.7.1
+- Bổ sung `battle.engine.service.test.ts` (6 test mới, S3) phủ đúng 2 bug ở mục "Fixed" thứ 2 — trước đó tầng điều phối realtime hoàn toàn không có test tự động
+
+---
+
 ## [Unreleased] — Khung Free/Premium (Feature 015)
 
 **Branch:** `feature/premium-framework`

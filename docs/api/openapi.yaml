@@ -1,19 +1,19 @@
 openapi: 3.0.3
 info:
   title: QuizzGame API — Practice, Thi thử, Admin, Ngân hàng câu hỏi & Leaderboard
-  version: "1.6.0"
+  version: "1.7.1"
   description: >-
     Contract cho module Ôn tập (Practice), module Thi thử (Exam/Mock Exam),
     các endpoint Admin liên quan (quản lý câu hỏi, xử lý báo cáo câu hỏi,
     quản lý đề thi thử), Ngân hàng câu hỏi (Question Bank),
     Bảng xếp hạng (Leaderboard), Ảnh đại diện (Avatar), Thông báo
-    (Notifications), Học sinh đóng góp câu hỏi (Submissions) và Khung
-    Free/Premium.
+    (Notifications), Học sinh đóng góp câu hỏi (Submissions), Khung
+    Free/Premium và Thi đấu đối kháng (PvP Quiz Battle).
     Khớp với `docs/FEATURE_LOG.md` Section 4 (Practice Module), Section 5
     (Admin Dashboard), Section 6 (Exam Module), Section 7 (Ngân hàng câu hỏi),
     Section 8 (Leaderboard & Avatar), Section 13 (Notifications), Section 14
     (Quản lý câu hỏi — Submissions + Report Redesign), Section 15 (Khung
-    Free/Premium).
+    Free/Premium), Section 16 (Thi đấu đối kháng — PvP Quiz Battle).
 
     Các endpoint Auth, Onboarding (đăng nhập, tạo hồ sơ), Points chưa được mô
     tả trong file này — ngoại lệ 2 endpoint đổi môn học (`/api/users/subjects*`)
@@ -36,6 +36,26 @@ info:
     `/api/progress/*`, `/api/wrong-answers*`) trước đó bị lồng SAI vào trong
     `components:` do lỗi indent YAML từ vòng trước — đã chuyển đúng về
     `paths:` (không đổi nội dung, chỉ đổi vị trí cấu trúc).
+
+    ⚠️ **v1.7.0 — Feature 016 (Thi đấu đối kháng — PvP Quiz Battle, Đợt 1/MVP)**:
+    2 endpoint REST mới `GET /api/battle/config` và `GET /api/battle/history`
+    (mở cho tất cả, chưa khoá Premium ở Đợt 1). Toàn bộ luồng chơi REALTIME
+    (ghép trận, câu hỏi, nộp đáp án, kết thúc trận) đi qua **Socket.io**
+    namespace `/battle` — LẦN ĐẦU TIÊN dự án dùng kết nối realtime, KHÔNG mô
+    tả được bằng cú pháp `paths:` chuẩn của OpenAPI 3.0 nên được ghi riêng ở
+    extension `x-socketio-namespaces` cuối file này (xem thêm bản đầy đủ tại
+    `docs/api/drafts/battle-mvp.yaml`).
+
+    ⚠️ **v1.7.1 — Feature 016, thay đổi phạm vi muộn (phát sinh trong vòng
+    test thủ công của S5, cập nhật bởi S4 theo yêu cầu làm lại của S8)**:
+    (1) `opponentName` trong `BattleHistoryItem`/`ActiveBattleMatchSnapshot`/
+    `battle:match-found` KHÔNG còn `null`/"Máy" cho trận với bot — nay luôn
+    là tên giả kiểu người thật, deterministic theo id trận (ẩn hoàn toàn danh
+    tính bot khỏi người chơi); (2) endpoint REST mới `GET /api/battle/active`
+    + schema `ActiveBattleMatchSnapshot`/`ActiveBattleMatchResponse` — tự
+    động đưa người dùng vào lại đúng trận đang dở sau khi tải lại trang/đăng
+    nhập lại; (3) mã lỗi mới `BATTLE_ALREADY_IN_MATCH` — chặn 1 user vào 2
+    trận cùng lúc (fix lỗ hổng bảo mật).
 
 servers:
   - url: http://localhost:4000
@@ -64,6 +84,11 @@ tags:
     description: >-
       Học sinh đóng góp câu hỏi — gửi/sửa/xoá câu hỏi (session token) và
       duyệt/từ chối phía admin (X-Admin-Secret)
+  - name: Battle
+    description: >-
+      Thi đấu đối kháng (PvP Quiz Battle, Feature 016, Đợt 1/MVP) — 2 endpoint
+      REST "không realtime" (session token). Toàn bộ luồng chơi realtime đi
+      qua Socket.io namespace `/battle`, xem `x-socketio-namespaces` cuối file.
 
 security: []
 
@@ -2837,6 +2862,153 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  # ─── Thi đấu đối kháng — PvP Quiz Battle, Đợt 1/MVP (Feature 016) ──────────
+  # Chỉ 2 endpoint "không realtime". Toàn bộ luồng chơi (ghép trận, câu hỏi,
+  # nộp đáp án, kết thúc trận) đi qua Socket.io namespace /battle — xem
+  # extension `x-socketio-namespaces` ở cuối file (OpenAPI 3.0 không có cú
+  # pháp chuẩn để mô tả WebSocket/Socket.io).
+
+  /api/battle/config:
+    get:
+      summary: Mức cược hợp lệ + số dư điểm hiện tại
+      description: >-
+        Feature 016. FE gọi endpoint này trước khi vào hàng đợi/tạo phòng để
+        biết các mức cược hợp lệ và validate ngay trên UI (disable nút nếu
+        không đủ điểm) — validate thật vẫn luôn được backend thực hiện lại
+        khi `battle:join-queue`/`battle:create-room` (KHÔNG tin riêng FE).
+      tags: [Battle]
+      security:
+        - SessionToken: []
+      responses:
+        '200':
+          description: Cấu hình thi đấu hiện tại
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BattleConfig'
+              example:
+                stakes: [50, 100, 200, 500]
+                currentPoints: 850
+        '401':
+          description: Thiếu hoặc sai session token
+
+  /api/battle/history:
+    get:
+      summary: Lịch sử trận đấu đối kháng đã hoàn thành
+      description: >-
+        Feature 016. Mở cho TẤT CẢ user ở Đợt 1/MVP (chưa khoá Premium — dự
+        kiến xem xét lại ở Đợt 2). Phân trang kiểu `limit`/`offset` (không
+        phải `page`) — khớp tự nhiên với field `total` trả về, client tự
+        tính offset tiếp theo (`offset + items.length`).
+        `result`/`pointsChange` được suy từ `winnerId` đã lưu lúc kết thúc
+        trận (KHÔNG so sánh điểm số thô) để phản ánh đúng cả trường hợp
+        thắng/thua kỹ thuật do đối thủ mất kết nối — trừ trận đấu với bot
+        (bot không có `userId` nên không thể là `winnerId`, phải quay lại so
+        sánh điểm số riêng cho trường hợp này).
+
+
+        ⚠️ **Cập nhật (thay đổi phạm vi muộn, xác nhận bởi S5)**: `opponentName`
+        KHÔNG còn `null` cho trận đấu với bot — nay luôn là 1 chuỗi (tên giả
+        kiểu người thật, deterministic theo `matchId`, xem `BattleHistoryItem`).
+        Đây là quyết định sản phẩm "ẩn hoàn toàn danh tính bot" khỏi người
+        chơi; `isBotMatch` vẫn phản ánh đúng sự thật trong response (chỉ tầng
+        hiển thị bị "nguỵ trang", không ảnh hưởng tính điểm/đối soát nội bộ).
+      tags: [Battle]
+      security:
+        - SessionToken: []
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+          description: Số dòng mỗi trang (clamp tối đa 50; giá trị không hợp lệ → mặc định 20)
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Số dòng bỏ qua (giá trị không hợp lệ/âm → mặc định 0)
+      responses:
+        '200':
+          description: Danh sách trận đã đấu, mới nhất trước
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedBattleHistory'
+              example:
+                items:
+                  - id: "c3f1a9b0-4e2a-4b7a-9d3e-1a2b3c4d5e6f"
+                    subject: "toan"
+                    stake: 100
+                    isBotMatch: false
+                    opponentName: "Nguyễn Văn A"
+                    myScore: 87
+                    opponentScore: 65
+                    result: "WIN"
+                    pointsChange: 100
+                    completedAt: "2026-07-22T08:15:30.000Z"
+                  - id: "a72e401d-6f3b-4c8e-8a1d-9f0e1d2c3b4a"
+                    subject: "van"
+                    stake: 50
+                    isBotMatch: true
+                    opponentName: "Trần Thị Bích"
+                    myScore: 40
+                    opponentScore: 52
+                    result: "LOSE"
+                    pointsChange: -50
+                    completedAt: "2026-07-21T14:02:11.000Z"
+                total: 2
+        '401':
+          description: Thiếu hoặc sai session token
+
+  /api/battle/active:
+    get:
+      summary: Trận đấu đối kháng ĐANG DIỄN RA của user hiện tại (nếu có)
+      description: >-
+        ⚠️ **Endpoint mới (thay đổi phạm vi muộn, xác nhận bởi S5)** — dùng để
+        FE tự động đưa người dùng vào lại đúng trận sau khi tải lại
+        trang/đăng nhập lại, thay vì bắt họ tự bấm lại vào "Thi đấu đối
+        kháng" mà không biết trận cũ còn sống hay đã kết thúc. Đọc THUẦN từ
+        state in-memory (`Map liveMatches` trong `battle.engine.service.ts`)
+        — chỉ đúng khi trận thực sự còn "sống" trên process backend hiện tại
+        (cùng hạn chế 1-instance của toàn bộ module Battle). Nếu trận đã kết
+        thúc trong lúc rời app (do hết 30 giây chờ mất kết nối), endpoint này
+        trả `active: false` — FE tự phát hiện qua so sánh với `matchId` nhớ
+        trong `localStorage` rồi gọi `GET /api/battle/history` để hiện thẳng
+        màn kết quả (xem `docs/FEATURE_LOG.md` Section 16 mục "Tự động vào
+        lại trận đang dở").
+      tags: [Battle]
+      security:
+        - SessionToken: []
+      responses:
+        '200':
+          description: Trạng thái trận đang sống của user (nếu có)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActiveBattleMatchResponse'
+              examples:
+                dangChoi:
+                  summary: Đang có trận sống — chưa trả lời xong câu hiện tại
+                  value:
+                    active: true
+                    match:
+                      matchId: "c3f1a9b0-4e2a-4b7a-9d3e-1a2b3c4d5e6f"
+                      subject: "toan"
+                      stake: 100
+                      opponentName: "Nguyễn Văn A"
+                      isBotMatch: false
+                      myScore: 43
+                      opponentScore: 30
+                      opponentDisconnected: false
+                      question:
+                        questionIndex: 4
+                        questionText: "2 + 2 x 2 = ?"
+                        options: ["4", "6", "8", "10"]
+                        secondsLeft: 12
+                khongCoTran:
+                  summary: Không có trận nào đang sống
+                  value: { active: false, match: null }
+        '401':
+          description: Thiếu hoặc sai session token
+
 components:
   securitySchemes:
     SessionToken:
@@ -3694,4 +3866,306 @@ components:
             - REPORT_RESOLVED: { reportId: string, status: string, questionPreview: string }
             - NEW_EXAM_PAPER: { subject: string, examPaperTitle: string }
         createdAt:    { type: string, format: date-time }
+
+    # ─── Thi đấu đối kháng — PvP Quiz Battle, Đợt 1/MVP (Feature 016) ────────
+
+    BattleConfig:
+      type: object
+      required: [stakes, currentPoints]
+      properties:
+        stakes:
+          type: array
+          items: { type: integer }
+          example: [50, 100, 200, 500]
+          description: Mức cược hợp lệ, giống nhau cho mọi user ở Đợt 1 (chưa phân biệt Free/Premium)
+        currentPoints:
+          type: integer
+          description: Số dư điểm hiện tại của user đang đăng nhập
+
+    BattleResult:
+      type: string
+      enum: [WIN, LOSE, DRAW]
+      description: Kết quả 1 trận đã HOÀN THÀNH, từ góc nhìn user (dùng trong lịch sử — REST)
+
+    BattleHistoryItem:
+      type: object
+      required:
+        - id
+        - subject
+        - stake
+        - isBotMatch
+        - opponentName
+        - myScore
+        - opponentScore
+        - result
+        - pointsChange
+        - completedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        subject:
+          type: string
+          description: Mã môn học (khớp SUBJECT_CATALOG)
+        stake:
+          type: integer
+        isBotMatch:
+          type: boolean
+        opponentName:
+          type: string
+          description: >-
+            ⚠️ KHÔNG còn nullable (thay đổi phạm vi muộn, xác nhận bởi S5):
+            trận với bot cũng trả 1 chuỗi tên giả kiểu người thật
+            (deterministic theo `id` của trận — cùng 1 trận luôn ra cùng 1
+            tên mỗi lần đọc lại), thay vì `null` như thiết kế ban đầu — quyết
+            định sản phẩm "ẩn hoàn toàn danh tính bot" khỏi người chơi. Xem
+            `isBotMatch` để biết sự thật có phải bot hay không.
+        myScore:
+          type: integer
+        opponentScore:
+          type: integer
+        result:
+          $ref: '#/components/schemas/BattleResult'
+        pointsChange:
+          type: integer
+          description: Âm/dương — số điểm thay đổi từ trận này (không tính số dư trước đó)
+        completedAt:
+          type: string
+          format: date-time
+
+    PaginatedBattleHistory:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BattleHistoryItem'
+        total:
+          type: integer
+          description: Tổng số trận đã hoàn thành của user (dùng để tính tổng số trang phía client)
+
+    ActiveBattleMatchSnapshot:
+      type: object
+      description: >-
+        ⚠️ Schema mới (thay đổi phạm vi muộn, xác nhận bởi S5). Snapshot 1
+        trận ĐANG DIỄN RA của user, đọc thuần từ state in-memory — dùng bởi
+        `GET /api/battle/active` để FE tự động đưa người dùng vào lại đúng
+        trận sau khi tải lại trang/đăng nhập lại.
+      required:
+        - matchId
+        - subject
+        - stake
+        - opponentName
+        - isBotMatch
+        - myScore
+        - opponentScore
+        - opponentDisconnected
+        - question
+      properties:
+        matchId:
+          type: string
+          format: uuid
+        subject:
+          type: string
+        stake:
+          type: integer
+        opponentName:
+          type: string
+          description: Tên giả kiểu người thật nếu là bot (cùng cơ chế `BattleHistoryItem.opponentName`)
+        isBotMatch:
+          type: boolean
+        myScore:
+          type: integer
+        opponentScore:
+          type: integer
+        opponentDisconnected:
+          type: boolean
+          description: true nếu đối thủ đang trong 30 giây chờ mất kết nối tại thời điểm gọi API
+        question:
+          type: object
+          nullable: true
+          description: null nếu mình VỪA trả lời xong câu hiện tại, đang chờ đối thủ/câu tiếp theo
+          required: [questionIndex, questionText, options, secondsLeft]
+          properties:
+            questionIndex:
+              type: integer
+              minimum: 0
+              maximum: 9
+            questionText:
+              type: string
+            options:
+              type: array
+              items: { type: string }
+              minItems: 4
+              maxItems: 4
+            secondsLeft:
+              type: integer
+              description: Số giây còn lại ước tính của câu hiện tại — tránh FE "nháy" reset về 20s ảo
+
+    ActiveBattleMatchResponse:
+      type: object
+      required: [active, match]
+      properties:
+        active:
+          type: boolean
+        match:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ActiveBattleMatchSnapshot'
+          description: null nếu active=false
+
+# ============================================================================
+# x-socketio-namespaces — Feature 016 (Thi đấu đối kháng, Đợt 1/MVP)
+# OpenAPI 3.0 KHÔNG có cú pháp chuẩn để mô tả kết nối realtime (WebSocket/
+# Socket.io) — đây là extension field tự định nghĩa (tiền tố `x-` hợp lệ theo
+# spec OpenAPI) để giữ toàn bộ contract của dự án trong 1 file duy nhất thay
+# vì tách sang chuẩn AsyncAPI riêng (dự án hiện chỉ có 1 namespace realtime
+# duy nhất, chưa cần thiết phải tách file). Bản đầy đủ hơn (kèm ghi chú lịch
+# sử sửa đổi của S3) nằm ở `docs/api/drafts/battle-mvp.yaml`.
+# ============================================================================
+x-socketio-namespaces:
+  /battle:
+    description: >-
+      Toàn bộ luồng chơi PvP Battle realtime. Kết nối:
+      `io('/battle', { auth: { token: sessionToken } })` — xác thực TÁI SỬ
+      DỤNG JWT session token nội bộ hiện có (`verifyAppToken`), KHÔNG có cơ
+      chế đăng nhập riêng cho socket. Lỗi xác thực trả qua callback chuẩn
+      `connect_error` của Socket.io (KHÔNG phải sự kiện `battle:error`):
+      `MISSING_AUTH_TOKEN`, `INVALID_SESSION_TOKEN`, `SESSION_USER_NOT_FOUND`,
+      `USER_BLOCKED`.
+    client_to_server:
+      battle:join-queue:
+        payload:
+          subject: { type: string, description: Mã môn học }
+          stake: { type: integer, description: "Phải thuộc BattleConfig.stakes" }
+        description: >-
+          Vào hàng đợi ghép trận thường. ⚠️ Validate ĐẦU TIÊN (thay đổi phạm
+          vi muộn, xác nhận bởi S5 — fix lỗ hổng bảo mật): user KHÔNG được
+          đang có 1 trận nào khác còn sống, nếu không sẽ emit battle:error
+          BATTLE_ALREADY_IN_MATCH ngay. Sau đó server validate lại subject/
+          stake + đủ điểm — KHÔNG tin riêng kết quả GET /api/battle/config
+          phía FE. Không đủ điểm → emit battle:error ngay, KHÔNG vào hàng đợi.
+      battle:create-room:
+        payload:
+          subject: { type: string }
+          stake: { type: integer }
+        description: >-
+          Tạo phòng riêng (mời bạn bè), trả về mã 6 ký tự qua
+          battle:room-created. Cùng check BATTLE_ALREADY_IN_MATCH ở đầu như
+          battle:join-queue.
+      battle:join-room:
+        payload:
+          roomCode: { type: string, maxLength: 12 }
+        description: >-
+          Vào phòng riêng bằng mã — nếu hợp lệ, bắt đầu trận NGAY (bỏ qua
+          hàng đợi thường). Mã phòng bị xoá khỏi server ngay khi dùng (chỉ
+          2 người/phòng, không dùng lại được). Cùng check
+          BATTLE_ALREADY_IN_MATCH ở đầu như battle:join-queue.
+      battle:cancel-queue:
+        payload: {}
+        description: >-
+          Huỷ tìm trận — server thử CẢ HAI khả năng không loại trừ lẫn nhau
+          (best-effort): rời hàng đợi thường NẾU đang chờ ở đó, VÀ xoá phòng
+          riêng NẾU user này vừa tạo phòng. Chỉ emit battle:error nếu CẢ HAI
+          đều không có gì để huỷ.
+      battle:submit-answer:
+        payload:
+          matchId: { type: string, format: uuid }
+          questionIndex: { type: integer, minimum: 0, maximum: 9 }
+          selectedOption: { type: integer, minimum: 0, maximum: 3 }
+          clientTimeMs:
+            type: integer
+            description: >-
+              CHỈ dùng để hiển thị/chống gian lận phía client — server LUÔN
+              dùng thời gian nhận request thực tế (server time) để tính điểm
+              tốc độ, không tin giá trị này (cùng nguyên tắc "fail-closed
+              server time" đã áp dụng ở Anti-Cheat Feature 011).
+    server_to_client:
+      battle:queue-status:
+        payload:
+          waitingSeconds: { type: integer }
+          currentCriteria: { type: string, enum: [STRICT, SUBJECT_ONLY, ANY] }
+        description: >-
+          Cập nhật mỗi 1 giây trong lúc chờ. Tiêu chí nới lỏng dần theo thời
+          gian chờ: 0-10s STRICT (đúng môn+cược) → 10-20s SUBJECT_ONLY (đúng
+          môn, mọi cược) → 20-30s ANY (mọi môn+cược) → giây 30 tự ghép bot.
+      battle:room-created:
+        payload:
+          roomCode: { type: string, example: "A3F7K9" }
+      battle:match-found:
+        payload:
+          matchId: { type: string, format: uuid }
+          subject: { type: string }
+          stake: { type: integer }
+          opponentName:
+            type: string
+            example: "Nguyễn Minh Anh"
+            description: >-
+              ⚠️ Không còn "Máy" cho trận với bot (thay đổi phạm vi muộn, xác
+              nhận bởi S5) — tên giả kiểu người thật, deterministic theo
+              matchId, để trận với bot "trông giống" trận với người thật.
+          isBotMatch: { type: boolean }
+      battle:question:
+        payload:
+          questionIndex: { type: integer, minimum: 0, maximum: 9 }
+          questionText: { type: string }
+          options:
+            type: array
+            items: { type: string }
+            minItems: 4
+            maxItems: 4
+        description: >-
+          Gửi từng câu một (không gửi trước để tránh lộ đề trước) — đồng
+          thời cho cả 2 người chơi, đáp án đã xáo trộn 1 lần dùng chung.
+      battle:opponent-progress:
+        payload:
+          questionIndex: { type: integer }
+          opponentScore: { type: integer }
+        description: Cập nhật điểm đối thủ realtime ngay sau khi họ trả lời (không lộ đáp án của họ).
+      battle:question-result:
+        payload:
+          questionIndex: { type: integer }
+          correctOption: { type: integer, minimum: 0, maximum: 3 }
+          myPointsEarned: { type: integer, minimum: 0, maximum: 13 }
+          myTotalScore: { type: integer }
+        description: Gửi RIÊNG cho người vừa trả lời (không phải broadcast).
+      battle:match-ended:
+        payload:
+          result:
+            type: string
+            enum: [WIN, LOSE, DRAW, OPPONENT_LEFT_WIN, CANCELLED_BOTH_LEFT]
+          myScore: { type: integer }
+          opponentScore: { type: integer }
+          pointsChange: { type: integer }
+          newBalance: { type: integer }
+        description: >-
+          Gửi riêng cho từng người — `result` khác nhau theo góc nhìn mỗi
+          người (vd. 1 người OPPONENT_LEFT_WIN thì người kia không nhận gì
+          vì họ đã mất kết nối).
+      battle:opponent-disconnected:
+        payload:
+          gracePeriodSeconds: { type: integer, enum: [30] }
+        description: >-
+          Báo người còn lại biết đối thủ mất kết nối, đang chờ tối đa 30s để
+          họ quay lại. ⚠️ Trong suốt 30 giây này, server TẠM DỪNG hẳn đồng hồ
+          đếm giờ câu hỏi hiện tại (bug đã sửa, có test tự động — trước đây 2
+          đồng hồ chạy độc lập khiến trận tự động "nhảy câu" 0 điểm oan trước
+          khi đủ 30 giây thật); đồng hồ câu hỏi khởi động lại (fresh) ngay khi
+          đối thủ kết nối lại thành công.
+      battle:error:
+        payload:
+          code: { type: string, example: "BATTLE_INSUFFICIENT_POINTS" }
+          message: { type: string }
+        description: >-
+          Mã lỗi đầy đủ: BATTLE_INVALID_SUBJECT, BATTLE_INVALID_STAKE,
+          BATTLE_INSUFFICIENT_POINTS, BATTLE_ALREADY_IN_QUEUE,
+          BATTLE_NOT_IN_QUEUE, BATTLE_ROOM_NOT_FOUND,
+          BATTLE_CANNOT_JOIN_OWN_ROOM, BATTLE_MATCH_NOT_FOUND,
+          BATTLE_MATCH_NOT_OWNED, BATTLE_MATCH_NOT_IN_PROGRESS,
+          BATTLE_INVALID_QUESTION_INDEX, BATTLE_NOT_ENOUGH_QUESTIONS,
+          BATTLE_INVALID_PAYLOAD, và mã MỚI **BATTLE_ALREADY_IN_MATCH**
+          (thay đổi phạm vi muộn, xác nhận bởi S5 — chặn user đang có 1 trận
+          sống thử vào trận thứ 2 qua join-queue/create-room/join-room, fix
+          lỗ hổng bảo mật tìm thấy bằng cách mở 2 kết nối cùng tài khoản).
 

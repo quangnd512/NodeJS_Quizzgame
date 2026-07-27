@@ -204,3 +204,29 @@ S1 liệt kê 4 giới hạn ban đầu — khi test thực tế trang Tiến đ
 
 **5. Cùng là "Premium-only" nhưng cách chặn cần khác nhau tuỳ phạm vi ảnh hưởng**
 Khi thêm gate cho 2 mục thống kê, không copy y nguyên cách chặn 403 của "Ôn lại câu sai"/"Lịch sử thi thử" — vì 2 mục này chỉ là 1 phần trong response `GET /api/progress/summary` (phần còn lại Free vẫn cần xem). Ném lỗi 403 sẽ làm sập TOÀN BỘ trang Tiến độ chỉ vì 2 mục nhỏ. **Bài học**: trước khi chọn cơ chế gate, luôn tự hỏi "nội dung Premium-only này là 1 API/trang RIÊNG, hay chỉ là 1 PHẦN của 1 response lớn hơn?" — câu trả lời quyết định nên ném lỗi hay trả giá trị rỗng/mặc định cho phần đó.
+
+## Vòng 16: Thi đấu đối kháng — PvP Quiz Battle, Đợt 1/MVP (2026-07-27)
+
+### Phức tạp hơn dự kiến
+
+**1. Module realtime đầu tiên của dự án — race condition dạng MỚI, không giống các race condition đã biết**
+Toàn bộ dự án trước đây chỉ có REST (Practice/Exam) — race condition đã biết đều là dạng "2 request cùng đọc-rồi-ghi 1 dòng DB" (giải quyết bằng CAS/optimistic lock, xem Feature 014/015). Feature 016 là module đầu tiên dùng Socket.io, phát sinh 2 dạng race MỚI chưa từng gặp: (a) 2 timer độc lập (đếm giờ câu hỏi 20.5s + đếm giờ chờ mất kết nối 30s) không biết đến nhau, chạy chồng lên nhau gây "nhảy câu" sai; (b) 1 user mở 2 kết nối (2 tab/script) cùng lúc vào được 2 trận, khoá cược 2 lần. Cả 2 đều KHÔNG phải lỗi ghi DB — mà là lỗi phối hợp trạng thái in-memory theo thời gian thực. **Bài học**: khi thêm module realtime đầu tiên vào 1 hệ thống vốn chỉ có REST, không thể tái dùng nguyên xi "danh sách race condition đã biết" từ các module cũ để rà soát — cần tư duy lại từ đầu về các cặp sự kiện có thể xảy ra ĐỒNG THỜI hoặc CHỒNG THỜI GIAN lên nhau (không chỉ 2 request cùng lúc vào 1 API).
+
+**2. Môi trường dev: Vite mặc định chỉ lắng nghe IPv6, gây "không vào được" tưởng là bug code**
+`vite.config.ts` mặc định host `::1` (chỉ IPv6) — một số trình duyệt/máy không tự động resolve `localhost` sang IPv6 đúng cách, gây cảm giác "server không chạy" dù backend hoàn toàn bình thường. Sửa bằng thêm `host: true` (lắng nghe cả IPv4 `0.0.0.0`). **Bài học**: khi 1 tính năng mới báo "không load được trang" ngay từ bước đầu test thủ công, kiểm tra cấu hình dev server (host/port binding) TRƯỚC khi nghi ngờ logic nghiệp vụ — đây là lớp hạ tầng dễ bị bỏ qua vì "mọi tính năng trước đó đều chạy bình thường" (chỉ vì chưa ai test qua đúng cấu hình mạng gây lỗi này).
+
+### Nên làm khác lần sau
+
+**3. Module điều phối realtime cần unit test tự động NGAY TỪ ĐẦU, không đợi tới lúc review mới nhận ra thiếu**
+`battle.engine.service.ts` (tầng xảy ra hầu hết bug #6-10 do S5 tìm ra) đến cuối vòng test vẫn CHƯA có unit test riêng — chỉ có test cho các hàm thuần (`battle.utils.ts`) và tầng dữ liệu (`battle.match.service.ts`/`battle.queue.service.ts`). Các fix quan trọng nhất (pause/resume timer, chặn 2 trận cùng lúc) chỉ được xác minh bằng tay qua script Socket.io giả lập trong lúc test — không có gì bảo vệ lâu dài nếu sau này ai đó refactor. **Bài học**: với module có state phức tạp + nhiều timer phối hợp (không phải pure function, khó test bằng cách gọi hàm đơn giản), cần ưu tiên viết test tự động cho tầng điều phối (không chỉ tầng thuần/tầng data) NGAY từ khi code xong, thay vì để tới lúc review/test thủ công mới phát hiện lỗ hổng — vì loại bug này (race giữa timer) rất khó tái phát hiện lại bằng tay lần thứ 2 nếu vô tình bị phá vỡ sau này.
+
+### Quyết định thiết kế đáng ghi nhớ
+
+**4. Ẩn danh tính bot bằng hash tất định (deterministic) thay vì lưu thêm cột DB**
+Yêu cầu "tên bot phải nhất quán ở mọi nơi hiển thị" (đang chơi/lịch sử/auto-resume) tưởng chừng cần thêm cột `botDisplayName` + ghi lúc tạo trận — nhưng giải được gọn bằng 1 hàm băm thuần lấy `matchId` làm đầu vào (`pickBotDisplayName`), không cần migration, không cần đồng bộ dữ liệu gì cả. Xem chi tiết ADR-013 Quyết định 2.
+
+**5. Tự động resume (không hỏi xác nhận) cho module nhạy thời gian giây, khác hẳn pattern "banner hỏi" của Exam**
+Ban đầu định tái dùng nguyên pattern "hiện banner hỏi có tiếp tục không" đã có sẵn từ Exam Resume (Feature quản lý bài thi) — nhưng nhận ra Battle có nhịp độ 20s/câu + 30s ân hạn, thời gian người dùng đọc banner + bấm có thể đủ để tự động thua. Chọn tự động đưa thẳng vào lại trận (`GET /api/battle/active` + `localStorage` marker), không hỏi gì cả. **Bài học**: không nên áp dụng máy móc 1 pattern UX đã dùng thành công ở module khác — cần đối chiếu lại ràng buộc thời gian đặc thù của module mới trước khi quyết định tái dùng hay thiết kế lại.
+
+**6. Escrow betting (khoá cược ngay lúc bắt đầu, không trừ lúc kết thúc) để tránh khoảng hở "tiêu điểm đã cược"**
+Cân nhắc giữa "trừ điểm người thua lúc kết thúc" (đơn giản hơn) và "khoá cược cả 2 bên ngay lúc bắt đầu, chia lại lúc kết thúc" (escrow) — chọn escrow vì nó loại bỏ hoàn toàn khoảng thời gian (suốt trận đấu) mà người chơi có thể tiêu số điểm "coi như đã cược" vào việc khác. Xem chi tiết ADR-013 Quyết định 3.

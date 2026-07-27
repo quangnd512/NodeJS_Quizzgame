@@ -7396,3 +7396,417 @@ Yêu cầu nghiệp vụ rõ ràng: Free không được phép truy cập dữ l
 **Ghi chú quan sát của S3 (không phải lỗi, chỉ là gợi ý cải tiến UX cho vòng sau):** `AdminUserListItem`/`AdminUserDetail` (danh sách + chi tiết user cho admin) chưa có field `isPremium`/`premiumExpiresAt` — admin hiện chỉ biết trạng thái Premium của 1 user ngay sau khi tự tay cấp (qua thông báo toast), không có cách xem lại trạng thái hiện tại trong bảng danh sách mà không tra riêng. `docs/api/drafts/free-premium-framework.yaml` không yêu cầu việc này nên KHÔNG coi là thiếu sót của PR.
 
 **Lint môi trường:** Nhiều session Claude Code chạy song song trong cùng sandbox khiến `tsc`/test chạy chậm bất thường (nhiều phút thay vì vài giây) — đã xác nhận qua nhiều lần retry đây là tranh chấp tài nguyên, không phải lỗi code (1 lần build báo lỗi `TS6053` thoáng qua, build lại ngay sau đó PASS sạch).
+
+---
+
+## 16. Thi đấu đối kháng — PvP Quiz Battle (ĐỢT 1/MVP)
+
+**Trạng thái:** ✅ Hoàn thành (Đợt 1/MVP — chưa có ELO/mùa giải/danh hiệu/phân biệt Free-Premium, xem phần "Lưu ý / TODO" cuối mục)
+**Ngày hoàn thành:** 2026-07-22 (cập nhật 2026-07-27 — bổ sung mục #8/#9 + endpoint mới sau vòng test thủ công của S5, theo yêu cầu làm lại của S8)
+**Branch / commit liên quan:** `feature/battle-mvp` (commit `114ffea`→`f342cbd`, review + fix bởi S3 chưa commit riêng tại thời điểm ghi tài liệu này — xem `docs/CODE_REVIEW_LOG.md`)
+
+---
+
+### Tổng quan
+
+#### Vấn đề cần giải quyết
+
+Trước Feature 016, QuizzGame chỉ có các chế độ luyện tập/thi một mình (Practice, Exam) — không có hình thức **thi đấu trực tiếp giữa 2 người chơi cùng lúc**, vốn là động lực gắn bó rất mạnh cho các app học tập dạng game hoá (tính cạnh tranh, thời gian thực, cược điểm). Feature 016 (Đợt 1/MVP) bổ sung chế độ "Thi đấu đối kháng" (PvP Quiz Battle):
+
+- 2 người chơi (hoặc 1 người + bot nếu không ghép được ai) thi đấu **10 câu hỏi trắc nghiệm (MCQ_4)** cùng môn, trả lời **realtime qua Socket.io**.
+- Mỗi trận đấu **cược điểm** (50/100/200/500 — giống nhau cho mọi người ở Đợt 1) — thắng ăn cược đối thủ, thua mất cược, hoà hoàn nguyên.
+- Ghép trận qua **hàng đợi tự động** (nới lỏng tiêu chí dần theo thời gian chờ, tự động ghép với **bot** sau 30 giây) hoặc **mời bạn bè qua mã phòng 6 ký tự**.
+- Xử lý mất kết nối giữa trận: chờ 30 giây, xử thắng kỹ thuật nếu không quay lại kịp, huỷ hoàn cược nếu cả 2 cùng mất kết nối.
+
+**Đây là lần đầu tiên dự án dùng kết nối realtime (Socket.io)** — trước đó toàn bộ API đều là REST thuần.
+
+#### Giải pháp được chọn
+
+- **Backend:** 1 namespace Socket.io `/battle`, xác thực **tái sử dụng** JWT session token nội bộ hiện có (`verifyAppToken`) — không tạo cơ chế đăng nhập riêng cho socket. Toàn bộ trạng thái "đang chơi" (câu hỏi đã chọn/xáo, điểm tạm thời, hàng đợi, timer) sống **in-memory** trên process backend (chưa dùng Redis — chỉ đúng khi chạy 1 instance).
+- **REST** chỉ còn 2 endpoint "không realtime": `GET /api/battle/config` (mức cược hợp lệ + số dư điểm) và `GET /api/battle/history` (lịch sử trận đã đấu, phân trang).
+- **Thanh toán điểm — mô hình "khoá cược rồi chia lại" (escrow):** lúc bắt đầu trận, trừ (`deductPoints`) đúng 1 lần `stake` của MỖI người chơi thật (bot không có ví, không bị trừ); lúc kết thúc, dùng `addPoints` (không dùng `transferPoints` vì cược của người thua đã bị trừ khỏi ví từ đầu, không còn nằm đó để "chuyển"): thắng +2×stake (hoàn cược của mình + ăn cược đối thủ), hoà +stake (hoàn nguyên), thua không được gì.
+- **Chấm điểm theo THỜI GIAN SERVER** (không tin `clientTimeMs` client gửi lên — cùng nguyên tắc "fail-closed" đã áp dụng ở Anti-Cheat Feature 011): 10 điểm cơ bản + bonus tốc độ 0-3 điểm nếu trả lời đúng, tối đa 13 điểm/câu, 130 điểm/trận (10 câu).
+- **Ghép trận nới lỏng dần:** 0-10s chỉ ghép đúng môn+cược (STRICT) → 10-20s đúng môn, mọi mức cược (SUBJECT_ONLY) → 20-30s bất kỳ môn+cược (ANY) → giây thứ 30 tự động ghép với **bot** (tỉ lệ trả lời đúng ~65%, thời gian "suy nghĩ" ngẫu nhiên đều 3-18 giây).
+- **Mời bạn bè:** tạo phòng riêng → nhận mã 6 ký tự (bỏ ký tự dễ nhầm 0/O, 1/I/L) → gửi cho bạn → bạn nhập mã để vào thẳng trận, bỏ qua hàng đợi thường.
+- **Mất kết nối:** server chờ 30 giây trước khi xử thắng kỹ thuật cho người còn lại; nếu quay lại kịp (cùng userId kết nối lại), gán lại socket vào đúng trận, huỷ đếm giờ, gửi lại câu hỏi hiện tại nếu chưa trả lời — **không mất điểm đã tích luỹ**. Nếu cả 2 cùng mất kết nối trong lúc chờ nhau → huỷ trận ngay, hoàn cược cả 2 (không tính thắng/thua).
+
+---
+
+### Phương án kỹ thuật được lựa chọn và lý do (bao gồm các lỗi S3 tìm & sửa)
+
+#### 1. Atomic transaction cho "tạo trận + khoá cược" (lỗi S3 phát hiện #1)
+
+**Vấn đề (bản S2 ban đầu):** Tạo `BattleMatch` + khoá cược (`deductPoints`) của 2 người chơi là **3 bước rời rạc** (3 transaction khác nhau), kèm logic "hoàn cược thủ công" nếu bước sau lỗi. Nếu lỗi xảy ra giữa chừng (ví dụ điểm player2 vừa đổi đúng lúc đó), có thể để lại "trận ma" `WAITING` mồ côi trong DB, hoặc hoàn cược thủ công tự thất bại làm mất điểm oan.
+
+**Giải pháp:** Gộp toàn bộ (`tx.battleMatch.create` → `deductPointsInTx` cho player1 → `deductPointsInTx` cho player2 nếu không phải bot → `tx.battleMatch.update` status→`IN_PROGRESS`) vào **1 `prisma.$transaction` duy nhất**, đúng pattern `ExamService.startExam` đã dùng trước đó. Lỗi giữa chừng → Postgres tự rollback toàn bộ, không còn trận mồ côi, không cần hoàn cược thủ công.
+
+#### 2. Atomic transaction cho "thanh toán + chốt trạng thái trận" (lỗi S3 phát hiện #2)
+
+**Vấn đề (bản S2 ban đầu):** Trả điểm (`addPoints`) và cập nhật trạng thái trận (`COMPLETED`/`ABANDONED`) là **2 bước tách rời** (2 transaction). Nếu bước 2 lỗi giữa chừng (mất kết nối DB, process crash...), điểm **đã** được trả nhưng trận **mãi mãi hiện `IN_PROGRESS`** — không xuất hiện trong lịch sử, không thể đối soát.
+
+**Giải pháp:** Gộp `addPointsInTx` (mọi nhánh: thắng/thua/hoà/huỷ) + `tx.battleMatch.updateMany` (chốt status) vào **1 transaction**, giống pattern `closeResult` trong `ExamService.submitExam`.
+
+#### 3. Race condition — chống thanh toán điểm 2 lần cho cùng 1 trận (lỗi S3 phát hiện #3)
+
+**Vấn đề:** Engine chỉ có cờ in-memory (`live.ended`) để chặn gọi `settleMatch` 2 lần cho cùng 1 trận — không có lớp bảo vệ ở tầng DB (ví dụ khi sau này scale nhiều instance backend, mỗi instance có cờ in-memory riêng, không đồng bộ).
+
+**Giải pháp:** Bước "chốt" trạng thái dùng `tx.battleMatch.updateMany({ where: { id: matchId, status: 'IN_PROGRESS' }, ... })` — đóng vai trò **Compare-And-Swap (CAS)**: nếu `settleMatch` bị gọi lần 2 cho cùng 1 trận, `count=0` → ném lỗi `BattleMatchNotInProgressError` → Postgres rollback **toàn bộ** transaction đó (kể cả các `addPointsInTx` vừa gọi trong cùng transaction) → không bao giờ trả điểm 2 lần.
+
+#### 4. Bug dữ liệu — lịch sử trận suy thắng/thua sai khi có thắng kỹ thuật do mất kết nối (lỗi S3 phát hiện #4)
+
+**Vấn đề:** `getBattleHistory` (bản đầu) suy thắng/thua bằng cách **so sánh điểm số thô** (`myScore` vs `opponentScore`) — sai hoàn toàn với trận thắng/thua **kỹ thuật** (do đối thủ mất kết nối quá 30s): người đang dẫn điểm mất kết nối vẫn bị xử thua, nhưng lịch sử lại hiển thị "thắng" vì so sánh điểm số.
+
+**Giải pháp:** Dùng trực tiếp `winnerId` đã lưu đúng khi `settleMatch` — **chỉ riêng trận với bot** mới quay lại so sánh điểm số (vì bot không có `userId` nên không thể là `winnerId`, `winnerId` luôn `null` dù bot thắng).
+
+#### 5. Bug rò rỉ phòng — "Huỷ tìm trận" không xoá phòng riêng trên server (lỗi S3 phát hiện #5)
+
+**Vấn đề:** Bấm "Huỷ tìm trận" trong lúc đang chờ bạn bè vào phòng riêng vừa tạo **không xoá phòng trên server** (bản đầu `handleCancelQueue` chỉ xử lý nhánh hàng đợi thường). Phòng "mồ côi" vẫn tồn tại — ai đó nhập đúng mã sau khi đã "huỷ" vẫn vào được, trừ điểm người tạo ngoài ý muốn.
+
+**Giải pháp:** `handleCancelQueue` (cả server lẫn FE) xử lý **best-effort cả 2 khả năng** không loại trừ lẫn nhau: rời hàng đợi thường NẾU đang chờ ở đó, VÀ xoá phòng riêng NẾU người này vừa tạo phòng — chỉ báo lỗi nếu **cả hai** đều không có gì để huỷ.
+
+#### 6. Lệch API contract — đã cập nhật draft cho khớp code (lỗi/lệch S3 phát hiện #6)
+
+- `GET /api/battle/history` dùng phân trang `limit/offset` (không phải `page` như draft gốc S1) — khớp tự nhiên với field `total` trả về, client tự tính offset tiếp theo. S3 xác nhận code đúng hơn, sửa draft `docs/api/drafts/battle-mvp.yaml` thay vì sửa code.
+- Mô hình thanh toán điểm thực tế là "khoá cược rồi chia lại" (escrow, mục 3 ở trên), khác với `transferPoints` dự tính ban đầu trong kế hoạch S1 — đã ghi rõ lý do trong draft (xem "Ghi chú kỹ thuật" cuối file `battle-mvp.yaml`).
+
+#### 7. Dọn dẹp — `PointReason` enum + 1 lỗi lint thật
+
+Thay toàn bộ string literal `'PVP_...'` bằng hằng số `PointReason.*` (bổ sung 2 giá trị còn thiếu: `PVP_CANCELLED_REFUND`, `PVP_DRAW_REFUND` trong `points.types.ts`) để tránh gõ sai chuỗi tay. Sửa 1 lỗi lint `react-hooks/set-state-in-effect` thật ở `BattleHistoryPage` (đổi từ gọi `.then()` trực tiếp trong `useEffect` sang hàm `async loadHistory()` riêng, gọi bằng `void loadHistory()`).
+
+#### 8. Bug tìm thấy bằng tay trong vòng test thủ công của S5 (Đợt 1, sau khi S3 review xong lần đầu)
+
+Khác với 6 lỗi ở mục 1-7 (tìm bằng đọc code lúc review), 2 bug dưới đây được S5 phát hiện khi **tự chơi thử thật** (2 tài khoản/tab thật) — ban đầu chỉ được sửa và xác nhận thủ công, **chưa có test tự động bảo vệ**. S8 rà soát lại phát hiện đúng khoảng trống này (`battle.engine.service.ts` — tầng điều phối realtime, nơi cả 2 bug xảy ra — hoàn toàn không có file test riêng), trả lại yêu cầu S3 bổ sung. S3 đã viết `battle.engine.service.test.ts` (6 test, dùng `vi.useFakeTimers()` để điều khiển chính xác mốc 30s/20.5s) — xem `docs/CODE_REVIEW_LOG.md` mục "LÀM LẠI lần 1" để biết chi tiết cách test.
+
+**Bug #9 — 2 đồng hồ đếm giờ chạy độc lập, gây "nhảy câu" oan trong lúc chờ mất kết nối:** đồng hồ câu hỏi (20.5s/câu, `questionTimer`) và đồng hồ chờ mất kết nối (30s, `BATTLE_DISCONNECT_GRACE_MS`) trước đây chạy **hoàn toàn độc lập** — nếu 1 người mất kết nối đúng lúc gần hết giờ câu hỏi, `questionTimer` vẫn tự bắn ở mốc 20.5s cũ (chấm 0 điểm oan cho bên mất kết nối, chuyển sang câu mới) **trước khi** đủ 30 giây chờ thật, buộc người còn lại phải tiếp tục trả lời thêm câu mới trong lúc tưởng là đang "chờ" đối thủ quay lại. Sửa: `onPlayerDisconnected` **tạm dừng hẳn** `questionTimer` (clear, không đặt lại ngay) khi 1 bên mất kết nối; `attemptReconnectToActiveMatch` **khởi động lại (fresh)** đúng 20.5s cho câu hiện tại khi đối thủ kết nối lại thành công (chỉ nếu trận chưa kết thúc và cả 2 chưa trả lời xong câu đó).
+
+**Bug #10 — Lỗ hổng bảo mật: 1 user vào được 2 trận cùng lúc:** mở 2 kết nối Socket.io cùng 1 tài khoản (2 tab hoặc script) trước đây có thể vào được **2 trận song song**, bị khoá cược 2 lần (`PVP_LOCK_BET` 2 lần cho cùng 1 user ở 2 trận khác nhau), gây rối trạng thái (không rõ trận nào mới là "thật"). Sửa: thêm hàm `hasActiveMatch(userId)` (duyệt `liveMatches`, kiểm tra user có đang là `player1`/`player2` của 1 trận chưa `ended` nào không), gọi kiểm tra **ngay đầu tiên** trong cả 3 handler `handleJoinQueue`/`handleCreateRoom`/`handleJoinRoom` — nếu đã có 1 trận sống khác, ném `BattleAlreadyInMatchError` (mã lỗi mới **`BATTLE_ALREADY_IN_MATCH`**) ngay, không tạo trận mới, không khoá cược lần 2.
+
+#### 9. Thay đổi phạm vi — theo yêu cầu người dùng phát sinh trong lúc S5 test thủ công (không phải bug thuần tuý)
+
+Khác với mục 8, 2 thay đổi dưới đây là **quyết định sản phẩm mới**, không phải sửa lỗi so với thiết kế gốc của S1 — nảy sinh từ trải nghiệm thực tế lúc chơi thử.
+
+**Ẩn hoàn toàn danh tính bot khỏi người chơi:** thiết kế gốc hiển thị đối thủ bot là "Máy 🤖" — trải nghiệm test thật cho thấy điều này làm giảm hẳn cảm giác cạnh tranh (biết trước đang đấu máy sẽ chơi khác đi/mất hứng thú). Đổi sang: đối thủ bot hiện 1 trong 12 tên giả kiểu người Việt (hàm `pickBotDisplayName(matchId)` trong `battle.utils.ts`), chọn **deterministic theo `matchId`** (hash đơn giản % độ dài danh sách tên) — cùng 1 trận luôn ra cùng 1 tên mỗi lần đọc lại (lúc đang chơi và lúc xem lại lịch sử phải khớp nhau), không cần thêm cột DB mới. Bỏ hẳn icon 🤖 và mọi dòng chữ báo trước "sẽ ghép với máy" ở màn chờ. Áp dụng ở **cả 3 nơi** trả `opponentName` cho client: `battle:match-found`, `GET /api/battle/history`, `GET /api/battle/active` (mục dưới). `isBotMatch` vẫn giữ nguyên giá trị thật (`true`/`false`) trong mọi response — **chỉ tầng hiển thị bị "nguỵ trang"**, không ảnh hưởng cách tính điểm (bot vẫn không có ví điểm) hay đối soát nội bộ qua SQL.
+
+**Tự động vào lại trận đang dở sau khi tải lại trang/đăng nhập lại:** trước đây nếu user vô tình F5/mất mạng giữa trận rồi quay lại, họ phải tự bấm lại vào "Thi đấu đối kháng" và **không có cách nào biết** trận cũ còn sống hay đã kết thúc trong lúc mình rời đi. Thêm endpoint mới `GET /api/battle/active` (đọc thuần state in-memory `liveMatches`, xem `getActiveMatchSnapshot`) — FE gọi ngay sau khi đăng nhập/tải lại trang:
+- Nếu còn trận **sống** (`active: true`) → tự động đưa thẳng vào màn thi đấu ĐÚNG trận đó, khôi phục điểm số + câu hỏi hiện tại + số giây còn lại từ snapshot (dữ liệu "optimistic", được đồng bộ chính xác gần như ngay sau đó qua socket reconnect resend) — **không cần bấm gì, không mất điểm đã tích luỹ**.
+- Nếu không còn trận sống nhưng `localStorage` (key `battle_active_match_id`, ghi lúc bắt đầu chơi) vẫn nhớ 1 `matchId` từ phiên trước → tự tra `GET /api/battle/history` tìm đúng trận đó, hiện thẳng màn kết quả (trận đã tự kết thúc — thắng/thua kỹ thuật hoặc huỷ — trong lúc rời app).
+- Xác nhận qua test thật: quay lại **kịp trong 30 giây** → vào lại đúng trận đang chơi; quay lại **trễ hơn 30 giây** → đúng thiết kế nhận thua kỹ thuật, hiện màn kết quả, không "resume" lại được trận đã kết thúc.
+
+---
+
+### Luồng chạy chi tiết (step-by-step)
+
+#### A. Ghép trận qua hàng đợi thường
+
+```
+FE (BattleSetupPhase)                    Backend (Socket.io namespace /battle)
+      │                                          │
+      │  emit battle:join-queue                  │
+      │  { subject, stake }                      │
+      ├─────────────────────────────────────────►│  validate subject/stake hợp lệ
+      │                                          │  assertSufficientPoints (chỉ CHECK, chưa trừ)
+      │                                          │  battleQueueService.join(...)
+      │◄─────────────────────────────────────────┤  emit battle:queue-status {0s, STRICT}
+      │                                          │
+      │           (vòng lặp mỗi 1 giây, processQueueTick)
+      │                                          │  0-10s:  STRICT (đúng môn+cược)
+      │◄─────────────────────────────────────────┤  10-20s: SUBJECT_ONLY (đúng môn)
+      │  battle:queue-status {Ns, criteria}      │  20-30s: ANY (bất kỳ)
+      │                                          │
+      │                          ┌─── ghép được 2 người thoả tiêu chí CẢ HAI bên ───┐
+      │                          │  createAndStartMatch (1 transaction: tạo match  │
+      │                          │  + trừ stake của CẢ 2 + status→IN_PROGRESS)     │
+      │                          └──────────────────────────────────────────────────┘
+      │◄─────────────────────────────────────────┤  battle:match-found {matchId, opponentName, ...}
+      │                                          │
+      │                          ┌─── HOẶC: chờ >= 30s không ghép được ai ─────────┐
+      │                          │  createAndStartMatch với isBotMatch=true         │
+      │                          └──────────────────────────────────────────────────┘
+      │◄─────────────────────────────────────────┤  battle:match-found {opponentName: pickBotDisplayName(matchId), isBotMatch:true}
+      │                                          │  (tên giả kiểu người thật — KHÔNG còn "Máy"/🤖, xem mục kỹ thuật #9)
+```
+
+#### B. Vòng lặp 1 câu hỏi (lặp lại 10 lần)
+
+```
+Backend gửi câu hỏi (đã xáo đáp án 1 lần, dùng chung cho cả 2 người)
+      │
+      ├──► battle:question { questionIndex, questionText, options[4] }
+      │    (đồng thời start setTimeout 20.5s = time limit + buffer)
+      │
+      ├──► NẾU isBotMatch: schedule bot trả lời sau random(3-18s)
+      │
+      │◄── FE emit battle:submit-answer { matchId, questionIndex, selectedOption, clientTimeMs }
+      │    Backend: elapsedMs = Date.now() - questionSentAtMs   (DÙNG THỜI GIAN SERVER)
+      │    isCorrect = selectedOption === correctOptionIndex
+      │    pointsEarned = isCorrect ? 10 + bonus tốc độ(0-3) : 0
+      │    ghi BattleAnswer (audit) + cộng vào player{1,2}Score
+      │
+      ├──► battle:question-result (gửi riêng người vừa trả lời): điểm câu này + tổng điểm
+      ├──► battle:opponent-progress (gửi cho đối thủ): điểm đối thủ vừa cập nhật
+      │
+      └──► CẢ 2 đã trả lời (hoặc 1 bên hết 20.5s không trả lời → 0 điểm câu đó)
+              → advanceToNextQuestion → gửi câu tiếp theo, hoặc nếu hết 10 câu → finishMatch
+```
+
+#### C. Kết thúc trận + thanh toán điểm
+
+```
+finishMatch(outcome)                     outcome ∈ { NORMAL, DISCONNECT_WIN, CANCELLED }
+      │
+      ├──► settleMatch (1 transaction):
+      │      NORMAL:          so sánh player1Score/player2Score → +2×stake người thắng
+      │                       (KHÔNG thanh toán nếu bot thắng) | hoà → +stake mỗi người thật
+      │      DISCONNECT_WIN:  +2×stake người CÒN LẠI (không phụ thuộc điểm số)
+      │      CANCELLED:       +stake hoàn nguyên cho MỖI người thật đã tham gia
+      │      → updateMany CAS (status:'IN_PROGRESS' → 'COMPLETED'/'ABANDONED', winnerId, ...)
+      │
+      └──► battle:match-ended { result, myScore, opponentScore, pointsChange, newBalance }
+           (gửi riêng cho từng người, `result` khác nhau theo góc nhìn mỗi người)
+```
+
+#### D. Mất kết nối giữa trận
+
+```
+socket 'disconnect'
+      │
+      ├──► NẾU đối thủ (slot kia) CŨNG đang trong 30s chờ → huỷ trận NGAY (CANCELLED, hoàn cả 2)
+      │
+      └──► NGƯỢC LẠI: đánh dấu socketId=null cho slot này, báo đối thủ
+                (battle:opponent-disconnected, gracePeriodSeconds:30), start setTimeout 30s
+                TẠM DỪNG questionTimer câu hiện tại (sửa bởi bug #9 — xem mục kỹ thuật #8:
+                trước đây 2 đồng hồ chạy độc lập, khiến trận tự "nhảy câu" 0 điểm oan
+                trước khi đủ 30s thật)
+                  │
+                  ├─ NẾU user này kết nối lại (đúng userId) TRƯỚC khi hết 30s
+                  │     → gán lại socketId, huỷ đếm giờ mất kết nối, gửi lại câu hỏi hiện tại
+                  │       nếu chưa trả lời, KHỞI ĐỘNG LẠI (fresh) questionTimer 20.5s cho câu
+                  │       hiện tại (attemptReconnectToActiveMatch, chạy mỗi khi có socket mới connect)
+                  │
+                  └─ NẾU hết 30s vẫn chưa quay lại
+                        → isBotMatch: finishMatch(CANCELLED) — không có "đối thủ thật" để xử thắng
+                        → ngược lại: finishMatch(DISCONNECT_WIN, người còn lại thắng)
+```
+
+#### E. Tự động vào lại trận đang dở (sau khi F5/đăng nhập lại) — thay đổi phạm vi muộn, xem mục kỹ thuật #9
+
+```
+App khởi động / đăng nhập lại            Backend
+      │                                          │
+      │  GET /api/battle/active                  │
+      ├─────────────────────────────────────────►│  getActiveMatchSnapshot(userId)
+      │                                          │  (đọc THUẦN state in-memory liveMatches)
+      │                          ┌─── còn trận SỐNG (active:true) ─────────────────┐
+      │◄─────────────────────────┤  { active:true, match: { matchId, myScore,      │
+      │                          │    opponentScore, question, secondsLeft, ... } }│
+      │                          └──────────────────────────────────────────────────┘
+      │  → tự động vào thẳng màn thi đấu ĐÚNG trận (điểm số/câu hỏi optimistic
+      │    từ snapshot, đồng bộ chính xác gần như ngay sau đó qua socket reconnect)
+      │
+      │                          ┌─── HOẶC: không còn trận sống (active:false) ────┐
+      │◄─────────────────────────┤  { active:false, match:null }                    │
+      │                          └──────────────────────────────────────────────────┘
+      │  kiểm tra localStorage['battle_active_match_id'] (ghi lúc bắt đầu chơi)
+      │                          ┌─── có matchId nhớ từ phiên trước ────────────────┐
+      │  GET /api/battle/history │  tìm đúng dòng khớp matchId đó                   │
+      ├─────────────────────────►│                                                  │
+      │◄─────────────────────────┤  trả lịch sử, có dòng trận vừa kết thúc          │
+      │                          └──────────────────────────────────────────────────┘
+      │  → hiện thẳng màn KẾT QUẢ của trận đó (đã tự thắng/thua/huỷ trong lúc rời app)
+```
+
+---
+
+### Data Model
+
+Bảng mới (migration kèm commit `114ffea`):
+
+| Bảng | Field chính | Ghi chú |
+|------|-------------|---------|
+| `battle_matches` | `id`, `subject`, `stake`, `player1Id`, `player2Id?`, `isBotMatch`, `status` (`WAITING`\|`IN_PROGRESS`\|`COMPLETED`\|`ABANDONED`), `winnerId?`, `player1Score`, `player2Score`, `roomCode?` (unique), `createdAt`, `completedAt?` | `player2Id=null` ⟺ trận với bot. `winnerId=null` ⟺ hoà HOẶC chưa xong HOẶC bị huỷ (phân biệt qua `status`). Index `[player1Id, createdAt]` và `[player2Id, createdAt]` phục vụ truy vấn lịch sử. |
+| `battle_answers` | `id`, `matchId`, `playerId?` (null = bot), `questionIndex` (0-9), `questionBankId`, `selectedOption`, `isCorrect`, `pointsEarned`, `answeredAt` | Ghi audit từng câu trả lời — Đợt 1 CHƯA dùng để hiển thị chi tiết trong lịch sử, chỉ để đối soát nếu cần. Index `[matchId, questionIndex]`. |
+
+**Quan trọng:** trạng thái "đang chơi" (câu hỏi đã chọn/xáo, điểm tạm thời, timer 20s/câu, hàng đợi ghép trận) **KHÔNG** nằm trong 2 bảng trên — sống hoàn toàn **in-memory** trên process backend (`Map<matchId, LiveMatch>` trong `battle.engine.service.ts`, `waiting: WaitingPlayer[]` + `roomsByCode` trong `battle.queue.service.ts`). 2 bảng DB chỉ lưu **kết quả cuối cùng** để tra cứu lịch sử — không dùng để "chạy" trận đấu. Hệ quả: nếu **backend restart** giữa 1 trận đang diễn ra, trận đó bị mất (không có cơ chế khôi phục từ DB) — chấp nhận được ở quy mô 1 instance của Đợt 1/MVP. **Phân biệt quan trọng** (từ mục kỹ thuật #9): trường hợp phổ biến hơn nhiều — user chỉ đơn thuần **F5/tắt mở lại tab/đăng nhập lại** (backend KHÔNG restart, `liveMatches` vẫn còn nguyên) — nay tự động "resume" đúng trận qua `GET /api/battle/active`, KHÔNG bị mất gì.
+
+Enum `PointReason` bổ sung 4 giá trị (`backend/src/services/points/points.types.ts`): `PVP_LOCK_BET`, `PVP_WIN`, `PVP_CANCELLED_REFUND`, `PVP_DRAW_REFUND` (`PVP_LOSE` khai báo nhưng không dùng trực tiếp — thua được thể hiện qua việc KHÔNG có `addPoints` nào sau `PVP_LOCK_BET`).
+
+**Bot ẩn danh** (từ mục kỹ thuật #9): không có cột DB nào lưu tên giả của bot — `pickBotDisplayName(matchId)` tính lại "on the fly" mỗi lần đọc (hash đơn giản từ chuỗi `matchId` → chọn 1 trong 12 tên cố định trong `battle.utils.ts`), nên luôn ra cùng 1 kết quả cho cùng 1 `matchId` mà không cần persist gì thêm.
+
+### API Reference
+
+| Method | Path | Auth | Mô tả |
+|--------|------|------|-------|
+| GET | `/api/battle/config` | User | Mức cược hợp lệ + số dư điểm hiện tại |
+| GET | `/api/battle/history` | User | Lịch sử trận đã đấu, phân trang (`limit`/`offset`) — **mở cho tất cả**, chưa khoá Premium ở Đợt 1 |
+| GET | `/api/battle/active` | User | **Mới (mục kỹ thuật #9)** — trận đang diễn ra của user hiện tại (nếu có), dùng để tự động vào lại trận đang dở |
+| Socket.io namespace | `/battle` | User (JWT qua `auth.token` khi handshake) | Toàn bộ luồng chơi realtime |
+
+#### GET /api/battle/config
+- **Request**: `GET /api/battle/config` (header `Authorization: Bearer <sessionToken>`)
+- **Response 200**:
+  ```json
+  { "stakes": [50, 100, 200, 500], "currentPoints": 850 }
+  ```
+- **Luồng xử lý**: `getBattleConfig` → `pointsService.getBalance(userId)`, trả kèm hằng số `BATTLE_STAKES`.
+- **Error codes**: `401` (thiếu/hết hạn session token, xử lý bởi middleware `verifyAppToken` chung).
+
+#### GET /api/battle/history
+- **Request**: `GET /api/battle/history?limit=10&offset=0`
+- **Response 200**:
+  ```json
+  {
+    "items": [
+      {
+        "id": "c3f1a9b0-...",
+        "subject": "toan",
+        "stake": 100,
+        "isBotMatch": false,
+        "opponentName": "Nguyễn Văn A",
+        "myScore": 87,
+        "opponentScore": 65,
+        "result": "WIN",
+        "pointsChange": 100,
+        "completedAt": "2026-07-22T08:15:30.000Z"
+      },
+      {
+        "id": "a72e401d-...",
+        "subject": "van",
+        "stake": 50,
+        "isBotMatch": true,
+        "opponentName": "Trần Thị Bích",
+        "myScore": 40,
+        "opponentScore": 52,
+        "result": "LOSE",
+        "pointsChange": -50,
+        "completedAt": "2026-07-21T14:02:11.000Z"
+      }
+    ],
+    "total": 2
+  }
+  ```
+- **Luồng xử lý**: `getBattleHistory(userId, limit, offset)` — `limit` mặc định 20 (tối đa 50), `offset` mặc định 0 (cả 2 fallback về mặc định an toàn nếu giá trị không hợp lệ, không lỗi 500). `result` suy từ `winnerId` đã lưu (KHÔNG so sánh điểm số, trừ trận với bot). ⚠️ `opponentName` **KHÔNG còn `null` cho trận bot** (thay đổi phạm vi muộn, mục kỹ thuật #9) — trận thứ 2 ở trên là bot (`isBotMatch: true`) nhưng vẫn trả tên giả "Trần Thị Bích" thay vì `null`.
+- **Error codes**: `401`.
+
+#### GET /api/battle/active
+> Endpoint mới (mục kỹ thuật #9) — không có trong thiết kế gốc của S1.
+
+- **Request**: `GET /api/battle/active` (header `Authorization: Bearer <sessionToken>`)
+- **Response 200 — còn trận đang sống**:
+  ```json
+  {
+    "active": true,
+    "match": {
+      "matchId": "c3f1a9b0-4e2a-4b7a-9d3e-1a2b3c4d5e6f",
+      "subject": "toan",
+      "stake": 100,
+      "opponentName": "Nguyễn Văn A",
+      "isBotMatch": false,
+      "myScore": 43,
+      "opponentScore": 30,
+      "opponentDisconnected": false,
+      "question": {
+        "questionIndex": 4,
+        "questionText": "2 + 2 x 2 = ?",
+        "options": ["4", "6", "8", "10"],
+        "secondsLeft": 12
+      }
+    }
+  }
+  ```
+- **Response 200 — không có trận nào đang sống**: `{ "active": false, "match": null }`
+- **Luồng xử lý**: `getActiveMatchSnapshot(userId)` — duyệt `liveMatches` (in-memory), tìm trận mà user là `player1`/`player2` và chưa `ended`. `question` là `null` nếu user vừa trả lời xong câu hiện tại (đang chờ đối thủ/câu tiếp theo). `opponentName` dùng đúng cơ chế ẩn danh tính bot như `GET /api/battle/history`. **Chỉ đúng khi trận còn sống trên process backend hiện tại** — nếu backend đã restart, luôn trả `active: false` dù trận có thể chưa "thực sự" kết thúc theo góc nhìn user.
+- **Error codes**: `401`.
+
+#### Socket.io — namespace `/battle`
+
+Kết nối: `io('/battle', { auth: { token: sessionToken } })`. Middleware xác thực tái sử dụng `verifyAppToken` — lỗi kết nối trả qua callback `connect_error` (không phải sự kiện `battle:error`), gồm: `MISSING_AUTH_TOKEN`, `INVALID_SESSION_TOKEN`, `SESSION_USER_NOT_FOUND`, `USER_BLOCKED`.
+
+**Client → Server:**
+
+| Event | Payload | Mô tả |
+|-------|---------|-------|
+| `battle:join-queue` | `{ subject, stake }` | Vào hàng đợi ghép trận thường |
+| `battle:create-room` | `{ subject, stake }` | Tạo phòng riêng, nhận mã qua `battle:room-created` |
+| `battle:join-room` | `{ roomCode }` | Vào phòng bằng mã — đủ 2 người thì bắt đầu trận ngay |
+| `battle:cancel-queue` | `{}` | Huỷ tìm trận (best-effort cả hàng đợi thường + phòng riêng) |
+| `battle:submit-answer` | `{ matchId, questionIndex, selectedOption, clientTimeMs }` | Nộp đáp án 1 câu (`clientTimeMs` chỉ để hiển thị, không dùng tính điểm) |
+
+**Server → Client:**
+
+| Event | Payload | Mô tả |
+|-------|---------|-------|
+| `battle:queue-status` | `{ waitingSeconds, currentCriteria }` | Cập nhật mỗi giây trong lúc chờ |
+| `battle:room-created` | `{ roomCode }` | Mã phòng 6 ký tự vừa tạo |
+| `battle:match-found` | `{ matchId, subject, stake, opponentName, isBotMatch }` | Trận đã ghép xong, chuẩn bị câu đầu tiên. ⚠️ `opponentName` KHÔNG còn "Máy" cho bot — tên giả kiểu người thật (mục kỹ thuật #9) |
+| `battle:question` | `{ questionIndex, questionText, options[4] }` | Câu hỏi hiện tại (gửi từng câu, không lộ trước) |
+| `battle:opponent-progress` | `{ questionIndex, opponentScore }` | Điểm đối thủ vừa cập nhật (không lộ đáp án của họ) |
+| `battle:question-result` | `{ questionIndex, correctOption, myPointsEarned, myTotalScore }` | Kết quả câu vừa trả lời (gửi riêng người đó) |
+| `battle:match-ended` | `{ result, myScore, opponentScore, pointsChange, newBalance }` | Kết thúc trận — `result` ∈ `WIN`\|`LOSE`\|`DRAW`\|`OPPONENT_LEFT_WIN`\|`CANCELLED_BOTH_LEFT` |
+| `battle:opponent-disconnected` | `{ gracePeriodSeconds: 30 }` | Báo đối thủ mất kết nối, đang chờ tối đa 30s. Server tạm dừng hẳn `questionTimer` trong lúc chờ (bug #9, mục kỹ thuật #8) |
+| `battle:error` | `{ code, message }` | Lỗi nghiệp vụ (xem bảng mã lỗi bên dưới) |
+
+**Mã lỗi (`battle:error.code`):**
+
+| Code | Khi nào xảy ra |
+|------|----------------|
+| `BATTLE_INVALID_SUBJECT` | Môn học không nằm trong `SUBJECT_CATALOG` |
+| `BATTLE_INVALID_STAKE` | Mức cược không thuộc `[50,100,200,500]` |
+| `BATTLE_INSUFFICIENT_POINTS` | Không đủ điểm để cược mức đã chọn |
+| `BATTLE_ALREADY_IN_QUEUE` | Đã ở trong hàng đợi, chưa huỷ/ghép xong mà vào lại |
+| `BATTLE_NOT_IN_QUEUE` | Huỷ hàng đợi nhưng không (còn) ở trong đó |
+| `BATTLE_ROOM_NOT_FOUND` | Mã phòng không tồn tại / đã dùng / người tạo đã ngắt kết nối |
+| `BATTLE_CANNOT_JOIN_OWN_ROOM` | Tự nhập mã phòng của chính mình |
+| `BATTLE_MATCH_NOT_FOUND` | Không tìm thấy trận theo ID |
+| `BATTLE_MATCH_NOT_OWNED` | Gửi sự kiện cho 1 trận không thuộc về mình |
+| `BATTLE_MATCH_NOT_IN_PROGRESS` | Trận đã kết thúc/huỷ nhưng vẫn có request liên quan |
+| `BATTLE_INVALID_QUESTION_INDEX` | Trả lời sai câu hiện tại hoặc đã trả lời rồi |
+| `BATTLE_NOT_ENOUGH_QUESTIONS` | Không đủ 10 câu MCQ_4 active cho môn đã chọn |
+| `BATTLE_INVALID_PAYLOAD` | Dữ liệu gửi lên sai định dạng (Zod validate thất bại) |
+| `BATTLE_ALREADY_IN_MATCH` | **Mới (bug #10, mục kỹ thuật #8)** — user đã có 1 trận đang diễn ra, bị chặn khi thử `join-queue`/`create-room`/`join-room` vào trận thứ 2 |
+
+### Các file chính liên quan
+
+**Backend:**
+- `backend/prisma/schema.prisma` — model `BattleMatch`, `BattleAnswer`
+- `backend/src/services/battle/battle.types.ts` — hằng số + kiểu dữ liệu dùng chung (bổ sung `ActiveBattleMatchSnapshot`/`ActiveBattleMatchResponse` — mục kỹ thuật #9)
+- `backend/src/services/battle/battle.errors.ts` — các lớp lỗi (`BattleError` + 14 lớp con, bổ sung `BattleAlreadyInMatchError` — mục kỹ thuật #8)
+- `backend/src/services/battle/battle.utils.ts` — hàm thuần (chấm điểm, xáo đáp án, tiêu chí ghép trận, mã phòng, `pickBotDisplayName` — mục kỹ thuật #9)
+- `backend/src/services/battle/battle.match.service.ts` — tầng dữ liệu (Prisma): chọn câu hỏi, tạo trận + khoá cược, thanh toán điểm, truy vấn REST
+- `backend/src/services/battle/battle.queue.service.ts` — hàng đợi ghép trận + phòng riêng (in-memory, pure state container)
+- `backend/src/services/battle/battle.engine.service.ts` — "bộ não" điều phối toàn bộ luồng chơi realtime (bổ sung `hasActiveMatch`, `getActiveMatchSnapshot`, tạm dừng/khởi động lại `questionTimer` — mục kỹ thuật #8/#9)
+- `backend/src/services/battle/battle.socket.ts` — khởi tạo namespace Socket.io `/battle` + middleware xác thực
+- `backend/src/routes/battle.route.ts` — 3 REST endpoint (`config`, `history`, `active` — endpoint `active` mới thêm ở mục kỹ thuật #9)
+- `backend/src/services/battle/__tests__/` — `battle.utils.test.ts` (33 test), `battle.queue.service.test.ts` (15 test), `battle.match.service.test.ts` (27 test, bổ sung bởi S3 vòng review đầu), `battle.engine.service.test.ts` (6 test, **mới** — bổ sung bởi S3 vòng làm lại theo yêu cầu S8, phủ đúng bug #9/#10 ở mục kỹ thuật #8)
+
+**Frontend:**
+- `frontend/src/lib/battleSocket.ts` — wrapper kết nối Socket.io + kiểu dữ liệu sự kiện
+- `frontend/src/lib/api.ts` — `getBattleConfig`, `getBattleHistory`, `getActiveBattleMatch` (REST — hàm mới ở mục kỹ thuật #9)
+- `frontend/src/App.tsx` — `BattlePage` (điều phối 4 phase: setup/queue/play/result) + `BattleSetupPhase`, `BattleQueuePhase`, `BattlePlayPhase`, `BattleResultPhase`, `BattleHistoryPage`; logic tự động resume (`BattleResumeState`, `BATTLE_ACTIVE_MATCH_KEY` trong `localStorage`) gọi ngay sau đăng nhập — mục kỹ thuật #9
+
+**Tài liệu:**
+- `docs/api/drafts/battle-mvp.yaml` — API contract (REST + Socket.io events), đã cập nhật khớp implementation + 3 thay đổi phạm vi muộn (mục kỹ thuật #8/#9)
+- `docs/CODE_REVIEW_LOG.md` (mục "Review: Feature 016" + mục "LÀM LẠI lần 1") — chi tiết đầy đủ tiêu chí review, 6 lỗi tìm thấy vòng đầu + bổ sung test tầng điều phối realtime vòng làm lại
+- `docs/TEST_CASES.md` (mục "Test Cases: Thi đấu đối kháng") — danh sách kịch bản nghiệp vụ quan trọng nhất (trong tổng 81 test tự động: 33+15+27+6, cộng thêm các kịch bản B1-B5 xác nhận thủ công bởi S5 chưa có test tự động phía FE)
+
+### Cách tự kiểm thử (manual test)
+
+1. Đăng nhập 2 tài khoản khác nhau (2 trình duyệt/tab ẩn danh) → cả 2 vào "⚔️ Thi đấu đối kháng" → chọn cùng môn + cùng mức cược → bấm "Tìm trận 🔍" → xác nhận cả 2 vào trận trong vòng vài giây (STRICT), thấy đúng tên đối thủ.
+2. Chỉ 1 tài khoản bấm "Tìm trận" (không có ai ghép) → chờ đủ 30 giây → xác nhận tự động ghép với "đối thủ" hiện tên giả kiểu người thật (KHÔNG còn chữ "Máy" hay icon 🤖 ở bất kỳ đâu — mục kỹ thuật #9) → xem lại "Lịch sử" sau khi trận kết thúc, xác nhận tên hiện GIỐNG HỆT tên lúc đang chơi (deterministic theo trận).
+3. Trả lời hết 10 câu (thử cả đúng/sai/để hết giờ không bấm) → xác nhận điểm cộng đúng công thức (10 + bonus tốc độ nếu đúng, 0 nếu sai/hết giờ) → màn kết quả hiện đúng thắng/thua/hoà + số điểm cộng/trừ + số dư mới.
+4. Vào "Lịch sử" → xác nhận trận vừa đấu xuất hiện đúng đầu danh sách, đúng kết quả/điểm.
+5. Test mời bạn bè: tài khoản A bấm "Tạo phòng mời bạn 👥" → lấy mã 6 ký tự → tài khoản B nhập mã vào ô "Vào phòng bằng mã" → xác nhận vào thẳng trận, không qua hàng đợi.
+6. Test huỷ phòng: A tạo phòng → bấm "Huỷ tìm trận" trước khi B vào → B thử nhập lại đúng mã đó → xác nhận nhận lỗi "không tìm thấy phòng" (`BATTLE_ROOM_NOT_FOUND`), không bị vào trận/trừ điểm.
+7. Test mất kết nối: 1 bên tắt tab giữa trận → bên còn lại thấy banner "Đối thủ mất kết nối, đang chờ tối đa 30 giây" (đếm ngược thật theo giây, đổi thành "đang xử lý…" khi về 0) → (a) mở lại tab trong vòng 30s → xác nhận vào lại đúng trận, không mất điểm đã có, KHÔNG bị "nhảy câu" oan trong lúc chờ (mục kỹ thuật #8); (b) không mở lại → sau 30s bên còn lại nhận thắng kỹ thuật (`OPPONENT_LEFT_WIN`).
+8. Test không đủ điểm: dùng tài khoản có điểm thấp, chọn mức cược cao hơn số dư → xác nhận nút bị disable kèm cảnh báo "Bạn không đủ điểm để cược mức này" (chặn ở FE), thử vẫn emit thẳng qua socket (dev tools) → xác nhận nhận `battle:error` với `BATTLE_INSUFFICIENT_POINTS`.
+9. **Test tự động vào lại trận đang dở (mục kỹ thuật #9)**: đang thi đấu → F5 lại trang (KHÔNG restart backend) → xác nhận app tự động vào thẳng lại ĐÚNG trận đang chơi (điểm số + câu hỏi hiện tại giữ nguyên), không cần bấm gì. Test nhánh 2: mất kết nối giữa trận, đợi quá 30 giây (để bị xử thua/thắng kỹ thuật) rồi mới mở lại app → xác nhận app tự động hiện THẲNG màn kết quả của trận đó (không "resume" lại được trận đã kết thúc).
+10. **Test chặn 2 trận cùng lúc (mã lỗi mới `BATTLE_ALREADY_IN_MATCH`, mục kỹ thuật #8)**: đang thi đấu 1 trận, mở thêm 1 tab/trình duyệt khác cùng tài khoản đó, thử bấm "Tìm trận"/"Tạo phòng"/"Vào phòng bằng mã" → xác nhận nhận `battle:error` với mã `BATTLE_ALREADY_IN_MATCH`, KHÔNG tạo trận thứ 2, KHÔNG bị trừ cược lần 2.
+
+### Lưu ý / rủi ro / TODO tiếp theo
+
+- **Chỉ chạy đúng với 1 instance backend** — hàng đợi, phòng riêng, trạng thái trận đều in-memory. Nếu scale nhiều instance sau này, bắt buộc phải chuyển sang Redis/pub-sub cho cả hàng đợi lẫn trạng thái trận đang diễn ra.
+- **Backend restart giữa trận đang diễn ra sẽ làm mất trận đó** — không có cơ chế khôi phục từ DB (2 bảng `battle_matches`/`battle_answers` chỉ lưu kết quả cuối, không đủ để "tiếp tục" 1 trận đang chơi dở). **Cập nhật (mục kỹ thuật #9)**: điều này CHỈ đúng khi backend THỰC SỰ restart — trường hợp phổ biến hơn nhiều (user chỉ F5/tắt mở lại tab, backend vẫn sống) nay đã tự động resume qua `GET /api/battle/active`, không còn bị mất.
+- **Đợt 2 (đã lùi lại, xem `workflow/handoff/PENDING/S1_saved_plan_battle.md`)**: hệ thống ELO/xếp hạng, mùa giải, danh hiệu, và phân biệt quyền lợi Free/Premium cho chế độ Battle (Đợt 1 mở cược/lịch sử như nhau cho mọi người).
+- **`GET /api/battle/history` hiện mở cho TẤT CẢ** (chưa khoá Premium) — cần rà lại nếu Đợt 2 quyết định giới hạn theo gói.
+- Chưa có giới hạn tần suất (rate limit) cho việc tạo phòng liên tục — chấp nhận được ở quy mô MVP, cân nhắc bổ sung nếu phát hiện lạm dụng.
+- **`GET /api/battle/active` chỉ đúng khi trận còn sống trên process backend hiện tại** (mục kỹ thuật #9) — cùng hạn chế 1-instance như hàng đợi/trạng thái trận; nếu sau này scale nhiều instance, cần đưa cả snapshot này qua Redis/pub-sub như đã ghi ở dòng đầu tiên.
+- Danh sách 12 tên giả cho bot (`BOT_DISPLAY_NAMES` trong `battle.utils.ts`) là danh sách cố định, cứng trong code — nếu 2 trận bot khác nhau tình cờ hash trùng cùng 1 tên, không gây lỗi (chỉ là 2 "người chơi ảo" trùng tên ngẫu nhiên, không ảnh hưởng logic).
