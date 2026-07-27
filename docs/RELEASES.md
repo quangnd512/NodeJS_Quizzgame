@@ -4,6 +4,47 @@
 
 ---
 
+## v1.14.0 — 2026-07-28
+
+### Thi đấu đối kháng — PvP Quiz Battle, Đợt 1/MVP (Feature 016)
+
+**Branch:** `feature/battle-mvp`
+
+#### Added
+
+- **Thi đấu đối kháng (PvP Quiz Battle)**: chế độ thi đấu trực tiếp 2 người chơi (hoặc 1 người + bot), 10 câu MCQ_4 cùng môn, trả lời realtime, cược điểm (50/100/200/500, giống nhau cho mọi user ở Đợt 1)
+- **Kết nối realtime Socket.io** — LẦN ĐẦU dự án dùng kết nối realtime (trước đó toàn bộ API là REST thuần), namespace `/battle`, xác thực tái sử dụng JWT session token nội bộ hiện có
+- **Ghép trận tự động**, nới lỏng tiêu chí dần theo thời gian chờ (0-10s đúng môn+cược → 10-20s đúng môn → 20-30s bất kỳ), tự động ghép với **bot** (tỉ lệ đúng ~65%) sau 30 giây không tìm được đối thủ
+- **Mời bạn bè qua mã phòng** 6 ký tự — bỏ qua hàng đợi thường
+- **Chấm điểm theo THỜI GIAN SERVER** (không tin thời gian client gửi lên) — 10 điểm cơ bản + bonus tốc độ 0-3 điểm/câu đúng, tối đa 130 điểm/trận
+- **Xử lý mất kết nối**: chờ 30 giây, xử thắng kỹ thuật nếu không quay lại kịp, huỷ hoàn cược nếu cả 2 cùng mất kết nối, reconnect giữ nguyên điểm đã tích luỹ nếu quay lại kịp
+- **3 endpoint REST**: `GET /api/battle/config` (mức cược hợp lệ + số dư điểm), `GET /api/battle/history` (lịch sử trận, phân trang, mở cho tất cả — chưa khoá Premium ở Đợt 1), `GET /api/battle/active` (tự động vào lại trận đang dở)
+- **DB mới**: model `BattleMatch`, `BattleAnswer`; 4 giá trị `PointReason` mới (`PVP_LOCK_BET`, `PVP_WIN`, `PVP_CANCELLED_REFUND`, `PVP_DRAW_REFUND`)
+- Màn hình FE mới: chọn môn/cược, chờ ghép trận, thi đấu realtime, kết quả, lịch sử trận đấu
+
+#### Changed
+
+- **Ẩn hoàn toàn danh tính bot khỏi người chơi**: đối thủ bot hiện 1 trong 12 tên giả kiểu người thật (deterministic theo `matchId`), không còn hiện "Máy 🤖"
+- **Tự động vào lại trận đang dở** sau khi tải lại trang/đăng nhập lại
+- Đếm ngược mất kết nối hiện đúng theo giây thật ("chờ 30s… 29s…")
+
+#### Fixed
+
+- Tạo trận + khoá cược gộp thành 1 transaction duy nhất, tránh "trận ma" mồ côi nếu lỗi giữa chừng
+- Trả điểm và chốt trạng thái trận gộp 1 transaction, tránh "đã trả điểm nhưng trận mãi IN_PROGRESS"
+- Race condition: bổ sung Compare-And-Swap chống thanh toán điểm 2 lần cho cùng 1 trận
+- Lịch sử trận đấu suy sai kết quả thắng/thua khi có thắng kỹ thuật do mất kết nối
+- Bug rò rỉ phòng mời bạn bè khi bấm "Huỷ tìm trận"
+- 2 đồng hồ đếm giờ (câu hỏi + chờ mất kết nối) chạy độc lập gây "nhảy câu" 0 điểm oan → tạm dừng đồng hồ câu hỏi khi chờ, khởi động lại khi đối thủ reconnect
+- Lỗ hổng bảo mật: 1 user mở 2 kết nối vào được 2 trận cùng lúc, khoá cược 2 lần → chặn bằng `BATTLE_ALREADY_IN_MATCH`
+
+**Migration cần chạy trên production:**
+
+- `npx prisma migrate deploy` (migration mới: `20260720032437_add_battle_matches`)
+- Không có biến môi trường mới
+
+---
+
 ## v1.13.0 — 2026-07-19
 
 ### Khung Free/Premium (Feature 015)
