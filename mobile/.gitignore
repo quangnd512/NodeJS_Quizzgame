@@ -31,7 +31,14 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
+
+# Firebase config nhay cam theo tung may/moi truong dev - KHONG commit (xem README.md).
+# GoogleService-Info.plist (iOS)/google-services.json (Android) khong chua bi mat "tuyet doi"
+# nhung chua ID du an/OAuth client rieng cua tung nguoi, tranh commit nham gay xung dot build.
+GoogleService-Info.plist
+google-services.json
 
 # typescript
 *.tsbuildinfo
