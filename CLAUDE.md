@@ -70,18 +70,21 @@ Mỗi phần có script khác nhau. Chạy lệnh không tồn tại sẽ báo l
 |------|---------------|----------|
 | `backend/` | `npm test` (vitest), `npm run build`, các `npm run smoke:*` | ✗ `lint` |
 | `frontend/` | `npm run lint`, `npm test` (vitest + jsdom), `npm run build` | — |
-| `mobile/` | `npm run lint`, `npm run typecheck` | ✗ `test`, ✗ `build` (EAS Build lo) |
+| `mobile/` | `npm run lint`, `npm run typecheck`, `npm test`¹ | ✗ `build` (EAS Build lo) |
+
+¹ ⚠️ **`npm test` của mobile KHÔNG chạy được trên máy phát triển hiện tại** — jest-expo phải
+biên dịch toàn bộ React Native, cần vài GB dung lượng tạm mà máy chỉ còn ~2GB. Chạy sẽ
+đứng hình ở 0% CPU chứ không báo lỗi rõ ràng. **Để CI chạy test mobile**, đừng chạy tại máy.
 
 **Viết test ở đâu:**
 - `backend/` → `src/**/__tests__/*.test.ts` (vitest, mock Prisma — không cần DB thật)
 - `frontend/` → `src/**/*.test.ts(x)` (vitest + @testing-library/react)
-- `mobile/` → **chưa có hạ tầng test**. Package `jest`/`jest-expo` đã cài sẵn trong
-  devDependencies nhưng chưa cấu hình xong. Kiểm thử mobile hiện dựa hoàn toàn vào
-  S5-ThuNghiem test tay + `npm run typecheck`. Xem `docs/LESSONS_LEARNED.md`.
+- `mobile/` → `src/**/__tests__/*.test.ts(x)` (jest-expo + @testing-library/react-native;
+  mock `expo-secure-store` có sẵn trong `mobile/jest.setup.js`) — **viết được, nhưng chỉ
+  verify được qua CI**
 
-**CI** (`.github/workflows/ci.yml`): backend chạy typecheck + **test** + build;
-frontend chạy lint + **test** + build; mobile chỉ lint + typecheck.
-Test fail ở backend/frontend sẽ chặn merge.
+**CI** (`.github/workflows/ci.yml`) chạy test cho **cả 3 phần** — test fail sẽ chặn merge.
+Với mobile, CI là nơi **duy nhất** verify được.
 
 Trước khi chạy, nếu không chắc: `node -e "console.log(Object.keys(require('./<phần>/package.json').scripts))"`
 

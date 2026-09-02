@@ -125,12 +125,17 @@ cd backend && npm test && npm run build && npm audit --audit-level=high
 # frontend/ → có đủ lint + test + build
 cd frontend && npm run lint && npm test && npm run build && npm audit --audit-level=high
 
-# mobile/   → chỉ có lint + typecheck (chưa có test, không có build)
+# mobile/   → lint + typecheck (KHÔNG chạy `npm test` tại máy — xem cảnh báo dưới)
 cd mobile && npm run lint && npm run typecheck && npm audit --audit-level=high
 ```
 
 - Đảm bảo không có lỗi TypeScript, không có warning lint
 - Nếu có high/critical vulnerability → tự fix hoặc ghi rõ lý do chấp nhận rủi ro
+
+⚠️ **Test của `mobile/` chỉ verify được trên CI**, không chạy tại máy (jest-expo cần vài GB
+dung lượng tạm — máy hiện tại sẽ đứng hình ở 0% CPU). Vẫn **viết test mobile** đầy đủ ở
+Bước 5.2, nhưng ghi rõ trong bản tổng kết: *"test mobile chờ CI verify"* thay vì báo PASS
+khi chưa chạy. S7 sẽ đọc kết quả CI thật trước khi merge.
 
 **Không chạy lại toàn bộ nếu S2 vừa chạy xong và không có gì thay đổi.**
 S2 đã tự kiểm tra ở Bước 4 của họ. Chỉ chạy lại khi:

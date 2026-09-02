@@ -235,27 +235,27 @@ Cân nhắc giữa "trừ điểm người thua lúc kết thúc" (đơn giản 
 
 ## Cải tiến quy trình — 2026-09-02
 
-**Việc còn dở: hạ tầng test cho `mobile/`**
+**Hạ tầng test `mobile/`: đã dựng xong, nhưng CHỈ verify được trên CI**
 
-Đã cài sẵn `jest`, `jest-expo`, `@testing-library/react-native`, `@react-native/jest-preset`
-vào `mobile/devDependencies`, nhưng **chưa cấu hình xong** nên chưa có script `test`.
+Đã cấu hình đầy đủ `jest` + `jest-expo` + `@testing-library/react-native` cho `mobile/`,
+có `jest.setup.js` mock `expo-secure-store` và test đầu tiên cho `secureStore`.
 
-Các vướng mắc đã gỡ được (ghi lại để lần sau nhanh hơn):
+⚠️ **Không chạy được trên máy phát triển** — không phải lỗi cấu hình:
+- Triệu chứng: `npm test` chạy 14 phút ở **0.0% CPU**, không in gì, không báo lỗi
+- Nguyên nhân: ổ đĩa chỉ còn ~1.9GB (90% đầy). jest-expo phải biên dịch toàn bộ React
+  Native, cần vài GB dung lượng tạm để ghi transform cache → không ghi được thì treo im
+- Kèm dấu hiệu máy swap nặng (261 triệu lần giải nén bộ nhớ)
+- **Bài học**: khi một lệnh build/test đứng ở 0% CPU thay vì ăn CPU, kiểm tra `df -h`
+  TRƯỚC khi nghi ngờ cấu hình sai — đó là dấu hiệu hết dung lượng, không phải lỗi code
+
+→ Giải pháp: để **CI verify test mobile**. CI runner của GitHub thừa tài nguyên.
+Role file S2/S3 đã ghi rõ: viết test mobile bình thường, nhưng không chạy tại máy,
+và không báo PASS khi chưa có kết quả CI.
+
+**Các xung đột version đã gỡ được** (ghi lại để lần sau nhanh hơn):
 - `jest@30` KHÔNG tương thích `jest-expo@57` → phải dùng `jest@29`
   (triệu chứng: `TypeError: Cannot read properties of undefined (reading 'alias')`)
-- `jest-expo@57` cần cài thêm `@react-native/jest-preset@^0.86.3` như một dependency riêng
+- `jest-expo@57` cần cài thêm `@react-native/jest-preset@^0.86.3` như dependency riêng
   (triệu chứng: "The React Native Jest preset ... has moved to a separate package")
-- Cài bằng `npm install -D ... --legacy-peer-deps` vì `react-native@0.86.0` và `jest-expo`
-  yêu cầu hai version `@react-native/jest-preset` khác nhau
-
-Lý do dừng: máy phát triển thiếu bộ nhớ/dung lượng, mỗi lần `npm install` và chạy jest lần
-đầu mất rất lâu. Chuyển hướng dùng EAS Build cho mobile.
-
-**Hiện trạng kiểm thử mobile**: dựa vào `npm run typecheck` + `npm run lint` (đã có trong CI)
-và S5-ThuNghiem test tay trên thiết bị thật.
-
-**Khi nào làm tiếp**: khi máy có đủ dung lượng, hoặc làm trên máy khác. Chỉ cần thêm lại
-`"test": "jest"` + khối cấu hình `jest` (preset `jest-expo`, `transformIgnorePatterns` cho
-`node_modules/(?!((jest-)?react-native|@react-native...|expo...))`) vào `mobile/package.json`,
-tạo `mobile/jest.setup.js` mock `expo-secure-store`, rồi thêm lại bước `Test` vào job
-`mobile` trong `.github/workflows/ci.yml`.
+- Phải cài bằng `--legacy-peer-deps` vì `react-native@0.86.0` và `jest-expo` yêu cầu
+  hai version `@react-native/jest-preset` khác nhau

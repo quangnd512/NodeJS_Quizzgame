@@ -69,7 +69,7 @@ jobs:
         run: npm run build
 
   mobile:
-    name: Mobile - lint & typecheck
+    name: Mobile - lint, typecheck & test
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -89,9 +89,12 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      # Mobile chưa có bước "build" và "test" trên CI:
-      #  - build thật do EAS Build lo (xem S9), không build trên runner này
-      #  - test: jest-expo chưa được thiết lập (xem docs/LESSONS_LEARNED.md)
-      # typecheck + lint là hai lớp kiểm tra hiện có cho mobile.
+      # Mobile không build trên CI — build thật do EAS Build lo (xem S9).
       - name: Type check
         run: npm run typecheck
+
+      # jest-expo phải biên dịch toàn bộ React Native nên cần nhiều RAM + dung lượng tạm.
+      # Máy phát triển hiện tại không đủ chỗ để chạy (xem docs/LESSONS_LEARNED.md),
+      # nên CI là nơi duy nhất verify được test mobile.
+      - name: Test
+        run: npm test

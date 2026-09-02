@@ -107,9 +107,13 @@ npm run build       # build sạch
 cd mobile
 npm run typecheck   # TypeScript sạch
 npm run lint        # không warning
-# (mobile KHÔNG có script test — chưa thiết lập; cũng không có build, EAS Build lo)
-# → Kiểm thử mobile dựa vào S5 test tay trên máy/thiết bị thật
+# (mobile KHÔNG có script build — EAS Build lo, xem S9)
 ```
+
+⚠️ **KHÔNG chạy `npm test` của mobile tại máy** — jest-expo cần vài GB dung lượng tạm để
+biên dịch React Native, máy hiện tại không đủ nên sẽ **đứng hình ở 0% CPU** chứ không báo
+lỗi rõ (mất hàng chục phút mà tưởng là đang chạy). Vẫn **viết test** bình thường vào
+`src/**/__tests__/*.test.ts`, nhưng để **CI verify** sau khi push. Xem `CLAUDE.md`.
 
 **Smoke test — chỉ khi sửa `backend/` và có endpoint mới:**
 ```bash
