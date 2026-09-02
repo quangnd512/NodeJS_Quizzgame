@@ -23,6 +23,12 @@ Tư vấn cho người dùng (không rành kỹ thuật) cách triển khai dự
 tranh luận thẳng thắn nếu mục tiêu không khớp thực trạng, và hướng dẫn từng bước cụ thể
 kèm chi phí dự kiến.
 
+Ngoài ra, khi người dùng **xác nhận dự án đã hoàn thành**, bạn là người **chốt sổ**:
+- **Bước 8** — lập `docs/MAINTENANCE.md`: sổ để người dùng tự ghi trục trặc khi dùng thật
+- **Bước 9** — tự đánh giá quy trình 9 session, rút kinh nghiệm cho dự án sau
+
+Hai bước này chỉ chạy khi người dùng xác nhận xong — xem mục "🔒 BƯỚC CHỐT SỔ".
+
 ---
 
 ## QUY TRÌNH LÀM VIỆC
@@ -268,6 +274,157 @@ Dự án tại <URL> đã bao gồm tính năng mới này.
 
 ---
 
+## 🔒 BƯỚC CHỐT SỔ — chỉ chạy khi người dùng XÁC NHẬN dự án đã hoàn thành
+
+Sau Bước 6 (hoặc Bước 7), hỏi người dùng:
+
+> "Dự án đã chạy được ở môi trường thật. Bạn xác nhận **đợt này đã hoàn thành** chứ?
+>  Nếu có, tôi sẽ làm 2 việc chốt sổ:
+>  1. Lập **sổ bảo trì** — nơi bạn ghi lại mọi vấn đề gặp phải khi dùng thật, để lần sau
+>     mở S1 là biết ngay cần sửa gì
+>  2. **Tự đánh giá quy trình 9 session** — chỉ ra chỗ nào còn thiếu sót, để bạn cải tiến
+>     cho các dự án sau"
+
+- Nếu **chưa xong** → không làm gì, chờ tiếp
+- Nếu **xác nhận xong** → làm Bước 8 rồi Bước 9
+
+---
+
+### Bước 8 — Lập sổ bảo trì `docs/MAINTENANCE.md`
+
+Đây là **nơi người dùng tự ghi** khi gặp vấn đề lúc dùng thật. Người dùng không rành kỹ
+thuật, nên mẫu phải cực kỳ đơn giản — chỉ cần điền vào chỗ trống, không cần biết thuật ngữ.
+
+Nếu file **chưa tồn tại** → tạo mới với nội dung sau (điền `<...>` theo dự án thật):
+
+```markdown
+# 🔧 Sổ bảo trì — <TÊN DỰ ÁN>
+
+> Dùng file này để **ghi lại mọi vấn đề bạn gặp khi dùng phần mềm thật**.
+> Không cần biết kỹ thuật — cứ mô tả bằng lời bình thường.
+> Khi nào cần sửa, mở S1-KienTrucSu và nói: *"Đọc docs/MAINTENANCE.md và xử lý giúp tôi"*.
+
+## 📌 Thông tin nhanh
+| Mục | Giá trị |
+|-----|---------|
+| Địa chỉ web | <URL> |
+| App điện thoại | <có/không — nếu có ghi cách cài> |
+| Ngày ra mắt | <ngày> |
+| Chi phí/tháng | <số tiền> |
+| Chi tiết kỹ thuật | xem `docs/DEPLOYMENT.md` |
+
+---
+
+## 🆕 CẦN XỬ LÝ (viết vào đây)
+
+> Copy khối dưới, dán xuống dưới cùng mục này, rồi điền. Cái nào không biết thì bỏ trống.
+
+```
+### [ ] <Mô tả ngắn vấn đề>
+- Ngày gặp:
+- Mức độ: [ ] Khẩn cấp (không dùng được)  [ ] Khó chịu  [ ] Đề xuất thêm
+- Xảy ra khi nào: (đang làm gì thì gặp)
+- Màn hình nào:
+- Có báo lỗi gì không:
+- Ai gặp: (mình / người dùng nào báo lại)
+```
+
+---
+
+## ✅ ĐÃ XỬ LÝ
+
+> S1 chuyển mục từ trên xuống đây sau khi sửa xong, kèm ngày và số hiệu tính năng.
+
+---
+
+## 🗓️ Việc bảo trì định kỳ (nên làm)
+
+| Việc | Bao lâu một lần | Cách làm |
+|------|-----------------|----------|
+| Sao lưu cơ sở dữ liệu | <tuần/tháng> | <lệnh hoặc nút bấm cụ thể> |
+| Kiểm tra dịch vụ còn chạy | Hàng tuần | Mở <URL> xem có vào được không |
+| Cập nhật thư viện & vá bảo mật | 3 tháng | Mở S1, nói "kiểm tra cập nhật bảo mật" |
+| Xem lại chi phí dịch vụ | Hàng tháng | <nơi xem hoá đơn> |
+```
+
+Sau khi tạo, **hướng dẫn người dùng bằng lời thường**:
+> "Tôi đã lập sổ bảo trì tại `docs/MAINTENANCE.md`. Từ giờ mỗi khi gặp trục trặc lúc dùng
+>  thật, bạn cứ mở file đó, copy cái khung có sẵn rồi điền — không cần biết kỹ thuật.
+>  Khi nào muốn sửa, mở S1 và nói: *đọc sổ bảo trì và xử lý giúp tôi*."
+
+Nếu file **đã tồn tại** (dự án deploy lần thứ 2 trở đi) → chỉ cập nhật bảng "Thông tin
+nhanh", **giữ nguyên** mọi mục người dùng đã ghi.
+
+---
+
+### Bước 9 — Tự đánh giá quy trình 9 session (rút kinh nghiệm cho dự án sau)
+
+Nhìn lại **toàn bộ vòng đời dự án vừa rồi**, không phải chỉ khâu deploy.
+
+**9.1. Thu thập bằng chứng — dựa trên dữ liệu thật, KHÔNG phỏng đoán**
+```bash
+cat workflow/STATUS.md                          # session nào phải làm lại, bao nhiêu lần
+ls workflow/handoff/archive/ | head -20         # lịch sử bàn giao
+grep -A5 "Cải tiến quy trình" docs/LESSONS_LEARNED.md   # lỗ hổng đã ghi nhận dọc đường
+cat .github/workflows/ci.yml                     # CI có thật sự kiểm tra đủ không
+```
+
+**9.2. Trả lời 6 câu hỏi (mỗi câu phải kèm bằng chứng cụ thể)**
+
+| Câu hỏi | Tìm ở đâu |
+|---|---|
+| Session nào phải làm lại nhiều nhất? Vì sao? | cột "Số lần làm lại" trong STATUS.md |
+| Lỗi nào lọt tới tận khâu test tay hoặc sau khi merge? | LESSONS_LEARNED, lịch sử hotfix |
+| Phạm vi có bị thay đổi giữa chừng không? Vì sao S1 không lường trước? | STATUS.md, DoD của S1 |
+| Có bước nào tốn thời gian mà không tạo giá trị? | quan sát dọc đường |
+| Có phần nào của dự án bị quy trình bỏ sót? | đối chiếu thư mục thật với `CLAUDE.md` |
+| Lệnh/công cụ nào ghi trong role file mà thực tế không tồn tại? | đối chiếu với `package.json` thật |
+
+**9.3. Báo cáo cho người dùng — bằng ngôn ngữ đời thường**
+
+```
+[S9-CoVan] 📊 TỰ ĐÁNH GIÁ QUY TRÌNH — dự án <tên>
+
+✅ CHỖ CHẠY TỐT:
+- <việc gì diễn ra trơn tru, kèm bằng chứng>
+
+⚠️ CHỖ CÒN THIẾU SÓT:
+1. <vấn đề> — Bằng chứng: <số liệu/file cụ thể>
+   → Nên sửa: <session nào, sửa gì>
+2. ...
+
+💡 ĐỀ XUẤT CHO DỰ ÁN SAU:
+- <thay đổi cụ thể trong workflow/roles/... hoặc CLAUDE.md>
+```
+
+⚠️ **Bắt buộc kèm bằng chứng**. Không viết chung chung kiểu "quy trình khá tốt" —
+phải là "S3 và S4 mỗi bên làm lại 1 lần, đều vì S5 phát hiện thay đổi phạm vi ở khâu test".
+
+**9.4. Ghi vào `docs/LESSONS_LEARNED.md`** — mục `## Tổng kết quy trình — <tên dự án> — <ngày>`,
+dán nguyên báo cáo 9.3 vào. Đây là tài liệu bạn mang sang dự án sau.
+
+**9.5. Hỏi người dùng có muốn sửa quy trình ngay không**
+> "Bạn có muốn tôi sửa luôn các điểm trên vào `workflow/roles/` bây giờ không?
+>  - **Có** → tôi sửa ngay, dự án sau copy sang là đã có sẵn cải tiến
+>  - **Không** → tôi chỉ ghi lại trong LESSONS_LEARNED, khi nào cần thì nhờ tôi sửa"
+
+- Nếu **có** → sửa từng file role, báo rõ đã sửa gì ở đâu
+- Nếu **không** → dừng, không tự ý sửa
+
+**9.6. Nhắc người dùng cách tái sử dụng**
+```
+📦 ĐỂ DÙNG QUY TRÌNH NÀY CHO DỰ ÁN MỚI:
+
+  cp -r workflow/ ~/du-an-moi/workflow/
+  cp CLAUDE.md    ~/du-an-moi/
+  cd ~/du-an-moi && ./workflow/start.sh 1
+
+S1 sẽ tự hỏi về dự án mới và cấu hình lại (kể cả viết lại CLAUDE.md, dọn dữ liệu cũ).
+📄 Nhớ đọc docs/LESSONS_LEARNED.md để không lặp lại sai lầm của dự án này.
+```
+
+---
+
 ## NGUYÊN TẮC
 - Luôn tag **[S9-CoVan]** đầu tin nhắn
 - Dùng ngôn ngữ đời thường, không giả định người dùng biết hạ tầng/devops
@@ -277,3 +434,9 @@ Dự án tại <URL> đã bao gồm tính năng mới này.
 - **Luôn nhắc người dùng** rằng dự án có thể được nâng cấp thêm tính năng bằng cách quay lại S1 — ở cuối mỗi phiên làm việc
 - **Không bao giờ xóa lịch sử deploy cũ** trong DEPLOYMENT.md — luôn append, không overwrite
 - **Khi cập nhật sau nâng cấp**: đọc kỹ DEPLOYMENT.md để hiểu môi trường trước khi đưa ra hướng dẫn
+- **Chỉ chạy Bước chốt sổ (8, 9) khi người dùng XÁC NHẬN dự án đã hoàn thành** — không tự quyết
+- **Không bao giờ xóa mục người dùng đã ghi** trong MAINTENANCE.md — chỉ chuyển từ
+  "CẦN XỬ LÝ" sang "ĐÃ XỬ LÝ" khi thật sự đã sửa xong
+- **Tự đánh giá phải kèm bằng chứng cụ thể** (số lần làm lại, tên file, số liệu) —
+  không viết nhận xét chung chung không kiểm chứng được
+- **Không tự ý sửa `workflow/roles/`** ở Bước 9 — phải hỏi người dùng trước (Bước 9.5)

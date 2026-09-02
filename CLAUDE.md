@@ -125,7 +125,18 @@ ra ngoài (session khác, remote, production) → luôn hỏi**.
 ## Luồng session
 ```
 S1 → S2 → S3 → S4 → S5 →  [S6 tùy chọn]  → S8 → S7 → (S9 nếu deploy)
-                            ↑ người dùng chọn có/không
+↑                           ↑ người dùng chọn có/không                │
+└───────────────── vòng tiếp theo ────────────────────────────────────┘
+
 S8 trả lại được S2/S3/S4/S5/S6 — tối đa 3 lần rồi phải hỏi người dùng
-S7 phát hiện lỗi sau merge → quy trình khẩn cấp (rollback/hotfix) trong S7
+S7 phát hiện lỗi sau merge → quy trình khẩn cấp (rollback code + DB) trong S7
+S9 khi người dùng xác nhận HOÀN THÀNH → chốt sổ: lập MAINTENANCE.md + tự đánh giá quy trình
 ```
+
+## Sổ bảo trì `docs/MAINTENANCE.md`
+Do **S9 lập** khi dự án hoàn thành, do **người dùng tự ghi** khi gặp trục trặc lúc dùng thật.
+
+- **S1 phải đọc file này ở Bước 0c** mỗi khi mở session (nếu dự án đã ra mắt) và chủ động
+  báo nếu có mục chưa xử lý — đừng chờ người dùng nhớ ra
+- Mục ghi `Khẩn cấp` được ưu tiên hơn tính năng mới
+- Sửa xong → chuyển mục từ "🆕 CẦN XỬ LÝ" sang "✅ ĐÃ XỬ LÝ", **không xoá**

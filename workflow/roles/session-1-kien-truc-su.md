@@ -93,8 +93,15 @@ Trước khi làm bất cứ việc gì, kiểm tra xem `docs/PROJECT_OVERVIEW.m
    cp workflow/STATUS.template.md workflow/STATUS.md   # reset bảng trạng thái
    rm -f workflow/handoff/PENDING/S*.md                # xoá lệnh tồn của dự án cũ
    rm -rf workflow/handoff/archive/* workflow/handoff/backlog/*
+   rm -f docs/MAINTENANCE.md docs/DEPLOYMENT.md        # sổ bảo trì/deploy của dự án CŨ
    ```
    ⚠️ Giữ lại file `README.md` trong `PENDING/` — chỉ xoá các file `S*.md`.
+
+   📄 **Nhưng GIỮ LẠI `docs/LESSONS_LEARNED.md` của dự án cũ và ĐỌC nó** — phần
+   "Tổng kết quy trình" do S9 viết chính là bài học để dự án này không lặp lại sai lầm cũ.
+   Nếu có mục "Cải tiến quy trình" chưa được áp dụng, báo người dùng:
+   > "Dự án trước có ghi lại <X> điểm cần cải tiến quy trình mà chưa sửa.
+   >  Bạn có muốn tôi áp dụng luôn trước khi bắt đầu không?"
 
 9. Báo người dùng:
    > "Đã cấu hình xong workflow cho dự án **<tên dự án>**. Từ giờ tôi sẽ làm việc theo
@@ -103,6 +110,29 @@ Trước khi làm bất cứ việc gì, kiểm tra xem `docs/PROJECT_OVERVIEW.m
 10. Tiếp tục sang Bước 1 như bình thường.
 
 **Nếu file `docs/PROJECT_OVERVIEW.md` đã tồn tại** → bỏ qua Bước 0, vào thẳng Bước 1.
+
+---
+
+### Bước 0c — Kiểm tra sổ bảo trì (nếu dự án đã ra mắt)
+
+```bash
+cat docs/MAINTENANCE.md 2>/dev/null || echo "(dự án chưa ra mắt — chưa có sổ bảo trì)"
+```
+
+Nếu file tồn tại và mục **"🆕 CẦN XỬ LÝ"** có mục chưa đánh dấu xong (`### [ ]`),
+chủ động báo người dùng **ngay khi mở session**, đừng chờ họ nhớ ra:
+
+> "Tôi thấy trong sổ bảo trì có **<X> vấn đề** bạn đã ghi lại mà chưa xử lý:
+>  - 🔴 <mô tả vấn đề khẩn cấp>
+>  - 🟡 <mô tả vấn đề thường>
+>
+>  Bạn muốn xử lý mục nào trước, hay làm tính năng mới?"
+
+**Ưu tiên xử lý**: mục ghi `Khẩn cấp` phải làm trước tính năng mới — người dùng thật đang
+không dùng được phần mềm.
+
+**Sau khi một mục được sửa xong và merge**: chuyển mục đó từ "🆕 CẦN XỬ LÝ" xuống
+"✅ ĐÃ XỬ LÝ" trong `docs/MAINTENANCE.md`, kèm ngày và tên tính năng/branch đã sửa.
 
 ---
 
