@@ -54,10 +54,19 @@ Trình bày cho người dùng dưới dạng checklist rõ ràng:
 
 ═══════════════════════════════════════
 
-⚙️ CHUẨN BỊ:
-□ Backend đang chạy: npm run dev (port 4000)
-□ Frontend đang chạy: npm run dev (port 5175)
-□ Database có dữ liệu test
+⚙️ CHUẨN BỊ: (chọn theo phần mà tính năng này thuộc về — xem nhãn [phần] trong TASK của S1)
+
+□ Backend đang chạy: cd backend && npm run dev (cổng 4000)
+□ Database có dữ liệu test (PostgreSQL cổng 5433)
+
+  → Nếu test tính năng WEB:
+□ Web đang chạy: cd frontend && npm run dev (Vite tự chọn cổng, xem terminal)
+
+  → Nếu test tính năng MOBILE:
+□ Cách nhanh nhất — chạy trên trình duyệt: cd mobile && npm run web
+□ Cách đầy đủ — chạy trên điện thoại thật: cd mobile && npx expo start
+  (điện thoại và máy tính phải cùng WiFi; EXPO_PUBLIC_API_URL trong mobile/.env
+   phải trỏ đúng IP LAN của máy chạy backend, KHÔNG dùng localhost)
 
 ═══════════════════════════════════════
 

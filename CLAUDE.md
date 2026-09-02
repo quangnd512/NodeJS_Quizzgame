@@ -44,17 +44,41 @@ Quy tắc bắt buộc khi ghi PENDING cho session kế tiếp:
 - Session nhận việc: nếu tóm tắt không đủ rõ để làm ngay, **đọc file gốc** trước khi hỏi lại
   người dùng — đừng đoán ý dựa trên bản tóm tắt mơ hồ
 
-## Stack dự án
+## Stack dự án — NGUỒN SỰ THẬT DUY NHẤT
 <!-- ⚠️ ĐỔI TOÀN BỘ MỤC NÀY khi dùng cho dự án khác -->
-- Backend: Node.js + Express + TypeScript, PostgreSQL + Prisma
-- Mobile: React Native + Expo 57 + TypeScript
-- Auth: Firebase + JWT
-- Thư mục: `backend/` và `mobile/`
+<!-- ⚠️ KHÔNG khai báo stack ở bất kỳ file role nào khác — chỉ ở đây, tránh mâu thuẫn -->
+
+Dự án có **3 phần**. Mọi TASK phải xác định rõ thuộc phần nào.
+
+| Phần | Thư mục | Stack |
+|------|---------|-------|
+| Backend | `backend/` | Node.js + Express 4 + TypeScript 5, Prisma **v6** (KHÔNG v7), Socket.io 4, firebase-admin |
+| Web | `frontend/` | React **19** + Vite 8 + TypeScript 6, socket.io-client, firebase web SDK |
+| Mobile | `mobile/` | React Native 0.86 + **Expo 57** + TypeScript 6, React Navigation 7, firebase web SDK |
+
+**Hạ tầng**: PostgreSQL cổng `5433`, Redis cổng `6379`, backend chạy cổng `4000`,
+web dev cổng mặc định Vite (5173, tự tăng nếu bận — Vite proxy `/api` và `/socket.io` sang 4000).
+
+**Quy ước code chung**: TypeScript strict, KHÔNG dùng `any`, module NodeNext (không `require`),
+custom error class + `ERROR_CODE_TO_HTTP_STATUS`, middleware `verifyAppToken` cho route sau `/login`.
+
+### ⚠️ Lệnh kiểm tra khác nhau theo từng phần — KHÔNG chạy mù
+
+Mỗi phần có script khác nhau. Chạy lệnh không tồn tại sẽ báo lỗi giả:
+
+| Phần | Kiểm tra bằng | KHÔNG có |
+|------|---------------|----------|
+| `backend/` | `npm test` (vitest), `npm run build`, các `npm run smoke:*` | ✗ `lint` |
+| `frontend/` | `npm run lint`, `npm run build` | ✗ `test` |
+| `mobile/` | `npm run lint`, `npm run typecheck` | ✗ `test`, ✗ `build` |
+
+Trước khi chạy, nếu không chắc: `node -e "console.log(Object.keys(require('./<phần>/package.json').scripts))"`
 
 ## Git
 <!-- ⚠️ KIỂM TRA LẠI MỤC NÀY khi dùng cho dự án khác (tên nhánh chính có thể là main) -->
+- Nhánh chính: **`master`** (không phải `main`)
 - Branch hiện tại xem bằng: `git branch --show-current`
-- Không tự push lên main/master — chỉ push feature branch
+- Không tự push lên master — chỉ push feature branch
 - Commit message: `feat/fix/chore(scope): mô tả ngắn`
 
 ## Workflow — 3 thư mục handoff (KHÔNG lẫn nhau)

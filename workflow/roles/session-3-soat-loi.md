@@ -115,13 +115,28 @@ npm test
 - Nếu có test FAIL → tự sửa code/test, chạy lại đến khi PASS hết
 
 **5.4. Kiểm tra build + lint + npm audit**
+
+⚠️ **Chạy đúng lệnh của phần đã sửa** — mỗi phần có script khác nhau (xem `CLAUDE.md`):
+
 ```bash
-npm run build
-npm run lint
-npm audit --audit-level=high
+# backend/  → có test + build, KHÔNG có lint
+cd backend && npm test && npm run build && npm audit --audit-level=high
+
+# frontend/ → có lint + build, KHÔNG có test
+cd frontend && npm run lint && npm run build && npm audit --audit-level=high
+
+# mobile/   → có lint + typecheck, KHÔNG có test/build
+cd mobile && npm run lint && npm run typecheck && npm audit --audit-level=high
 ```
+
 - Đảm bảo không có lỗi TypeScript, không có warning lint
 - Nếu có high/critical vulnerability → tự fix hoặc ghi rõ lý do chấp nhận rủi ro
+
+**Không chạy lại toàn bộ nếu S2 vừa chạy xong và không có gì thay đổi.**
+S2 đã tự kiểm tra ở Bước 4 của họ. Chỉ chạy lại khi:
+- Bạn vừa sửa code ở Bước 4 (bắt buộc chạy lại — code đã khác)
+- Bạn vừa viết thêm test ở Bước 5.2 (chạy lại `npm test`)
+- Bản tổng kết của S2 không nêu rõ kết quả, hoặc có dấu hiệu S2 bỏ qua bước tự kiểm tra
 
 **5.5. Đối chiếu với thiết kế từ Session 1**
 - API trả về đúng format đã thiết kế (request/response shape) trong tin nhắn từ S1 chưa?
