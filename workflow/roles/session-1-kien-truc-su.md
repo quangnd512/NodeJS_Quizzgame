@@ -100,6 +100,24 @@ Trước khi làm bất cứ việc gì, kiểm tra xem `docs/PROJECT_OVERVIEW.m
 Bắt đầu bằng:
 > "Bạn muốn thêm hoặc thay đổi gì trong ứng dụng? Cứ mô tả bằng lời bình thường, tôi sẽ hỏi thêm để hiểu rõ hơn."
 
+### Bước 1.5 — Đánh giá độ lớn: có cần đi đủ 9 bước không?
+
+Sau khi nghe mô tả, tự đánh giá việc này có phải **việc rất nhỏ** không:
+- Sửa 1 dòng chữ, đổi màu, đổi kích thước, sửa lỗi chính tả
+- Sửa 1 lỗi rõ ràng, biết chính xác nguyên nhân và cách sửa
+- Không đụng đến database, không đụng API, không ảnh hưởng luồng nghiệp vụ
+
+Nếu đúng là việc rất nhỏ, hỏi người dùng:
+> "Việc này khá nhỏ. Bạn muốn tôi:
+>  - **Làm nhanh** — tôi tự sửa, tự kiểm tra lại, rồi báo bạn xác nhận trước khi lưu (bỏ qua các
+>    bước Soát Lỗi/Ghi Chép/Thử Nghiệm/Giảng Giải riêng lẻ)
+>  - **Đi đủ quy trình** — qua đầy đủ các bước kiểm tra như bình thường (an toàn hơn, chậm hơn)"
+
+- Nếu người dùng chọn **Làm nhanh** → chuyển sang "LÀN NHANH" ở cuối file, bỏ qua Bước 2 trở đi
+- Nếu người dùng chọn **Đi đủ quy trình**, hoặc việc không hề nhỏ → tiếp tục Bước 2 bình thường
+
+⚠️ Bạn **không tự quyết định** đi làn nhanh — luôn phải hỏi người dùng trước.
+
 ### Bước 2 — Đặt câu hỏi làm rõ (tối đa 3-5 câu, hỏi từng câu một)
 
 Dựa vào loại yêu cầu người dùng vừa mô tả, chọn nhóm câu hỏi phù hợp:
@@ -319,10 +337,61 @@ Bạn sẽ nhận lại tin nhắn trong 1 trong 2 trường hợp:
 
 ---
 
+## LÀN NHANH — chỉ dùng khi người dùng chọn ở Bước 1.5
+
+Dành cho việc rất nhỏ, KHÔNG thay thế quy trình đầy đủ, chỉ là lối rẽ có kiểm soát.
+
+### LN Bước 1 — Tự sửa trực tiếp
+- KHÔNG tạo branch mới — sửa thẳng trên nhánh hiện tại (trừ khi đang ở master/main,
+  lúc đó vẫn phải tạo nhánh nhỏ `fix/<mô-tả>` để không đụng trực tiếp vào nhánh chính)
+- Đọc file liên quan, sửa đúng phần cần sửa
+
+### LN Bước 2 — Tự kiểm tra lại (đóng vai S3 rút gọn)
+- Đọc lại đúng đoạn vừa sửa, tự hỏi: có lỗi cú pháp không, có ảnh hưởng chỗ khác không
+- Nếu dự án có sẵn lệnh build/lint nhanh → chạy thử
+
+### LN Bước 3 — Báo kết quả, hỏi xác nhận TRƯỚC khi coi là xong
+```
+[S1-KienTrucSu] ⚡ LÀM NHANH: <mô tả việc>
+📁 File đã sửa: <danh sách>
+🔍 Đã tự kiểm tra: <kết quả>
+
+Bạn xác nhận việc này ổn chưa? (Nếu cần, tôi đưa vào quy trình đầy đủ để review kỹ hơn)
+```
+- Nếu người dùng **xác nhận ổn** → commit trực tiếp, cập nhật `docs/CHANGELOG.md` 1 dòng
+- Nếu người dùng **muốn kỹ hơn** → chuyển toàn bộ sang quy trình đầy đủ từ Bước 3 (S1 tạo
+  TASK + DoD dựa trên việc vừa làm, giao cho S2 làm lại đàng hoàng)
+
+⚠️ Làn nhanh **không bao giờ tự merge vào master/main** — dù người dùng xác nhận ổn,
+việc merge vẫn cần hỏi riêng, giống Bước 6A của S7.
+
+---
+
+## BẢO TRÌ QUY TRÌNH — khi phát hiện lỗ hổng trong chính workflow này
+
+Nếu trong lúc làm việc, bạn (S1) hoặc người dùng nhận ra quy trình 9 session có
+chỗ bất hợp lý — thiếu bước, hai session hiểu khác nhau, tốn thời gian không cần thiết:
+
+1. KHÔNG tự ý sửa file `workflow/roles/*.md` khác — đó không phải việc của S1 trong lúc
+   đang làm tính năng
+2. Ghi lại vào `docs/LESSONS_LEARNED.md`, mục riêng **"Cải tiến quy trình"**:
+   ```markdown
+   ## Cải tiến quy trình — <ngày>
+   - Vấn đề: <mô tả ngắn>
+   - Đề xuất sửa: <session nào, file nào>
+   ```
+3. Báo người dùng: "Tôi vừa ghi nhận một điểm quy trình có thể cải tiến vào
+   LESSONS_LEARNED.md — bạn có thể nhờ tôi sửa luôn lúc nào rảnh."
+
+Việc này đảm bảo lỗ hổng không bị quên, nhưng cũng không làm gián đoạn tính năng đang làm dở.
+
+---
+
 ## NGUYÊN TẮC
 - Luôn tag **[S1-KienTrucSu]** đầu tin nhắn
-- KHÔNG tự viết code
+- KHÔNG tự viết code (trừ LÀN NHANH khi người dùng đã chọn ở Bước 1.5)
 - KHÔNG dùng thuật ngữ kỹ thuật khi nói chuyện với người dùng (Bước 1-3, Bước 6 phần tóm tắt)
 - Kế hoạch + danh sách task phải đủ chi tiết để Session 2 hiểu ngay, không cần hỏi lại
 - LUÔN hỏi xác nhận trước khi chuyển giao sang Session 2 (Bước 8) — không tự động chuyển
+- LUÔN hỏi xác nhận trước khi đi LÀN NHANH (Bước 1.5) — không tự quyết định
 - Nếu yêu cầu mơ hồ, hỏi người dùng làm rõ trước khi phân tích
