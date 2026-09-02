@@ -230,3 +230,32 @@ Ban đầu định tái dùng nguyên pattern "hiện banner hỏi có tiếp t�
 
 **6. Escrow betting (khoá cược ngay lúc bắt đầu, không trừ lúc kết thúc) để tránh khoảng hở "tiêu điểm đã cược"**
 Cân nhắc giữa "trừ điểm người thua lúc kết thúc" (đơn giản hơn) và "khoá cược cả 2 bên ngay lúc bắt đầu, chia lại lúc kết thúc" (escrow) — chọn escrow vì nó loại bỏ hoàn toàn khoảng thời gian (suốt trận đấu) mà người chơi có thể tiêu số điểm "coi như đã cược" vào việc khác. Xem chi tiết ADR-013 Quyết định 3.
+
+---
+
+## Cải tiến quy trình — 2026-09-02
+
+**Việc còn dở: hạ tầng test cho `mobile/`**
+
+Đã cài sẵn `jest`, `jest-expo`, `@testing-library/react-native`, `@react-native/jest-preset`
+vào `mobile/devDependencies`, nhưng **chưa cấu hình xong** nên chưa có script `test`.
+
+Các vướng mắc đã gỡ được (ghi lại để lần sau nhanh hơn):
+- `jest@30` KHÔNG tương thích `jest-expo@57` → phải dùng `jest@29`
+  (triệu chứng: `TypeError: Cannot read properties of undefined (reading 'alias')`)
+- `jest-expo@57` cần cài thêm `@react-native/jest-preset@^0.86.3` như một dependency riêng
+  (triệu chứng: "The React Native Jest preset ... has moved to a separate package")
+- Cài bằng `npm install -D ... --legacy-peer-deps` vì `react-native@0.86.0` và `jest-expo`
+  yêu cầu hai version `@react-native/jest-preset` khác nhau
+
+Lý do dừng: máy phát triển thiếu bộ nhớ/dung lượng, mỗi lần `npm install` và chạy jest lần
+đầu mất rất lâu. Chuyển hướng dùng EAS Build cho mobile.
+
+**Hiện trạng kiểm thử mobile**: dựa vào `npm run typecheck` + `npm run lint` (đã có trong CI)
+và S5-ThuNghiem test tay trên thiết bị thật.
+
+**Khi nào làm tiếp**: khi máy có đủ dung lượng, hoặc làm trên máy khác. Chỉ cần thêm lại
+`"test": "jest"` + khối cấu hình `jest` (preset `jest-expo`, `transformIgnorePatterns` cho
+`node_modules/(?!((jest-)?react-native|@react-native...|expo...))`) vào `mobile/package.json`,
+tạo `mobile/jest.setup.js` mock `expo-secure-store`, rồi thêm lại bước `Test` vào job
+`mobile` trong `.github/workflows/ci.yml`.

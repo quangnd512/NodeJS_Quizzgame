@@ -244,7 +244,8 @@ Chỉ dùng khi tính năng đã vào `master` rồi mới lộ lỗi. Quyết �
 
 ### Bước B — Rollback (chỉ khi 🔴)
 
-Ưu tiên **revert**, KHÔNG `reset --hard` trên master (master đã push, reset sẽ phá lịch sử của người khác):
+**B1. Rollback CODE** — ưu tiên `revert`, KHÔNG `reset --hard` trên master
+(master đã push, reset sẽ phá lịch sử của người khác):
 
 ```bash
 git checkout master && git pull origin master
@@ -253,7 +254,49 @@ git revert -m 1 <mã-commit-merge>          # -m 1 = giữ lại nhánh master
 git push origin master
 ```
 
-Nếu đã deploy production → báo S9-CoVan rollback bản deploy (ghi `PENDING/S9.md`).
+**B2. Rollback DATABASE — ⚠️ NGUY HIỂM, đọc kỹ trước khi làm**
+
+Revert code KHÔNG tự động lùi migration. Nếu tính năng vừa gỡ có migration Prisma,
+database vẫn đang ở schema mới → có thể lệch với code cũ.
+
+**Trước tiên, xác định có cần lùi DB không:**
+```bash
+cd backend && npx prisma migrate status
+```
+
+| Loại thay đổi trong migration | Có cần lùi không? |
+|---|---|
+| Chỉ **THÊM** bảng/cột mới (code cũ không dùng tới) | ❌ **Không cần** — để nguyên, vô hại. Đây là trường hợp phổ biến nhất |
+| **XÓA** cột/bảng, **ĐỔI TÊN**, **ĐỔI KIỂU** dữ liệu | ✅ Cần xử lý — sang B3 |
+
+⚠️ Mặc định là **KHÔNG lùi DB**. Cột thừa không gây hại; lùi sai thì mất dữ liệu vĩnh viễn.
+
+**B3. Nếu buộc phải lùi schema — LUÔN sao lưu trước, LUÔN hỏi người dùng trước**
+
+```bash
+# 1. SAO LƯU TRƯỚC — bắt buộc, không có ngoại lệ
+pg_dump -h localhost -p 5433 -U <user> -d <database> -F c \
+  -f ~/backup_truoc_rollback_$(date +%Y%m%d_%H%M%S).dump
+```
+
+Rồi hỏi người dùng bằng lời thường:
+> "Để gỡ tính năng này hoàn toàn, tôi cần thay đổi cấu trúc cơ sở dữ liệu.
+>  Việc này **có thể làm mất dữ liệu** của phần <mô tả>.
+>  Tôi đã sao lưu vào file `<đường dẫn>`.
+>  Bạn có đồng ý cho tôi tiếp tục không?"
+
+Chỉ khi người dùng đồng ý rõ ràng → tạo migration mới để lùi lại (KHÔNG sửa/xóa file
+migration cũ đã chạy — sẽ làm lệch lịch sử migration của Prisma):
+
+```bash
+npx prisma migrate dev --name revert_<ten_tinh_nang>
+```
+
+⚠️ **TUYỆT ĐỐI KHÔNG** dùng `prisma migrate reset` trên database có dữ liệu thật —
+lệnh đó xóa sạch toàn bộ database.
+
+**B4. Nếu đã deploy production** → ghi `PENDING/S9.md` nhờ S9-CoVan rollback bản deploy
+(thứ tự đúng: rollback deploy trước, rồi mới đụng đến database).
 
 Sau khi revert xong, báo người dùng:
 ```

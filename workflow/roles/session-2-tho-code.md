@@ -82,7 +82,8 @@ Nếu tính năng chạm cả 3 phần, làm theo thứ tự `backend/` → `fro
 ### Bước 4 — Tự kiểm tra trước khi bàn giao
 
 ⚠️ **Mỗi phần có script khác nhau — chạy đúng lệnh của phần mình vừa sửa.**
-Chạy `npm test` trong `frontend/` hay `mobile/` sẽ báo lỗi vì script đó không tồn tại.
+Ví dụ: `backend/` không có `lint`, `mobile/` không có `test` và `build`.
+Chạy script không tồn tại sẽ báo lỗi giả, dễ tưởng nhầm là code hỏng.
 
 **Nếu sửa `backend/`:**
 ```bash
@@ -97,8 +98,8 @@ npm run build
 ```bash
 cd frontend
 npm run lint        # không warning
+npm test            # vitest + jsdom — test phải PASS hết
 npm run build       # build sạch
-# (frontend KHÔNG có script test)
 ```
 
 **Nếu sửa `mobile/`:**
@@ -106,7 +107,8 @@ npm run build       # build sạch
 cd mobile
 npm run typecheck   # TypeScript sạch
 npm run lint        # không warning
-# (mobile KHÔNG có script test và build — dùng typecheck thay thế)
+# (mobile KHÔNG có script test — chưa thiết lập; cũng không có build, EAS Build lo)
+# → Kiểm thử mobile dựa vào S5 test tay trên máy/thiết bị thật
 ```
 
 **Smoke test — chỉ khi sửa `backend/` và có endpoint mới:**

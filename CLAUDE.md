@@ -69,8 +69,19 @@ Mỗi phần có script khác nhau. Chạy lệnh không tồn tại sẽ báo l
 | Phần | Kiểm tra bằng | KHÔNG có |
 |------|---------------|----------|
 | `backend/` | `npm test` (vitest), `npm run build`, các `npm run smoke:*` | ✗ `lint` |
-| `frontend/` | `npm run lint`, `npm run build` | ✗ `test` |
-| `mobile/` | `npm run lint`, `npm run typecheck` | ✗ `test`, ✗ `build` |
+| `frontend/` | `npm run lint`, `npm test` (vitest + jsdom), `npm run build` | — |
+| `mobile/` | `npm run lint`, `npm run typecheck` | ✗ `test`, ✗ `build` (EAS Build lo) |
+
+**Viết test ở đâu:**
+- `backend/` → `src/**/__tests__/*.test.ts` (vitest, mock Prisma — không cần DB thật)
+- `frontend/` → `src/**/*.test.ts(x)` (vitest + @testing-library/react)
+- `mobile/` → **chưa có hạ tầng test**. Package `jest`/`jest-expo` đã cài sẵn trong
+  devDependencies nhưng chưa cấu hình xong. Kiểm thử mobile hiện dựa hoàn toàn vào
+  S5-ThuNghiem test tay + `npm run typecheck`. Xem `docs/LESSONS_LEARNED.md`.
+
+**CI** (`.github/workflows/ci.yml`): backend chạy typecheck + **test** + build;
+frontend chạy lint + **test** + build; mobile chỉ lint + typecheck.
+Test fail ở backend/frontend sẽ chặn merge.
 
 Trước khi chạy, nếu không chắc: `node -e "console.log(Object.keys(require('./<phần>/package.json').scripts))"`
 

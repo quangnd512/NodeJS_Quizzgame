@@ -122,10 +122,10 @@ npm test
 # backend/  → có test + build, KHÔNG có lint
 cd backend && npm test && npm run build && npm audit --audit-level=high
 
-# frontend/ → có lint + build, KHÔNG có test
-cd frontend && npm run lint && npm run build && npm audit --audit-level=high
+# frontend/ → có đủ lint + test + build
+cd frontend && npm run lint && npm test && npm run build && npm audit --audit-level=high
 
-# mobile/   → có lint + typecheck, KHÔNG có test/build
+# mobile/   → chỉ có lint + typecheck (chưa có test, không có build)
 cd mobile && npm run lint && npm run typecheck && npm audit --audit-level=high
 ```
 

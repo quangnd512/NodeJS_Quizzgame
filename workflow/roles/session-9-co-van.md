@@ -71,7 +71,12 @@ Gợi ý lựa chọn:
 
 ### Bước 3 — Phân tích & tranh luận (nếu cần)
 
-Dựa trên mục tiêu + thực trạng dự án (stack: React+Vite, Node+Express, PostgreSQL, Redis, Socket.io):
+Dựa trên mục tiêu + thực trạng dự án (stack đầy đủ xem `CLAUDE.md` — dự án có **3 phần**:
+`backend/`, `frontend/` web, và `mobile/` app điện thoại):
+
+⚠️ **Hỏi người dùng trước khi tư vấn**: "Lần này bạn muốn đưa **web** lên, **app điện thoại**
+lên, hay **cả hai**?" — hai thứ này có quy trình hoàn toàn khác nhau, chi phí và thời gian
+cũng khác (web lên trong ngày; app phải chờ Apple/Google duyệt, có thể 1-7 ngày).
 
 - Nếu mục tiêu KHÔNG khớp với hiện trạng (vd: "muốn 10.000 user ngay" nhưng DB/Redis
   chưa cấu hình production-grade, chưa có load test) → chỉ ra rủi ro cụ thể, đề xuất
@@ -100,6 +105,65 @@ Trước khi hướng dẫn deploy, kiểm tra và trình bày checklist:
 □ Security headers: helmet.js đã bật
 □ Prisma: không expose Prisma Studio ra production
 □ Firebase: Security Rules đã review
+□ Mobile: EXPO_PUBLIC_API_URL trỏ domain production (KHÔNG phải IP LAN/localhost)
+□ Mobile: mọi biến EXPO_PUBLIC_* đều bị nhúng thẳng vào app — KHÔNG đặt secret vào đó
+```
+
+---
+
+### Bước 3.6 — Phát hành app MOBILE (chỉ khi người dùng muốn đưa app điện thoại lên)
+
+Web và mobile phát hành hoàn toàn khác nhau. Web đẩy lên hosting là xong; app phải
+**build trên cloud rồi nộp cho Apple/Google duyệt**.
+
+**Bước M1 — Chọn cách phát hành (hỏi người dùng)**
+
+| Cách | Ai cài được | Thời gian | Chi phí | Phù hợp khi |
+|---|---|---|---|---|
+| **Internal / Dev build** | Chỉ máy đã đăng ký (tối đa 100 thiết bị iOS) | Ngay, ~15 phút build | Miễn phí | Tự test, cho vài người dùng thử |
+| **TestFlight** (iOS) / **Internal testing** (Android) | Người bạn mời qua email | 1-2 ngày (lần đầu Apple review) | Cần tài khoản dev trả phí | Cho nhóm nhỏ dùng thử thật |
+| **App Store / Google Play** | Bất kỳ ai | **1-7 ngày chờ duyệt**, có thể bị từ chối | Apple $99/năm, Google $25 một lần | Ra mắt công khai |
+
+⚠️ Nói rõ với người dùng: đưa app lên store **bắt buộc phải trả phí tài khoản developer**
+(Apple 99 USD/năm, Google 25 USD một lần). Không có cách miễn phí.
+
+**Bước M2 — Build bằng EAS Build (build trên cloud, không cần máy Mac mạnh)**
+
+```bash
+cd mobile
+npm install -g eas-cli          # nếu chưa có
+eas login                        # tài khoản Expo (miễn phí)
+eas build --platform ios --profile production
+eas build --platform android --profile production
+```
+
+Gói EAS Free đủ cho giai đoạn phát triển (30 build/tháng). Build xong nhận link tải file
+cài, hoặc nộp thẳng lên store.
+
+**Bước M3 — Nộp lên store**
+```bash
+eas submit --platform ios
+eas submit --platform android
+```
+
+**Bước M4 — Cập nhật app sau khi đã phát hành** ⚠️ điểm quan trọng nhất
+
+| Loại thay đổi | Cách cập nhật | Thời gian |
+|---|---|---|
+| Chỉ sửa **giao diện / logic JS-TS** | `eas update --branch production` | **Vài phút**, không cần duyệt lại |
+| Thêm **thư viện native** mới, đổi quyền, đổi icon/tên app | `eas build` + `eas submit` → chờ duyệt lại | 1-7 ngày |
+
+Nói rõ để người dùng không hiểu nhầm: **phần lớn cập nhật hàng ngày chỉ cần `eas update`,
+người dùng nhận bản mới ngay lần mở app tiếp theo** — không phải chờ store duyệt.
+
+**Bước M5 — Checklist trước khi nộp store**
+```
+□ Icon và splash screen đã đúng (không còn icon mặc định của Expo)
+□ Tên app, mô tả, ảnh chụp màn hình đã chuẩn bị
+□ Chính sách quyền riêng tư (Privacy Policy) — Apple và Google đều BẮT BUỘC có link
+□ Phiên bản (version) trong app.json đã tăng so với bản trước
+□ Đã test trên thiết bị thật, không chỉ trên máy ảo
+□ EXPO_PUBLIC_API_URL trỏ backend production đang chạy thật
 ```
 
 ### Bước 4 — Khi người dùng chọn phương án → Hướng dẫn chi tiết
