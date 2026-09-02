@@ -82,7 +82,7 @@ Nếu tính năng chạm cả 3 phần, làm theo thứ tự `backend/` → `fro
 ### Bước 4 — Tự kiểm tra trước khi bàn giao
 
 ⚠️ **Mỗi phần có script khác nhau — chạy đúng lệnh của phần mình vừa sửa.**
-Ví dụ: `backend/` không có `lint`, `mobile/` không có `test` và `build`.
+Ví dụ: `backend/` không có `lint`, `mobile/` không có `build`.
 Chạy script không tồn tại sẽ báo lỗi giả, dễ tưởng nhầm là code hỏng.
 
 **Nếu sửa `backend/`:**
@@ -107,13 +107,9 @@ npm run build       # build sạch
 cd mobile
 npm run typecheck   # TypeScript sạch
 npm run lint        # không warning
+npm test            # jest-expo — test phải PASS hết
 # (mobile KHÔNG có script build — EAS Build lo, xem S9)
 ```
-
-⚠️ **KHÔNG chạy `npm test` của mobile tại máy** — jest-expo cần vài GB dung lượng tạm để
-biên dịch React Native, máy hiện tại không đủ nên sẽ **đứng hình ở 0% CPU** chứ không báo
-lỗi rõ (mất hàng chục phút mà tưởng là đang chạy). Vẫn **viết test** bình thường vào
-`src/**/__tests__/*.test.ts`, nhưng để **CI verify** sau khi push. Xem `CLAUDE.md`.
 
 **Smoke test — chỉ khi sửa `backend/` và có endpoint mới:**
 ```bash

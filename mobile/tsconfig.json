@@ -1,6 +1,9 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "strict": true
+    "strict": true,
+    // "jest" cho cac ham global cua test (describe/it/expect/jest) - can thiet de
+    // `npm run typecheck` khong bao loi "Cannot find name 'it'" o cac file test.
+    "types": ["jest"]
   }
 }

@@ -70,21 +70,33 @@ Mỗi phần có script khác nhau. Chạy lệnh không tồn tại sẽ báo l
 |------|---------------|----------|
 | `backend/` | `npm test` (vitest), `npm run build`, các `npm run smoke:*` | ✗ `lint` |
 | `frontend/` | `npm run lint`, `npm test` (vitest + jsdom), `npm run build` | — |
-| `mobile/` | `npm run lint`, `npm run typecheck`, `npm test`¹ | ✗ `build` (EAS Build lo) |
-
-¹ ⚠️ **`npm test` của mobile KHÔNG chạy được trên máy phát triển hiện tại** — jest-expo phải
-biên dịch toàn bộ React Native, cần vài GB dung lượng tạm mà máy chỉ còn ~2GB. Chạy sẽ
-đứng hình ở 0% CPU chứ không báo lỗi rõ ràng. **Để CI chạy test mobile**, đừng chạy tại máy.
+| `mobile/` | `npm run lint`, `npm run typecheck`, `npm test` (jest-expo) | ✗ `build` (EAS Build lo) |
 
 **Viết test ở đâu:**
 - `backend/` → `src/**/__tests__/*.test.ts` (vitest, mock Prisma — không cần DB thật)
 - `frontend/` → `src/**/*.test.ts(x)` (vitest + @testing-library/react)
 - `mobile/` → `src/**/__tests__/*.test.ts(x)` (jest-expo + @testing-library/react-native;
-  mock `expo-secure-store` có sẵn trong `mobile/jest.setup.js`) — **viết được, nhưng chỉ
-  verify được qua CI**
+  mock `expo-secure-store` có sẵn trong `mobile/jest.setup.js`)
 
 **CI** (`.github/workflows/ci.yml`) chạy test cho **cả 3 phần** — test fail sẽ chặn merge.
-Với mobile, CI là nơi **duy nhất** verify được.
+
+### 🚨 Khi một lệnh npm treo ở 0% CPU — kiểm tra `node_modules` TRƯỚC
+
+Triệu chứng: lệnh chạy hàng chục phút, không in gì, **0.0% CPU** (không phải chậm — là đứng).
+
+```bash
+du -sh node_modules && find node_modules -type f | wc -l
+```
+Nếu dung lượng nhỏ bất thường so với số file (VD: 3.9MB cho 56.000 file) → **node_modules
+hỏng**, file có tên nhưng rỗng ruột. Xảy ra khi `npm install` chạy lúc ổ đĩa gần đầy:
+npm không ghi được nội dung nhưng **vẫn thoát với mã 0 như thành công**.
+
+```bash
+du -sh node_modules/react-native   # 0B = chắc chắn hỏng
+rm -rf node_modules && npm install --legacy-peer-deps
+```
+
+Đây là chẩn đoán ĐÚNG cho triệu chứng treo, không phải "máy yếu" hay "cấu hình sai".
 
 Trước khi chạy, nếu không chắc: `node -e "console.log(Object.keys(require('./<phần>/package.json').scripts))"`
 
