@@ -30,7 +30,7 @@
 | S8 | Giám Sát Chất Lượng | ✅ Done | Quality gate PASS | — |
 | S9 | Cố Vấn Ra Mắt | ⏸ Chờ | — | — |
 
-**Trạng thái**: `⏸ Chờ` | `🔄 Đang làm` | `✅ Done` | `↩️ Làm lại` | `⛔ Bị chặn`
+**Trạng thái**: `⏸ Chờ` | `🔄 Đang làm` | `✅ Done` | `↩️ Làm lại` | `⛔ Bị chặn` | `⏭ Bỏ qua` (S6 khi người dùng không cần giải thích)
 
 > ⚠️ **Quy tắc làm lại**: Nếu "Số lần làm lại" của một session đạt **3**, S8 dừng tự động và báo người dùng trực tiếp.
 

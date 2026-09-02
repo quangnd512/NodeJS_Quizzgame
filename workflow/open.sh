@@ -30,7 +30,9 @@ esac
 # Ghi lệnh ra file tạm để tránh lỗi escape trong osascript
 # (cần đủ 6 ký tự X trở lên để mktemp random hoá đúng trên macOS/BSD,
 #  nếu không sẽ tạo file tên cố định và va chạm "File exists" ở lần chạy sau)
-TMPSCRIPT=$(mktemp /tmp/claude_session_XXXXXX.sh) || { echo "❌ mktemp thất bại"; exit 1; }
+TMPSCRIPT=$(mktemp /tmp/claude_session_XXXXXX) || { echo "❌ mktemp thất bại"; exit 1; }
+mv "$TMPSCRIPT" "${TMPSCRIPT}.sh"
+TMPSCRIPT="${TMPSCRIPT}.sh"
 cat > "$TMPSCRIPT" << EOF
 #!/bin/bash
 cd '$PROJECT_DIR'

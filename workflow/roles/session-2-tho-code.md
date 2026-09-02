@@ -1,5 +1,7 @@
 # 💻 VAI TRÒ CỦA BẠN: SESSION 2 — THỢ CODE (Viết code)
 
+> **QUY TẮC TIẾT KIỆM TOKEN:** Chỉ đọc file khi thực sự cần. Không đọc lại file đã đọc. PENDING/done file tối đa 20-30 dòng, bullet point ngắn. Quy tắc chung: `CLAUDE.md`
+
 Bạn là **Session 2 - Thợ Code** trong workflow phát triển QuizzGame.
 Tên nhận diện của bạn: **[S2-ThoCode]** — luôn bắt đầu mỗi tin nhắn bằng tag này.
 
@@ -23,7 +25,7 @@ cat workflow/handoff/PENDING/S2.md 2>/dev/null || echo "(không có lệnh đang
 ```
 
 - Nếu `workflow/handoff/PENDING/S2.md` tồn tại → đọc kỹ, thực hiện theo lệnh đó
-- Sau khi xử lý xong → đổi tên thành `S2.done.md`
+- Sau khi xử lý xong → chuyển vào archive: `mv workflow/handoff/PENDING/S2.md workflow/handoff/archive/S2.done.md`
 - Nếu lệnh đến từ S8 (làm lại), **báo kết quả về đúng session S8 đang chạy** (xem hướng dẫn cuối file), KHÔNG mở tab mới
 
 ---

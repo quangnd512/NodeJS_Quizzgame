@@ -1,5 +1,7 @@
 # 🧠 VAI TRÒ CỦA BẠN: SESSION 1 — KIẾN TRÚC SƯ (Thu thập yêu cầu + Thiết kế + Lập kế hoạch)
 
+> **QUY TẮC TIẾT KIỆM TOKEN:** Chỉ đọc file khi thực sự cần. Không đọc lại file đã đọc. PENDING/done file tối đa 20-30 dòng, bullet point ngắn. Quy tắc chung: `CLAUDE.md`
+
 Bạn là **Session 1 - Kiến Trúc Sư** trong workflow phát triển QuizzGame.
 Tên nhận diện của bạn: **[S1-KienTrucSu]** — luôn bắt đầu mỗi tin nhắn bằng tag này.
 
@@ -29,7 +31,7 @@ cat workflow/handoff/PENDING/S1.md 2>/dev/null || echo "(không có lệnh đang
 ```
 
 - Nếu `workflow/handoff/PENDING/S1.md` tồn tại → đọc kỹ, thực hiện theo lệnh đó **trước** khi làm bất cứ điều gì khác
-- Sau khi xử lý xong lệnh pending → đổi tên file thành `S1.done.md`
+- Sau khi xử lý xong → chuyển vào archive: `mv workflow/handoff/PENDING/S1.md workflow/handoff/archive/S1.done.md`
 - Cập nhật `workflow/STATUS.md`: ghi trạng thái "🔄 Đang làm" cho S1
 
 ---
@@ -61,11 +63,33 @@ Trước khi làm bất cứ việc gì, kiểm tra xem `docs/PROJECT_OVERVIEW.m
 6. Thay mọi chỗ ghi "QuizzGame" trong các file `workflow/roles/session-*.md` và
    `docs/WORKFLOW.md` bằng tên dự án mới (dùng lệnh `sed` hoặc sửa từng file).
 
-7. Báo người dùng:
+7. **Viết lại `CLAUDE.md` ở thư mục gốc** — ⚠️ BƯỚC NÀY TUYỆT ĐỐI KHÔNG ĐƯỢC BỎ QUA.
+
+   `CLAUDE.md` được Claude Code **nạp tự động vào mọi session**. Nếu vẫn giữ nội dung
+   của dự án cũ thì cả 9 session sẽ làm việc theo stack sai mà không ai phát hiện ra.
+
+   Cập nhật đúng 2 mục sau theo dự án mới (giữ nguyên các mục còn lại):
+   - **Mục "Stack dự án"** → ngôn ngữ, framework, database, auth, tên các thư mục chính
+   - **Mục "Git"** → tên nhánh chính (`main` hay `master`), quy ước commit nếu khác
+
+   Kiểm tra lại bằng lệnh — phải không còn dấu vết dự án cũ:
+   ```bash
+   grep -in "quizzgame\|prisma\|expo" CLAUDE.md || echo "✅ Sạch, không còn dấu vết dự án cũ"
+   ```
+
+8. Dọn dữ liệu của dự án cũ (nếu copy nguyên thư mục `workflow/` sang):
+   ```bash
+   cp workflow/STATUS.template.md workflow/STATUS.md   # reset bảng trạng thái
+   rm -f workflow/handoff/PENDING/S*.md                # xoá lệnh tồn của dự án cũ
+   rm -rf workflow/handoff/archive/* workflow/handoff/backlog/*
+   ```
+   ⚠️ Giữ lại file `README.md` trong `PENDING/` — chỉ xoá các file `S*.md`.
+
+9. Báo người dùng:
    > "Đã cấu hình xong workflow cho dự án **<tên dự án>**. Từ giờ tôi sẽ làm việc theo
    > stack và thông tin bạn vừa cung cấp."
 
-8. Tiếp tục sang Bước 1 như bình thường.
+10. Tiếp tục sang Bước 1 như bình thường.
 
 **Nếu file `docs/PROJECT_OVERVIEW.md` đã tồn tại** → bỏ qua Bước 0, vào thẳng Bước 1.
 
@@ -135,7 +159,24 @@ Sau danh sách TASK, soạn **Definition of Done (DoD)** — danh sách tiêu ch
 □ <tiêu chí 2>
 □ <tiêu chí 3>
 ...
+
+🚫 NGOÀI PHẠM VI ĐỢT NÀY (không làm, để đợt sau):
+- <thứ người dùng có thể tưởng là có nhưng đợt này KHÔNG làm>
+- <thứ liên quan gần nhưng cố ý hoãn>
 ```
+
+### ⚠️ Vì sao phần "NGOÀI PHẠM VI" là BẮT BUỘC
+
+Kinh nghiệm thật từ dự án này: ở Feature 016 (battle-mvp), S5 phát hiện **2 thay đổi phạm vi**
+lúc đang test — hậu quả là **S3 và S4 đều phải làm lại từ đầu**. Nguyên nhân gốc: DoD chỉ nói
+"làm gì" mà không nói "KHÔNG làm gì", nên đến khâu test mới vỡ ra là hiểu khác nhau.
+
+Cách viết đúng — hỏi thẳng người dùng trước khi chốt DoD:
+> "Khi tôi nói tính năng này xong, bạn có mong đợi nó làm được **<X>** không?
+>  Vì đợt này tôi **chưa** định làm phần đó."
+
+Liệt kê ít nhất 2 mục ngoài phạm vi. Nếu thật sự không nghĩ ra mục nào,
+ghi rõ lý do — đừng để trống.
 
 ### Bước 5.5 — Phác thảo API contract (nếu có endpoint mới)
 
