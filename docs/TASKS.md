@@ -20,6 +20,7 @@
 | 014 | Quản lý câu hỏi – Học sinh đóng góp câu hỏi + Thiết kế lại báo cáo | ✅ Done | feature/question-management-hub | 2026-07-15 |
 | 015 | Khung Free/Premium | ✅ Done | feature/premium-framework | 2026-07-19 |
 | 016 | Thi đấu đối kháng — PvP Quiz Battle (ĐỢT 1/MVP) | ✅ Done | feature/battle-mvp | 2026-07-27 |
+| A/9 | Vá bảo mật — npm audit (Sprint kỹ thuật) | ✅ Done | fix/security-audit | 2026-09-03 |
 
 ---
 
