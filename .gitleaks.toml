@@ -20,4 +20,10 @@ paths = [
 
   # File mau — chua gia tri gia de huong dan, khong phai secret that
   '''.*\.env\.example$''',
+
+  # API spec (OpenAPI 3.0) — token field la chuan API schema, khong phai secret that
+  '''docs/api/openapi\.yaml''',
+
+  # Feature log — chi la tai lieu ghi lai tien trinh phat trien, chua gia du lieu
+  '''docs/FEATURE_LOG\.md''',
 ]
