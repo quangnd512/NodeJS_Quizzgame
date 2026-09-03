@@ -11,6 +11,7 @@ const makeItem = (overrides: Partial<NotificationItem> = {}): NotificationItem =
   isRead: false,
   createdAt: new Date().toISOString(),
   targetScreen: null,
+  metadata: null,
   ...overrides,
 });
 
