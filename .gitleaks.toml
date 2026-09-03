@@ -1,0 +1,23 @@
+# Cau hinh Gitleaks — quet secret bi commit nham vao git.
+# Ke thua bo quy tac mac dinh, chi them phan loai tru ben duoi.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Cac gia tri TRONG NHIN giong secret nhung thuc chat KHONG phai"
+
+paths = [
+  # Firebase WEB config (apiKey, appId...) — Google cong bo ro day la thong tin CONG KHAI:
+  # no chi DINH DANH du an, khong dung de xac thuc. Bao mat den tu Firebase Security Rules
+  # va tu viec backend luon kiem tra ID Token. Bat buoc phai nhung vao app phia client
+  # thi app moi ket noi duoc Firebase.
+  #   https://firebase.google.com/docs/projects/api-keys
+  #
+  # ⚠️ KHAC HOAN TOAN voi Service Account JSON dung o backend — file do LA secret that,
+  # tuyet doi khong duoc commit (da nam trong .gitignore).
+  '''mobile/src/auth/firebase\.ts''',
+  '''frontend/src/lib/firebase\.ts''',
+
+  # File mau — chua gia tri gia de huong dan, khong phai secret that
+  '''.*\.env\.example$''',
+]

@@ -1,18 +1,13 @@
-/// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+
+// Cau hinh TEST nam o file rieng `vitest.config.ts` — KHONG gop vao day.
+// Ly do: `npm run build` chay `tsc` kiem tra file nay, ma kieu cua `defineConfig`
+// tu 'vite' khong co truong `test` -> bao loi TS2769 lam hong build.
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-  // Cau hinh chay test (vitest). Chay bang: npm test
-  test: {
-    globals: true,
-    // jsdom gia lap trinh duyet de test duoc component React
-    environment: 'jsdom',
-    setupFiles: ['./vitest.setup.ts'],
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
-  },
   server: {
     // Lang nghe ca IPv4 (127.0.0.1) lan IPv6 (::1) - mac dinh Vite chi bind
     // "localhost" (co the chi phan giai IPv6 tren mot so may), khien trinh
