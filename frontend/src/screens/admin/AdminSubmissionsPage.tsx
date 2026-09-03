@@ -9,7 +9,7 @@ import { SUBJECTS } from '../../lib/constants.js';
 import Spinner from '../../components/Spinner.js';
 import { OPTION_LABELS } from '../practice/practiceConstants.js';
 import { ADMIN_PAGE_SIZE, ADMIN_SUBMISSION_STATUSES, QUESTION_TYPE_LABEL } from './adminConstants.js';
-import { SUBMISSION_STATUS_LABEL } from '../SubmissionsPage.js';
+import { SUBMISSION_STATUS_LABEL } from '../submissionsConstants.js';
 import AdminReportsPage from './AdminReportsPage.js';
 
 // ─── AdminQuestionManagementPage — gộp "Bài học sinh gửi" + "Báo cáo lỗi" ────────

@@ -146,4 +146,3 @@ function NotificationPanel({
 }
 
 export default NotificationPanel;
-export { NotificationToast };

@@ -3,19 +3,14 @@ import {
   createSubmission, getMySubmissions, updateSubmission, deleteSubmission, ApiError,
 } from '../lib/api.js';
 import type {
-  ExamQuestionType, SubmissionDto, SubmissionStatus, SubmissionCorrectAnswer,
+  ExamQuestionType, SubmissionDto, SubmissionCorrectAnswer,
 } from '../lib/api.js';
 import { SUBJECTS } from '../lib/constants.js';
 import { OPTION_LABELS } from './practice/practiceConstants.js';
 import Spinner from '../components/Spinner.js';
+import { SUBMISSION_STATUS_LABEL } from './submissionsConstants.js';
 
 type SubmissionsSub = 'form' | 'list';
-
-const SUBMISSION_STATUS_LABEL: Record<SubmissionStatus, string> = {
-  PENDING:  '🟡 Chờ duyệt',
-  APPROVED: '✅ Đã duyệt',
-  REJECTED: '❌ Từ chối',
-};
 
 function SubmissionsPage({
   sessionToken, onBack, onError,
