@@ -5,6 +5,37 @@
 
 ---
 
+## [Unreleased] — Nền móng App Di Động — Mobile Foundation (Đợt 1a)
+
+**Branch:** `feature/mobile-foundation`
+**Ngày:** 2026-07-29
+
+### Added
+
+- **Thư mục `mobile/` mới hoàn toàn** — ứng dụng di động QuizzGame (React Native + Expo SDK 57 + TypeScript), client thứ 3 của dự án bên cạnh `frontend/` (web) và `backend/`, dùng **chung 1 backend** — không có API mới, không đổi schema database
+- **Đăng nhập Google + Apple** (chỉ iOS cho Apple) qua Firebase JS SDK — tái sử dụng `POST /api/auth/login` sẵn có (kiến trúc auth provider-agnostic, không phân biệt web/mobile hay Google/Apple)
+- **Onboarding chọn môn học** (1-7 môn, khớp `MIN_SUBJECTS`/`MAX_SUBJECTS` backend) cho user mới (`subjects` rỗng theo `GET /api/users/me`)
+- **Khung điều hướng chính học sinh** — 5 tab (Luyện tập/Thi thử/Xếp hạng/Tiến độ/Hồ sơ), 4 tab đầu tạm "Sắp ra mắt", tab Hồ sơ đầy đủ (điểm, môn học, dark mode, đăng xuất)
+- **Đăng nhập Admin riêng biệt** qua `X-Admin-Secret` (không qua Firebase/JWT), tách hoàn toàn khỏi luồng học sinh, ưu tiên hiển thị nếu cả 2 cùng đăng nhập
+- **Dark mode** — Sáng/Tối/Theo hệ thống, lưu lựa chọn qua các lần tắt/mở app
+- **Banner cảnh báo mất mạng** — hiện/ẩn theo sự kiện (không polling), mọi màn hình
+- **Giữ phiên đăng nhập 7 ngày** qua `expo-secure-store` (mã hoá phần cứng) — JWT/admin secret/theme, tự động đăng xuất khi 401 (listener pattern tập trung, không cần từng màn hình tự bắt lỗi)
+- `docs/api/openapi.yaml` (v1.8.0): bổ sung `POST /api/auth/login` + `GET /api/users/me` vào contract chính thức (đóng khoảng trống tài liệu từ trước Feature 001, không đổi hành vi)
+
+### Fixed (phát hiện trong review S3, trước khi merge)
+
+- `api/hello.ts` thiếu try/catch quanh `JSON.parse` body response — không nhất quán với `parseJsonBody()` trong `client.ts`, có thể ném `SyntaxError` không kiểm soát nếu server/proxy trả về không phải JSON hợp lệ
+- `docs/api/drafts/mobile-foundation.yaml` ghi sai contract `POST /api/users/subjects` (`{subjects: string[]}`) — code mobile đã implement đúng theo contract thật (`{subjects: [{id, name?}]}`), chỉ sửa lại draft
+- 6 warning lint: `import/no-duplicates` (`react-native-gesture-handler` import 2 lần ở `App.tsx`), 4× biến `err` không dùng trong `catch`
+
+### Ghi chú
+
+- **Không có test tự động** — quyết định có chủ đích (17 dòng DoD gốc đều khung theo hướng xác minh thủ công trên thiết bị thật, `mobile/` chưa có hạ tầng `jest-expo`) — xem `docs/FEATURE_LOG.md` Section 17 mục kỹ thuật #5. Khuyến nghị dựng test tự động từ Đợt 1b.
+- Google/Apple Sign-In là native module — cần "dev build" (`expo prebuild` + `expo run:android`/`run:ios`), không chạy trong Expo Go thường sau khi tích hợp.
+- Chỉ dựng khung sườn (đăng nhập, điều hướng, dark mode) — 4/5 tab chính tạm "Sắp ra mắt", sẽ lấp dần ở Đợt 1b/1c/1d.
+
+---
+
 ## [Unreleased] — Thi đấu đối kháng — PvP Quiz Battle, Đợt 1/MVP (Feature 016)
 
 **Branch:** `feature/battle-mvp`

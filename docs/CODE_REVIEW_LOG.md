@@ -1187,3 +1187,159 @@ từ lần chạy đầu tiên, xác nhận logic hiện tại đúng như S5 đ
   thêm case #29 (bug #9 — tạm dừng questionTimer khi chờ disconnect) và #30
   (bug #10 — chặn 2 trận cùng lúc)
 - `docs/CODE_REVIEW_LOG.md` — file này
+
+---
+
+## Review: Đợt 1a — Nền móng App Di Động (Mobile Foundation)
+
+**Ngày**: 2026-07-29
+**Reviewer**: S3-SoatLoi
+**Branch**: `feature/mobile-foundation`
+**Files thay đổi**: 45 files, 100% trong `mobile/` (thư mục mới hoàn toàn, React Native +
+Expo SDK 57 + TypeScript) — đã xác nhận `git diff master..HEAD --name-only` KHÔNG đụng
+`frontend/` hay `backend/`, đúng yêu cầu của S1. 1 file docs `docs/api/drafts/mobile-foundation.yaml`
+(đã có sẵn từ S1, S3 sửa 1 điểm lệch contract — xem bên dưới). 13 commit, mỗi TASK 1 commit.
+
+### Bối cảnh đặc thù
+
+Đây là feature **thuần wiring** (đăng nhập Google/Apple qua Firebase, điều hướng, dark mode,
+lưu trữ token) — KHÔNG có endpoint backend mới, KHÔNG đụng database, KHÔNG có logic tính
+điểm/cược/race condition nào. Vì vậy 3/8 tiêu chí chuẩn (Atomic transaction, Race condition,
+N+1/Index) không áp dụng được cho vòng review này — đã ghi rõ lý do thay vì bỏ qua.
+
+### Tiêu chí 8 điểm
+
+| # | Tiêu chí | Kết quả | Ghi chú |
+|---|----------|---------|---------|
+| 1 | Atomic transaction | ➖ N/A | Không có thao tác DB nào (mobile chỉ gọi API REST đã có sẵn, backend không đổi) |
+| 2 | Race condition | ➖ N/A | Không có state dùng chung nhiều tiến trình/nhiều request đồng thời cần lo race — mỗi phiên app là 1 instance độc lập |
+| 3 | Error handling | 🟡 1 lỗi nhỏ tìm thấy, đã sửa | `api/hello.ts` thiếu try/catch khi `JSON.parse` body — không nhất quán với `parseJsonBody` (đã có try/catch) trong `api/client.ts`, có thể crash nếu server/proxy trả body không phải JSON hợp lệ. Đã sửa theo đúng pattern của `client.ts`. Phần còn lại: mọi async đều có try/catch, `ApiError` custom class nhất quán, lỗi mạng/401/huỷ đăng nhập đều được phân loại rõ ràng |
+| 4 | Input validation | ✅ Pass | Không tự làm validation riêng ở client cho dữ liệu quan trọng — luôn để backend (đã có sẵn, đã test) là nguồn xác thực cuối cùng; validate phía client (min/max môn học ở Onboarding) chỉ là UX, khớp đúng `MIN_SUBJECTS=1`/`MAX_SUBJECTS=7` phía backend |
+| 5 | N+1 / Index | ➖ N/A | Không có query DB nào ở tầng này |
+| 6 | TypeScript `any` | ✅ Pass | Grep toàn bộ `mobile/src` + `App.tsx`: không có `any`/`as any` nào |
+| 7 | Edge cases | ✅ Pass | Huỷ đăng nhập Google/Apple giữa chừng, Apple `fullName` chỉ có lần đầu, thiếu Play Services, JWT hết hạn giữa lúc dùng app (401 tự đăng xuất), admin secret cũ hết hiệu lực lúc boot, mất mạng — đều được xử lý, không có đường nào dẫn tới crash không kiểm soát |
+| 8 | API contract | 🟡 1 điểm lệch nhỏ tìm thấy, đã sửa (cập nhật draft — code đúng hơn) | Xem mục dưới |
+
+### 🟡 Lỗi Error Handling tìm thấy & đã sửa
+
+`mobile/src/api/hello.ts` — `JSON.parse(text)` gọi trực tiếp không có try/catch, trong khi
+`api/client.ts` (`parseJsonBody`) đã cẩn thận bọc try/catch đúng cho cùng 1 tình huống (server/
+proxy trả về HTML lỗi thay vì JSON, ví dụ do gõ sai `EXPO_PUBLIC_API_URL`). Nếu gặp đúng tình
+huống này, `getHello()` sẽ ném `SyntaxError` không kiểm soát thay vì `ApiError('NETWORK_ERROR', ...)`
+gọn gàng như phần còn lại của app. Đã sửa để bọc try/catch giống hệt pattern của `client.ts`.
+(Ghi chú: hàm này hiện chưa được gọi ở đâu trong UI — chỉ là tiện ích dự phòng từ TASK 2, không
+phải bug đang gây lỗi thật, nhưng vẫn sửa để nhất quán và an toàn nếu được dùng sau này.)
+
+### 🟡 Đối chiếu API contract (`docs/api/drafts/mobile-foundation.yaml`)
+
+Đối chiếu từng endpoint tái sử dụng với code thật (`backend/src/routes/*.ts`,
+`backend/src/services/*/**.types.ts`):
+
+- `POST /api/auth/login` — khớp 100% (`LoginResult`/`UserProfileDto` phía mobile giống hệt
+  `backend/src/services/auth/auth.types.ts`)
+- `GET /api/users/me` — khớp 100% (`UserMeDto` phía mobile giống hệt backend, bao gồm cả
+  `avatarUrl`/`points`/`isPremium`/`premiumExpiresAt` dù đợt này chưa dùng hết các trường này)
+- `POST /api/users/subjects` — **LỆCH**: bản nháp yaml ghi `request: { subjects: string[] }`,
+  nhưng contract THẬT của endpoint (đã tồn tại từ trước, dùng chung với web) là
+  `{ subjects: [{ id, name? }] }` (xem `backend/src/routes/users.route.ts` dòng 91 + cách
+  `frontend/src/lib/api.ts` web đang gọi). Code mobile (`api/users.ts`) đã implement ĐÚNG theo
+  contract thật — **chỉ có bản nháp yaml viết tắt sai**. Đã sửa lại yaml cho khớp thực tế, không
+  sửa code (code đúng hơn draft)
+- Admin auth (`X-Admin-Secret`) — đúng cơ chế, đúng cách lưu SecureStore. Ghi nhận thêm: S2 tái
+  dùng `GET /api/admin/settings/premium-default` (endpoint có sẵn, chi phí thấp) làm request
+  "ping" xác minh secret đúng/sai lúc đăng nhập Admin — hợp lý vì đợt này chưa có màn hình chức
+  năng admin thật để dùng làm phép thử. Đã xác nhận endpoint này có
+  `adminUsersRouter.use(verifyAdminSecret)` bảo vệ đúng. Đã bổ sung ghi chú vào draft yaml.
+
+### Về việc KHÔNG viết test tự động (quyết định có cân nhắc, không phải bỏ sót)
+
+S2 đã chủ động cờ vấn đề này lên cho S3 quyết định. Sau khi đọc toàn bộ code, quyết định
+**KHÔNG bổ sung test tự động ở vòng này**, vì:
+
+1. Toàn bộ 17 dòng DoD của S1 được khung theo hướng xác minh **thủ công trên thiết bị/giả
+   lập thật** (đăng nhập Google/Apple thật, dark mode thật, mất mạng thật...) — không có dòng
+   DoD nào yêu cầu test tự động, khác hẳn các feature backend trước đây (tiền/điểm/race
+   condition) nơi test tự động bảo vệ logic nghiệp vụ khỏi bị sửa hỏng âm thầm.
+2. `mobile/` là thư mục mới hoàn toàn — CHƯA có bất kỳ hạ tầng test nào (`jest-expo` chưa được
+   cài). Phần lớn code là UI/context wiring phụ thuộc native module thật (Firebase, Google/Apple
+   Sign-In, SecureStore) — muốn test có ý nghĩa cần mock khá sâu, chi phí đầu tư không nhỏ.
+3. Rà toàn bộ code tìm "hàm/service quan trọng chưa có test" (đúng tinh thần Bước 5.1) — ứng viên
+   duy nhất là `resolveApiBaseUrl`/`getDefaultDevApiUrl` (`config/env.ts`, logic thuần suy ra base
+   URL theo platform/env) nhưng bản thân nó import `Platform` từ `react-native`, nên vẫn cần môi
+   trường test kiểu `jest-expo` mới chạy được (không chạy được bằng `vitest` trơn như backend) —
+   và logic quá đơn giản (rẽ nhánh 3 case) để biện minh cho việc kéo theo cả 1 bộ hạ tầng test
+   mới chỉ vì 1 hàm này.
+4. Toàn bộ logic có rủi ro cao nhất thực sự (lưu JWT/secret mã hoá đúng SecureStore, tự đăng xuất
+   khi 401, nonce chống replay cho Apple Sign-In, tách biệt Admin/học sinh) đã được đọc kỹ code
+   xác nhận đúng (xem tiêu chí 3, 7 ở trên) — đây là logic gắn chặt với native SDK/luồng UI, khó
+   unit-test có ý nghĩa mà không đầu tư mock sâu tương đương chi phí một bộ E2E thật.
+
+**Khuyến nghị**: bắt đầu dựng `jest-expo` từ đợt **1b** (khi có service/logic nghiệp vụ thật sự
+như tính điểm luyện tập/thi thử hiển thị trên mobile) thay vì bọc thêm hạ tầng cho nền móng
+thuần UI này. `docs/TEST_CASES.md` đã được cập nhật với checklist thủ công đầy đủ 18 kịch bản
+(khớp lại đúng DoD của S1) để S5 dùng làm căn cứ test tay.
+
+### Kết quả kiểm thử
+
+- **Test tự động**: không có (xem giải thích trên) — 0/0
+- **Build**: `node node_modules/typescript/bin/tsc --noEmit` PASS, sạch hoàn toàn (2 lần độc
+  lập — lần đầu trước khi sửa lỗi lint, lần 2 sau khi sửa để xác nhận không phá gì)
+  (ghi chú môi trường: phải gọi thẳng binary qua `node`, `npx tsc`/`.bin/tsc` bị treo/timeout
+  trong sandbox hiện tại — cùng hiện tượng đã ghi nhận nhiều lần ở các vòng review backend
+  trước, không phải lỗi code)
+- **Lint**: `node node_modules/eslint/bin/eslint.js .` — lần chạy ĐẦU TIÊN (trước khi sửa)
+  phát hiện đúng 6 warning, 0 lỗi: 4× `@typescript-eslint/no-unused-vars` (biến `err` không
+  dùng trong `catch` — 3 chỗ ở `client.ts` + 1 chỗ ở `hello.ts`) và 2× `import/no-duplicates`
+  ở `App.tsx` (`react-native-gesture-handler` bị import 2 lần — 1 lần side-effect-only, 1 lần
+  lấy `GestureHandlerRootView`). Đã sửa cả 4 vị trí (bỏ binding `err` không dùng ở catch, gộp
+  2 dòng import `react-native-gesture-handler` thành 1) — các fix đều cơ học, đơn giản, đúng
+  loại rule đã chỉ ra.
+  ⚠️ **Không chạy lại được ESLint để xác nhận 0 warning sau khi sửa**: 6 lần thử lại liên
+  tiếp (kể cả sau khi chủ động đóng TOÀN BỘ 7 session Claude khác đang chạy song song trên
+  máy theo yêu cầu người dùng — loại trừ hẳn nguyên nhân tranh chấp CPU/tiến trình) đều gặp
+  `ETIMEDOUT: connection timed out, read` ngay tại `fs.readFileSync` lúc Node `require()` chuỗi
+  dài plugin của `eslint-config-expo` (flat config phải load hàng trăm file phụ thuộc trước
+  khi lint bắt đầu) — `ETIMEDOUT` là mã lỗi tầng mạng, cho thấy đây là vấn đề của lớp
+  filesystem ảo hoá trong sandbox môi trường này, không liên quan đến code hay tài nguyên máy.
+  `tsc` (module resolution nhẹ hơn nhiều) không gặp hiện tượng này, chạy PASS ổn định 2 lần.
+  Đã tự đọc lại kỹ cả 3 file đã sửa (`client.ts`, `hello.ts`, `App.tsx`) — xác nhận bằng mắt
+  đúng cú pháp, đúng đúng loại fix chuẩn cho từng rule đã báo. Chấp nhận kết quả dựa trên xác
+  minh thủ công (theo quyết định của người dùng), không chặn quality gate vì đây vốn chỉ là
+  warning (0 lỗi) chứ không phải lỗi lint chặn build.
+- **npm audit** (`--audit-level=high`): 20 lỗ hổng (11 moderate, 9 high) — đã đọc kỹ từng
+  chuỗi phụ thuộc: TẤT CẢ đều nằm sâu trong cây phụ thuộc CÔNG CỤ BUILD-TIME, không phải
+  runtime code chạy trên máy người dùng:
+    - `brace-expansion`/`minimatch` (high, KHÔNG có fix) — hoàn toàn thuộc nội bộ `eslint` +
+      `eslint-plugin-import`/`eslint-plugin-react`/`@eslint/*` (chỉ chạy lúc dev lint, không
+      đóng gói vào app)
+    - `uuid` (moderate) — nằm sâu trong `xcode`/`@expo/config-plugins`/`@expo/cli` (chỉ dùng
+      lúc `expo prebuild`/build native trên máy dev, không chạy trong app đã build)
+  Fix duy nhất có sẵn (`npm audit fix --force`) sẽ HẠ cấp `expo` xuống bản `46.0.21` (cũ hơn
+  nhiều so với SDK 57 đang dùng, breaking change nghiêm trọng) — KHÔNG hợp lý để "sửa" theo
+  cách này. Chấp nhận rủi ro pre-existing của toolchain, nhất quán với cách các vòng review
+  backend trước đây xử lý (soát kỹ chuỗi phụ thuộc bằng tay thay vì chỉ nhìn số lượng)
+
+### 🔍 Đối chiếu thiết kế S1 (17 dòng DoD)
+
+Đối chiếu từng dòng DoD trong `workflow/handoff/PENDING/S2.done.md` (nội dung gốc từ S1):
+đọc code xác nhận ĐÚNG thiết kế cho tất cả các dòng kiểm tra được bằng cách đọc code tĩnh
+(state machine `AuthContext`/`AdminAuthContext`, `RootNavigator` ưu tiên Admin, 5 tab đúng
+tên, `MIN/MAX_SUBJECTS` khớp backend, SecureStore cho JWT/secret/theme, nonce Apple, ẩn nút
+Apple trên Android, README đầy đủ). Các dòng DoD mô tả hành vi RUNTIME thật trên thiết bị
+(chạy được cả iOS/Android, đăng nhập Google/Apple thành công thật, giữ phiên 7 ngày thật...)
+**KHÔNG thể tự kiểm chứng trong sandbox này** (không có giả lập/thiết bị) — đúng như S2 đã
+cảnh báo rõ, để nguyên cho S5 test thủ công theo checklist đã bổ sung vào `docs/TEST_CASES.md`.
+
+### Files S3 đã sửa/thêm
+
+- `mobile/src/api/client.ts` — bỏ binding `err` không dùng ở 3 khối `catch` (sửa lint warning)
+- `mobile/src/api/hello.ts` — bọc try/catch quanh `JSON.parse` (sửa Error Handling #1) + bỏ
+  binding `err` không dùng ở `catch` ngoài
+- `mobile/App.tsx` — gộp 2 dòng import `react-native-gesture-handler` thành 1 (sửa
+  `import/no-duplicates`)
+- `docs/api/drafts/mobile-foundation.yaml` — sửa contract `POST /api/users/subjects` cho khớp
+  code thật + ghi chú về cách dùng `GET /api/admin/settings/premium-default` làm "ping" xác
+  minh admin secret
+- `docs/TEST_CASES.md` — thêm mục "Mobile Foundation" (18 kịch bản test thủ công, khớp 17 dòng
+  DoD của S1)
+- `docs/CODE_REVIEW_LOG.md` — file này

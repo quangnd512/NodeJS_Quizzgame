@@ -69,7 +69,7 @@ export async function request<T>(
         ...options.headers,
       },
     });
-  } catch (err) {
+  } catch {
     // Loi mang (mat ket noi, backend khong chay, sai IP...) - khong phai loi tu server.
     throw new ApiError('NETWORK_ERROR', 'Khong the ket noi den may chu. Vui long kiem tra ket noi mang.', 0);
   }
@@ -105,7 +105,7 @@ export async function adminRequest<T>(
         ...options.headers,
       },
     });
-  } catch (err) {
+  } catch {
     throw new ApiError('NETWORK_ERROR', 'Khong the ket noi den may chu. Vui long kiem tra ket noi mang.', 0);
   }
 
@@ -134,7 +134,7 @@ export async function postFirebaseLogin<T>(firebaseIdToken: string): Promise<T> 
       method: 'POST',
       headers: { Authorization: `Bearer ${firebaseIdToken}` },
     });
-  } catch (err) {
+  } catch {
     throw new ApiError('NETWORK_ERROR', 'Khong the ket noi den may chu. Vui long kiem tra ket noi mang.', 0);
   }
 

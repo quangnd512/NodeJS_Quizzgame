@@ -9,10 +9,13 @@
 //      CA HAI de quyet dinh hien man hinh gi (xem giai thich chi tiet trong RootNavigator.tsx).
 //   4. NetworkBanner dat NGOAI RootNavigator (o cap App) de LUON hien thi de trong khi mat mang,
 //      bat ke dang o man hinh nao (Dang nhap, Onboarding, khung chinh...).
-import 'react-native-gesture-handler';
+// GHI CHU: import `react-native-gesture-handler` PHAI la dong dau tien (module co side-effect
+// khoi tao can chay TRUOC moi code khac) - gop chung 1 dong vua lay side-effect vua lay
+// `GestureHandlerRootView` (import 2 lan cung 1 module la thua, ESLint bao warning
+// `import/no-duplicates` - gop lai van dam bao dung thu tu vi day van la import DAU TIEN).
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import React from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider, useAppTheme } from './src/theme/ThemeContext';
 import { AuthProvider } from './src/auth/AuthContext';

@@ -873,3 +873,45 @@
 | B3 | Tự động vào lại trận đang dở — quay lại KỊP trong 30s | Đang thi đấu (trận với người thật), F5 lại trang hoặc đăng nhập lại trong vòng 30 giây | `GET /api/battle/active` trả `active:true` kèm snapshot (điểm số, câu hỏi hiện tại, số giây còn lại) → app tự động vào thẳng màn thi đấu ĐÚNG trận đó, không cần bấm gì, không mất điểm đã tích luỹ |
 | B4 | Tự động vào lại trận đang dở — quay lại TRỄ hơn 30s | Mất kết nối giữa trận, quay lại sau khi đã quá 30s (trận đã bị xử thắng/thua kỹ thuật hoặc huỷ) | `GET /api/battle/active` trả `active:false` (trận không còn "sống"); app phát hiện `matchId` nhớ trong `localStorage` (`battle_active_match_id`) không khớp trận đang sống nào → tự động tra `GET /api/battle/history` và hiện THẲNG màn kết quả của trận vừa kết thúc đó — đúng thiết kế "thua/huỷ kỹ thuật", KHÔNG "resume" lại được trận đã kết thúc |
 | B5 | **Bug đã sửa #7-8** (FE): banner mất kết nối phải đếm ngược đúng theo giây thật, không đứng yên | Đối thủ mất kết nối, quan sát banner từ giây 0 → 30 | Banner hiện "đang chờ 30s… 29s… 28s…" đếm lùi mỗi giây thật (`disconnectSecondsLeft`, chỉ để hiển thị — server luôn tự quyết định xử thắng/thua ở đúng 30s thật theo `BATTLE_DISCONNECT_GRACE_MS`, không phụ thuộc đồng hồ FE); khi đếm về 0, chữ đổi thành "đang xử lý…" thay vì hiện vô nghĩa "chờ 0s" |
+
+---
+
+## Test Cases: Đợt 1a — Nền móng App Di Động (Mobile Foundation)
+
+> Branch `feature/mobile-foundation`. **KHÔNG có test tự động** — đây là feature thuần
+> wiring UI/native-SDK (đăng nhập, điều hướng, dark mode, lưu trữ), không có service/hàm
+> nghiệp vụ nào đủ quan trọng để bù đắp chi phí dựng bộ test mobile lần đầu (`jest-expo` +
+> mock Firebase/Google/Apple/SecureStore) ở đúng đợt nền móng này — xem lý do đầy đủ trong
+> `docs/CODE_REVIEW_LOG.md`. Toàn bộ DoD của S1 vốn đã được khung theo hướng xác minh THỦ
+> CÔNG trên thiết bị/giả lập thật (không yêu cầu test tự động). Các kịch bản dưới đây liệt
+> kê lại đúng 17 gạch đầu dòng DoD gốc để dùng làm checklist test thủ công ở vòng S5.
+
+### Happy Path (xác minh thủ công trên giả lập/thiết bị thật)
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 1 | Đăng nhập Google lần đầu | Bấm "Đăng nhập bằng Google", chọn tài khoản Google hợp lệ | Nhận JWT từ `POST /api/auth/login`, `GET /api/users/me` trả 200; user MỚI (subjects rỗng) → vào Onboarding |
+| 2 | Đăng nhập Apple lần đầu (chỉ iOS, cần tài khoản Apple Developer Program để test thật) | Bấm "Đăng nhập bằng Apple" trên iOS | Luồng giống #1; `fullName` chỉ có ở lần đầu tiên (Apple chỉ trả 1 lần) |
+| 3 | User CŨ đã có sẵn môn học (từng đăng nhập qua web) | Đăng nhập, `subjects.length > 0` | Bỏ qua Onboarding, vào thẳng `MainTabNavigator` |
+| 4 | Đóng app mở lại trong vòng 7 ngày | Có JWT hợp lệ đã lưu trong SecureStore | Tự động vào thẳng khung chính (hoặc onboarding nếu chưa chọn môn), KHÔNG phải đăng nhập lại |
+| 5 | Đăng nhập Admin đúng `X-Admin-Secret` | Nhập đúng secret ở `AdminLoginScreen` | Vào `AdminStackNavigator`, tách biệt hoàn toàn khỏi luồng học sinh (ưu tiên hiển thị nếu cả 2 cùng đăng nhập — xem `RootNavigator.tsx`) |
+| 6 | Chuyển tab khung chính học sinh | Bấm lần lượt 5 tab | Chuyển mượt, đúng icon/tên: Luyện tập/Thi thử/Xếp hạng/Tiến độ/Hồ sơ |
+| 7 | Chọn môn học ở Onboarding | Chọn 1-7 môn, bấm "Tiếp tục" | Gọi `POST /api/users/subjects` đúng shape `{subjects:[{id,name}]}`, chuyển `signedIn` |
+| 8 | Đổi Dark mode | Chọn Sáng/Tối/Theo hệ thống ở tab Hồ sơ | Đổi màu toàn app ngay lập tức, lưu lại sau khi tắt/mở app |
+| 9 | Mất mạng rồi có mạng lại | Tắt rồi bật lại wifi/data | Banner cảnh báo hiện khi mất mạng, tự ẩn khi có mạng lại — không cần khởi động lại app |
+
+### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 10 | Huỷ đăng nhập Google/Apple giữa chừng (bấm "Huỷ"/đóng popup) | `GoogleSignInCancelledError`/`AppleSignInCancelledError` | KHÔNG hiện thông báo lỗi (coi là hành động chủ động của user), quay lại màn Đăng nhập bình thường |
+| 11 | Apple trả `fullName=null` ở các lần đăng nhập sau lần đầu | Đăng nhập Apple lần 2 trở đi | Không lỗi, không yêu cầu lại tên (đã lưu từ lần đầu nếu cần dùng sau này) |
+| 12 | Google Sign-In thiếu Play Services / đang xử lý yêu cầu trước đó | `PLAY_SERVICES_NOT_AVAILABLE` / `IN_PROGRESS` | Thông báo lỗi rõ ràng bằng tiếng Việt, không crash app |
+| 13 | Nút "Đăng nhập bằng Apple" trên Android | `isAppleSignInPlatform = Platform.OS==='ios'` | Nút ẩn hoàn toàn trên Android, không hiện dù chỉ để disable |
+| 14 | Mất kết nối mạng lúc gọi bất kỳ API nào (`fetch` throw) | Backend không phản hồi được / sai `EXPO_PUBLIC_API_URL` | `ApiError('NETWORK_ERROR', ...)`, không crash app (kể cả khi body trả về không phải JSON hợp lệ — đã sửa `hello.ts` thiếu try/catch parse JSON, xem CODE_REVIEW_LOG) |
+| 15 | Chưa cấu hình `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | Build production thiếu biến môi trường | `resolveApiBaseUrl`/`ensureConfigured` throw lỗi rõ ràng ngay lúc khởi động/bấm nút, không "âm thầm" trỏ sai URL |
+
+### Error Cases
+| # | Mô tả | Input | Expected HTTP/Kết quả | Expected Error Code |
+|---|-------|-------|------------------------|----------------------|
+| 16 | JWT hết hạn/không hợp lệ trong lúc đang dùng app | Bất kỳ request nào dùng sessionToken nhận 401 | `sessionUnauthorizedListener` tự kích hoạt → xoá SecureStore, chuyển thẳng về `signedOut` (màn Đăng nhập), không crash app | 401 |
+| 17 | Sai `X-Admin-Secret` | Nhập sai secret ở `AdminLoginScreen` | `lastError` hiện "Sai X-Admin-Secret. Vui lòng kiểm tra lại.", KHÔNG vào được khung Admin | 401 `ADMIN_UNAUTHORIZED` |
+| 18 | Admin secret cũ đã lưu không còn hợp lệ (bị đổi ở backend) lúc mở lại app | Boot đọc secret cũ từ SecureStore, `verifyAdminSecret` thất bại | Tự động `forceSignOut` về `signedOut`, không crash, không kẹt ở màn hình chờ | 401 |

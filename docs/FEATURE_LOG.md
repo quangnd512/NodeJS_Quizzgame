@@ -7810,3 +7810,272 @@ Kết nối: `io('/battle', { auth: { token: sessionToken } })`. Middleware xác
 - Chưa có giới hạn tần suất (rate limit) cho việc tạo phòng liên tục — chấp nhận được ở quy mô MVP, cân nhắc bổ sung nếu phát hiện lạm dụng.
 - **`GET /api/battle/active` chỉ đúng khi trận còn sống trên process backend hiện tại** (mục kỹ thuật #9) — cùng hạn chế 1-instance như hàng đợi/trạng thái trận; nếu sau này scale nhiều instance, cần đưa cả snapshot này qua Redis/pub-sub như đã ghi ở dòng đầu tiên.
 - Danh sách 12 tên giả cho bot (`BOT_DISPLAY_NAMES` trong `battle.utils.ts`) là danh sách cố định, cứng trong code — nếu 2 trận bot khác nhau tình cờ hash trùng cùng 1 tên, không gây lỗi (chỉ là 2 "người chơi ảo" trùng tên ngẫu nhiên, không ảnh hưởng logic).
+
+## 17. Nền móng App Di Động — Mobile Foundation (Đợt 1a)
+
+**Trạng thái:** ✅ Hoàn thành (Đợt 1a/nền móng — chỉ khung app: đăng nhập, điều hướng, dark mode, onboarding; các màn hình chức năng thật — Luyện tập, Thi thử, Xếp hạng, Tiến độ — tạm hiện "Sắp ra mắt", sẽ lấp dần ở Đợt 1b/1c/1d)
+**Ngày hoàn thành:** 2026-07-29
+**Branch / commit liên quan:** `feature/mobile-foundation` (13 commit, mỗi TASK 1 commit, `107c8db` → `6b8abd6`; review/fix bởi S3 — xem `docs/CODE_REVIEW_LOG.md`)
+
+---
+
+### Tổng quan
+
+#### Vấn đề cần giải quyết
+
+QuizzGame trước Đợt 1a chỉ có 2 client: `frontend/` (web, React + Vite) và trực tiếp `backend/` (Express API). Roadmap sản phẩm cần đưa QuizzGame lên điện thoại (trải nghiệm tốt hơn, thông báo đẩy native ở các đợt sau...). Đợt 1a là bước **nền móng** đầu tiên — dựng khung ứng dụng di động (React Native + Expo) có thể đăng nhập, điều hướng, đổi giao diện, và tái sử dụng đúng 100% API backend hiện có, TRƯỚC KHI lấp các màn hình chức năng nghiệp vụ thật ở các đợt sau.
+
+Phạm vi CỐ Ý giới hạn ở "khung sườn": đăng nhập Google/Apple, chọn môn học (onboarding), điều hướng 5 tab chính (placeholder "Sắp ra mắt" trừ Hồ sơ), dark mode, đăng nhập Admin riêng biệt, banner mất mạng, giữ phiên đăng nhập 7 ngày. KHÔNG có bất kỳ màn hình nghiệp vụ thật nào (luyện tập, thi thử...) — đó là phạm vi của Đợt 1b trở đi.
+
+#### Giải pháp được chọn
+
+- **Thư mục `mobile/` mới hoàn toàn**, nằm cạnh `frontend/`/`backend/` trong cùng 1 mono-repo — dùng **chung 1 backend**, **không có API mới, không đổi schema database**. Điểm mấu chốt giúp việc này khả thi mà không cần sửa backend: kiến trúc auth đã **provider-agnostic** từ trước — `verifyFirebaseToken` chỉ verify Firebase ID Token, không phân biệt token đó đến từ Google hay Apple, hay từ web hay mobile.
+- **Stack:** React Native + Expo SDK 57 + TypeScript, `firebase/auth` (JS SDK, cùng project Firebase `quizzgamedh` với web), `@react-navigation` (native-stack + bottom-tabs), `@react-native-google-signin/google-signin` + `expo-apple-authentication` (native module đăng nhập — khuyến nghị chính thức của Google/Expo, đánh đổi: không chạy được trong Expo Go thường, cần "dev build").
+- **2 Context xác thực độc lập, không lồng nhau:** `AuthContext` (luồng học sinh — state machine `booting→signedOut/onboarding/signedIn`) và `AdminAuthContext` (luồng admin — `booting→signedOut/signedIn`, dùng `X-Admin-Secret`, KHÔNG qua Firebase/JWT). `RootNavigator` đọc CẢ HAI để quyết định hiển thị 1 trong 5 "thế giới" màn hình, ưu tiên hiển thị Admin nếu cả hai cùng `signedIn` (an toàn hơn về bảo mật — xem "Ghi chú kỹ thuật" #1).
+- **JWT nội bộ là nguồn xác thực DUY NHẤT** sau khi đăng nhập xong — Firebase Auth chỉ là bước trung gian lúc đăng nhập (lấy ID Token), dùng `inMemoryPersistence` (không tự lưu gì), tránh phải thêm 1 lớp lưu trữ nhạy cảm thứ 2 ngoài `expo-secure-store`.
+- **`expo-secure-store`** (mã hoá phần cứng qua Keychain/Keystore, KHÔNG dùng `AsyncStorage` thường) là nơi DUY NHẤT lưu: JWT nội bộ (7 ngày), `X-Admin-Secret`, lựa chọn dark mode.
+- **Cơ chế tự đăng xuất khi 401** tập trung tại `api/client.ts` bằng listener pattern (`setSessionUnauthorizedListener`/`setAdminUnauthorizedListener`) — mọi màn hình KHÔNG cần tự bắt lỗi 401 riêng lẻ; `AuthContext`/`AdminAuthContext` đăng ký 1 lần lúc mount.
+- **Nguồn sự thật cho "cần Onboarding hay không"**: LUÔN là `GET /api/users/me` → `subjects.length > 0`, KHÔNG dựa vào cờ `isNewUser` trả về lúc đăng nhập (vì user có thể đã từng đăng ký qua web trước đó).
+- **Không dùng thư viện icon riêng** — dùng emoji làm icon tab, giữ tối thiểu dependency ở giai đoạn nền móng.
+
+---
+
+### Data Model
+
+**Không có thay đổi database nào.** Đợt 1a không thêm/sửa bảng, không thêm migration — tái sử dụng 100% schema hiện có.
+
+---
+
+### API Reference
+
+**Không có endpoint mới.** Toàn bộ là app di động gọi lại các endpoint REST đã tồn tại sẵn của backend:
+
+| Method | Path | Auth | Mô tả |
+|---|---|---|---|
+| POST | `/api/auth/login` | `Bearer <firebase-id-token>` | Đổi Firebase ID Token (Google/Apple) lấy JWT nội bộ (hạn 7 ngày) |
+| GET | `/api/users/me` | `Bearer <app-jwt>` | Lấy profile đầy đủ — nguồn sự thật quyết định vào Onboarding hay khung chính |
+| POST | `/api/users/subjects` | `Bearer <app-jwt>` | Lưu danh sách môn học đã chọn ở Onboarding |
+| GET | `/api/admin/settings/premium-default` | `X-Admin-Secret` | Tái dùng làm request "ping" xác minh admin secret đúng/sai lúc đăng nhập Admin (đợt này chưa có màn hình chức năng admin thật để dùng thay) |
+
+Cả 4 endpoint này nay đã có mô tả chính thức trong `docs/api/openapi.yaml` (2 endpoint đầu mới được thêm ở v1.8.0 — xem "Ghi chú kỹ thuật" #4 bên dưới; 2 endpoint sau đã có sẵn từ Feature 015). Xem thêm `docs/api/drafts/mobile-foundation.yaml`.
+
+#### POST /api/auth/login
+
+- **Request**: Không có body — chỉ cần header `Authorization: Bearer <firebase-id-token>` (Firebase ID Token, có được ngay sau khi đăng nhập Google/Apple qua Firebase SDK trên mobile).
+- **Response 200**:
+  ```json
+  {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "isNewUser": false,
+    "user": {
+      "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "firebaseUid": "aBcDeFgHiJkLmNoPqRsTuVwXyZ123456",
+      "displayName": "Nguyễn Văn A",
+      "email": "nguyenvana@gmail.com",
+      "phone": null, "school": null, "province": null,
+      "subjects": ["TOAN", "LY"],
+      "createdAt": "2026-06-01T02:30:00.000Z",
+      "lastLoginAt": "2026-07-29T09:15:00.000Z"
+    }
+  }
+  ```
+- **Luồng xử lý**: Middleware `verifyFirebaseToken` xác thực token → `authService.login()` tìm user theo `firebaseUid`, tạo mới nếu chưa có (đồng bộ `displayName`/`email` từ Firebase) → phát hành JWT nội bộ.
+- **Error codes**: `401 MISSING_AUTH_TOKEN` (thiếu/sai định dạng header), `401 INVALID_FIREBASE_TOKEN` (token sai/hết hạn/bị thu hồi).
+
+#### GET /api/users/me
+
+- **Request**: Không có body, header `Authorization: Bearer <app-jwt>`.
+- **Response 200**: `UserMeDto` đầy đủ — `subjects` ở đây là mảng object `{id, name}` (khác `user.subjects` của `/login` chỉ là mã môn thô `string[]`), kèm `points`, `isPremium`, `premiumExpiresAt`, `avatarUrl`.
+- **Luồng xử lý**: `AuthContext.applySessionToken()` gọi ngay sau khi có token hợp lệ (mới đăng nhập, hoặc lúc app khởi động đọc lại token cũ từ SecureStore) — `subjects.length > 0` quyết định vào thẳng khung chính hay Onboarding.
+- **Error codes**: `401 MISSING_AUTH_TOKEN` / `INVALID_SESSION_TOKEN` / `SESSION_USER_NOT_FOUND` — cả 3 đều kích hoạt `sessionUnauthorizedListener` (tự động đăng xuất, xem mục kỹ thuật #2).
+
+#### POST /api/users/subjects
+
+- **Request**: `{ "subjects": [{ "id": "TOAN", "name": "Toán" }, ...] }` — 1-7 phần tử.
+- **Response 200**: `{ "subjects": [{ "id": "TOAN", "name": "Toán" }, ...] }`.
+- **Luồng xử lý**: Gọi từ `OnboardingSubjectsScreen` sau khi user chọn 1-7 môn (`MIN_SUBJECTS=1`, `MAX_SUBJECTS=7`, khớp backend) → `AuthContext.completeOnboarding()` chuyển `status` sang `signedIn`.
+- **Error codes**: `400` (sai định dạng/số lượng môn), `401`.
+
+---
+
+### Luồng chạy chi tiết (step-by-step)
+
+#### A. Khởi động app — quyết định màn hình đầu tiên (RootNavigator)
+
+```
+App khởi động
+     │
+     ├─► ThemeProvider: đọc SecureStore (theme_preference) ─► preference (light/dark/system)
+     │
+     ├─► AuthProvider: đọc SecureStore (app_session_token)
+     │        │
+     │        ├─ Không có token ──────────────────────► status = 'signedOut'
+     │        └─ Có token ─► GET /api/users/me
+     │                 ├─ 200, subjects=[] ─────────────► status = 'onboarding'
+     │                 ├─ 200, subjects.length>0 ───────► status = 'signedIn'
+     │                 └─ lỗi (401/...) ────────────────► forceSignOut() → 'signedOut'
+     │
+     └─► AdminAuthProvider: đọc SecureStore (admin_secret)
+              ├─ Không có secret ──────────────────────► status = 'signedOut'
+              └─ Có secret ─► GET /api/admin/settings/premium-default (ping xác minh)
+                       ├─ 200 ───────────────────────────► status = 'signedIn'
+                       └─ 401 ───────────────────────────► forceSignOut() → 'signedOut'
+
+RootNavigator đọc CẢ HAI status (còn 1 trong 2 = 'booting' → SplashScreen):
+  adminStatus='signedIn'                  → AdminStackNavigator  (ưu tiên CAO NHẤT)
+  authStatus='signedOut'                  → AuthStackNavigator (LoginScreen)
+  authStatus='onboarding'                 → OnboardingSubjectsScreen
+  authStatus='signedIn'                   → MainTabNavigator (5 tab)
+```
+
+#### B. Đăng nhập Google/Apple → Onboarding (user mới) hoặc thẳng vào khung chính (user cũ)
+
+```
+LoginScreen                    Firebase Auth SDK        Backend (/api/auth/login, /api/users/me)
+    │  bấm "Đăng nhập Google"        │                            │
+    ├─ signInWithGoogle() ──────────►│  GoogleSignin.signIn()     │
+    │  (native module)               │  → idToken Google          │
+    │                                │  → đổi lấy Firebase         │
+    │                                │    credential                │
+    │◄───────────────────────────────┤  firebaseIdToken            │
+    │                                                              │
+    ├─ finishLoginWithFirebaseToken(firebaseIdToken) ─────────────►│ POST /api/auth/login
+    │                                                              │ (verifyFirebaseToken)
+    │◄─────────────────────────────────────────────────────────────┤ { token, isNewUser, user }
+    ├─ SecureStore.setItem(app_session_token, token)
+    ├─ applySessionToken(token) ───────────────────────────────────►│ GET /api/users/me
+    │◄─────────────────────────────────────────────────────────────┤ UserMeDto
+    │
+    ├─ subjects.length === 0 → status='onboarding' → OnboardingSubjectsScreen
+    └─ subjects.length  > 0 → status='signedIn'    → MainTabNavigator (BỎ QUA Onboarding —
+                                                       kể cả user MỚI với mobile nhưng đã
+                                                       từng đăng ký qua web trước đó)
+```
+
+Huỷ đăng nhập giữa chừng (`GoogleSignInCancelledError`/`AppleSignInCancelledError`) → `LoginScreen` bắt và bỏ qua lặng lẽ, KHÔNG hiện thông báo lỗi (coi là hành động chủ động của user).
+
+#### C. Đăng nhập Apple — chống replay bằng nonce
+
+```
+1. Tạo "rawNonce" ngẫu nhiên (32 byte, expo-crypto)
+2. Băm SHA-256(rawNonce) = "hashedNonce" → gửi cho Apple (AppleAuthentication.signInAsync({ nonce: hashedNonce }))
+   → Apple nhúng hashedNonce vào identityToken trả về, KHÔNG thể làm giả
+3. Đổi credential với Firebase: gửi identityToken + rawNonce (BẢN GỐC, chưa băm)
+   → Firebase tự băm lại rawNonce, đối chiếu với giá trị Apple đã nhúng
+   → xác nhận request đến từ chính thiết bị vừa gọi Apple (chống token bị đánh cắp/phát lại)
+```
+Nút "Đăng nhập bằng Apple" CHỈ hiện trên iOS (`isAppleSignInPlatform = Platform.OS === 'ios'`). `fullName` Apple trả về CHỈ có ở lần đồng ý đầu tiên — các lần sau `null` (không lỗi, không yêu cầu lại).
+
+#### D. Tự động đăng xuất khi JWT/admin secret hết hạn giữa lúc dùng app
+
+```
+Bất kỳ request nào (request()/adminRequest() trong api/client.ts)
+     │
+     ▼ server trả 401
+sessionUnauthorizedListener?.() hoặc adminUnauthorizedListener?.()  (gọi TRƯỚC khi ném ApiError)
+     │
+     ▼ (đã đăng ký sẵn lúc AuthContext/AdminAuthContext mount)
+forceSignOut(): xoá SecureStore + status → 'signedOut'
+     │
+     ▼
+RootNavigator tự động chuyển về AuthStackNavigator/AuthStack (không crash, không cần
+từng màn hình tự bắt lỗi 401 riêng lẻ)
+```
+
+#### E. Đăng nhập Admin (tách biệt hoàn toàn khỏi luồng học sinh)
+
+```
+LoginScreen → bấm "Bạn là Quản trị viên?" → AdminLoginScreen
+     │  nhập X-Admin-Secret, bấm "Đăng nhập"
+     ├─ AdminAuthContext.signIn(secret) ──► GET /api/admin/settings/premium-default
+     │                                       (kèm header X-Admin-Secret, dùng làm "ping")
+     ├─ 200 → SecureStore.setItem(admin_secret) → status='signedIn'
+     │         → RootNavigator ƯU TIÊN hiển thị AdminStackNavigator (dù authStatus học
+     │           sinh vẫn còn 'signedOut'/'signedIn' bất kỳ giá trị nào)
+     └─ 401 → lastError = "Sai X-Admin-Secret. Vui lòng kiểm tra lại." → ở lại AdminLoginScreen
+```
+
+---
+
+### File Structure
+
+**Mobile (mới hoàn toàn — 45 file):**
+- `mobile/App.tsx` — điểm vào, lắp ráp Provider theo đúng thứ tự bắt buộc (`GestureHandlerRootView` → `SafeAreaProvider` → `ThemeProvider` → `AuthProvider` → `AdminAuthProvider` → `AppShell`)
+- `mobile/src/config/env.ts` — suy ra `API_BASE_URL` theo nền tảng (Android emulator `10.0.2.2`, iOS simulator `localhost`, ưu tiên `EXPO_PUBLIC_API_URL` nếu có, throw lỗi rõ ràng nếu thiếu ở production build)
+- `mobile/src/api/` — `client.ts` (wrapper `fetch` dùng chung + listener pattern 401), `auth.ts`, `users.ts`, `admin.ts`, `hello.ts` (tiện ích dự phòng, chưa dùng ở UI)
+- `mobile/src/storage/secureStore.ts` — wrapper DUY NHẤT quanh `expo-secure-store` (3 key: `app_session_token`, `admin_secret`, `theme_preference`)
+- `mobile/src/auth/` — `firebase.ts` (khởi tạo Firebase JS SDK, `inMemoryPersistence`), `googleSignIn.ts`, `appleSignIn.ts`, `AuthContext.tsx`
+- `mobile/src/admin/` — `AdminAuthContext.tsx`, `AdminLoginScreen.tsx`, `AdminHomeScreen.tsx`
+- `mobile/src/theme/` — `ThemeContext.tsx` (dark mode), `colors.ts`
+- `mobile/src/network/NetworkBanner.tsx` — banner mất mạng (`expo-network`, event-based, không polling)
+- `mobile/src/navigation/` — `RootNavigator.tsx`, `AuthStackNavigator.tsx`, `MainTabNavigator.tsx`, `AdminStackNavigator.tsx`, `types.ts`
+- `mobile/src/screens/` — `LoginScreen.tsx`, `OnboardingSubjectsScreen.tsx`, `ProfileScreen.tsx`, `ComingSoonScreen.tsx`, `SplashScreen.tsx`
+- `mobile/src/components/PrimaryButton.tsx`
+- `mobile/src/constants/subjects.ts` — bản sao `SUBJECT_CATALOG` để hiển thị UI (backend vẫn là nguồn xác thực cuối cùng)
+- `mobile/README.md` — hướng dẫn cài đặt/chạy/build đầy đủ (yêu cầu môi trường, biến `.env`, cấu hình Google/Apple Sign-In, dev build, kiến trúc thư mục)
+- `mobile/.env.example`, `mobile/app.json`, `mobile/eslint.config.js`, `mobile/tsconfig.json`
+
+**Backend/Frontend:** không file nào thay đổi (xác nhận qua `git diff master..HEAD --name-only` chỉ có file trong `mobile/` + 1 file docs).
+
+**Tài liệu:**
+- `docs/api/drafts/mobile-foundation.yaml` — API draft (không có endpoint mới, chỉ liệt kê endpoint tái sử dụng), đã sửa 1 điểm lệch contract (`POST /api/users/subjects`)
+- `docs/api/openapi.yaml` — bổ sung `POST /api/auth/login` + `GET /api/users/me` vào contract chính thức (v1.8.0, xem "Ghi chú kỹ thuật" #4)
+- `docs/CODE_REVIEW_LOG.md` (mục "Review: Đợt 1a — Nền móng App Di Động") — review đầy đủ 8 tiêu chí
+- `docs/TEST_CASES.md` (mục "Test Cases: Đợt 1a — Nền móng App Di Động") — 18 kịch bản test thủ công (không có test tự động, xem mục kỹ thuật #5)
+
+---
+
+### Ghi chú kỹ thuật
+
+#### 1. Vì sao ưu tiên hiển thị Admin nếu cả 2 Context cùng "signedIn"
+
+Về lý thuyết 1 thiết bị hiếm khi đăng nhập CẢ HAI vai trò cùng lúc (admin thường dùng thiết bị/tài khoản riêng), nhưng nếu xảy ra, ưu tiên Admin AN TOÀN HƠN: Admin thấy nhầm màn hình học sinh trong khi vẫn đăng nhập Admin là vô hại — ngược lại nếu 1 thiết bị dùng chung (ví dụ máy demo) lỡ hiện nhầm khung Admin cho người không phải admin mới là rủi ro bảo mật thật sự.
+
+#### 2. Lỗi Error Handling tìm thấy & đã sửa (S3 review) — thiếu try/catch parse JSON
+
+`mobile/src/api/hello.ts` gọi trực tiếp `JSON.parse(text)` không có try/catch, không nhất quán với `parseJsonBody()` trong `client.ts` (đã cẩn thận bọc try/catch cho đúng tình huống: server/proxy trả về HTML lỗi thay vì JSON, ví dụ do gõ sai `EXPO_PUBLIC_API_URL`). Nếu gặp đúng tình huống này, hàm sẽ ném `SyntaxError` không kiểm soát thay vì `ApiError('NETWORK_ERROR', ...)` gọn gàng như phần còn lại của app. Đã sửa để bọc try/catch giống hệt pattern của `client.ts` (hàm này hiện chưa được gọi ở đâu trong UI — chỉ là tiện ích dự phòng từ TASK 2, không phải bug đang gây lỗi thật, nhưng vẫn sửa để nhất quán và an toàn nếu được dùng ở đợt sau).
+
+#### 3. Lệch API contract tìm thấy & đã sửa (S3 review) — `POST /api/users/subjects`
+
+Bản nháp `docs/api/drafts/mobile-foundation.yaml` (S1) ban đầu ghi `request: { subjects: string[] }` — SAI so với contract THẬT của endpoint đã tồn tại từ trước (`backend/src/routes/users.route.ts`: `Body: { "subjects": [{ "id", "name?" }] }`). Code mobile (`api/users.ts`) đã implement ĐÚNG theo contract thật (giống hệt cách `frontend/src/lib/api.ts` web đang gọi) — chỉ có bản nháp yaml viết tắt sai. Đã sửa lại draft cho khớp thực tế, KHÔNG sửa code.
+
+#### 4. Đóng khoảng trống tài liệu cũ — `POST /api/auth/login` + `GET /api/users/me` chưa từng có trong `openapi.yaml`
+
+Khi đối chiếu draft với `docs/api/openapi.yaml` chính, phát hiện 2 endpoint cốt lõi nhất của toàn bộ luồng đăng nhập (dùng bởi CẢ web lẫn mobile) chưa từng được viết vào file `openapi.yaml` — đây là khoảng trống có TỪ TRƯỚC Feature 001 (trước khi áp dụng workflow 9-session, file `openapi.yaml` chỉ được tạo và duy trì từ các feature sau này), không phải lỗi phát sinh ở Đợt 1a. Vì `mobile/` coi 2 endpoint này là một phần cốt lõi của luồng đăng nhập (không chỉ là "tiện ích phụ" như ở web, nơi Auth đã ổn định lâu và ít khi cần tra cứu lại contract), nhân tiện bổ sung đầy đủ vào `openapi.yaml` (v1.8.0) — dùng lại schema `UserMeDto` đã có sẵn từ v1.6.0 cho `GET /api/users/me`, thêm schema response mới cho `POST /api/auth/login`. Không đổi hành vi backend, thuần bổ sung tài liệu.
+
+#### 5. Quyết định KHÔNG viết test tự động (có cân nhắc, không phải bỏ sót)
+
+Khác với mọi feature backend trước đây (đều có test tự động bảo vệ logic tiền/điểm/race condition), Đợt 1a **không có test tự động nào** — quyết định có chủ đích của S3 khi review, vì:
+1. Toàn bộ 17 dòng DoD gốc của S1 được khung theo hướng xác minh **thủ công trên thiết bị/giả lập thật** (đăng nhập Google/Apple thật, dark mode thật, mất mạng thật...) — không có dòng DoD nào yêu cầu test tự động.
+2. `mobile/` là thư mục mới hoàn toàn, CHƯA có hạ tầng test nào (`jest-expo` chưa cài) — phần lớn code là UI/context wiring phụ thuộc native module thật (Firebase, Google/Apple Sign-In, SecureStore), cần mock khá sâu để test có ý nghĩa.
+3. Ứng viên duy nhất đủ "thuần logic" để test (`resolveApiBaseUrl`/`getDefaultDevApiUrl` trong `config/env.ts`) vẫn phải import `Platform` từ `react-native` — không chạy được bằng `vitest` trơn như backend, và logic quá đơn giản (rẽ nhánh 3 case) để biện minh việc kéo theo cả 1 bộ hạ tầng test mới chỉ vì 1 hàm.
+4. Logic rủi ro cao nhất thực sự (SecureStore mã hoá đúng, tự đăng xuất khi 401, nonce chống replay Apple, tách biệt Admin/học sinh) đã được đọc kỹ code xác nhận đúng.
+
+**Khuyến nghị:** bắt đầu dựng `jest-expo` từ Đợt 1b (khi có service/logic nghiệp vụ thật như tính điểm luyện tập/thi thử hiển thị trên mobile) thay vì bọc thêm hạ tầng test cho nền móng thuần UI này.
+
+#### 6. Dọn lint — `import/no-duplicates` + biến `err` không dùng trong `catch`
+
+S3 review phát hiện 6 warning lint (0 lỗi): `react-native-gesture-handler` bị import 2 lần ở `App.tsx` (1 lần side-effect-only cho khởi tạo bắt buộc phải chạy TRƯỚC mọi code khác, 1 lần lấy `GestureHandlerRootView`) — gộp thành 1 dòng import duy nhất (vẫn đứng ĐẦU TIÊN file, đảm bảo đúng thứ tự khởi tạo). 4 chỗ khác (`client.ts`×3, `hello.ts`×1) khai báo biến `err` trong `catch` nhưng không dùng — bỏ binding, dùng `catch {}` trơn.
+
+---
+
+### Cách tự kiểm thử (manual test — xem đầy đủ 18 kịch bản trong `docs/TEST_CASES.md`)
+
+1. `cd mobile && npm install && cp .env.example .env` → điền `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` (bắt buộc) → `npx expo prebuild && npx expo run:android`/`run:ios` (bắt buộc "dev build" — Google/Apple Sign-In là native module, KHÔNG chạy trong Expo Go thường).
+2. Đăng nhập Google lần đầu → xác nhận vào `OnboardingSubjectsScreen` (subjects rỗng) → chọn 1-7 môn → bấm "Tiếp tục" → vào thẳng `MainTabNavigator` (5 tab: Luyện tập/Thi thử/Xếp hạng/Tiến độ/Hồ sơ).
+3. Đóng app, mở lại trong vòng 7 ngày → xác nhận tự động vào thẳng khung chính, KHÔNG phải đăng nhập lại (JWT đọc lại từ SecureStore + `GET /api/users/me` xác thực lại thành công).
+4. Tab "Hồ sơ" → đổi Dark mode (Sáng/Tối/Theo hệ thống) → xác nhận đổi màu ngay lập tức, giữ nguyên sau khi tắt/mở lại app.
+5. Bấm "Bạn là Quản trị viên?" → nhập đúng `ADMIN_SECRET` → xác nhận vào `AdminStackNavigator`, tách biệt hoàn toàn khỏi luồng học sinh; nhập sai → hiện lỗi rõ ràng, không vào được.
+6. Tắt wifi/data giữa lúc dùng app → xác nhận banner đỏ "⚠️ Mất kết nối mạng..." hiện ngay (mọi màn hình), tự ẩn khi có mạng lại.
+7. Test JWT hết hạn giữa lúc dùng app (giả lập bằng cách sửa `ADMIN_SECRET`/đợi hết hạn) → xác nhận tự động đăng xuất về `LoginScreen`, không crash.
+
+---
+
+### Lưu ý / rủi ro / TODO tiếp theo
+
+- **Google/Apple Sign-In cần "dev build"** — không chạy trong Expo Go thường sau khi tích hợp 2 thư viện native này (giới hạn đã biết trước của toàn ngành, không phải lỗi cấu hình).
+- **Apple Sign-In cần tài khoản Apple Developer Program (99 USD/năm)** để test thật trên iOS — nếu dự án chưa có, nút vẫn hiện/bấm được nhưng báo lỗi cấu hình từ Apple thay vì đăng nhập thành công.
+- **Danh mục môn học hardcode phía client** (`constants/subjects.ts`) — PHẢI cập nhật tay nếu backend thêm/bớt môn trong `SUBJECT_CATALOG` (`backend/src/services/users/users.types.ts`); backend chưa có endpoint liệt kê danh mục để mobile tự đồng bộ.
+- **Chưa có test tự động** — xem mục kỹ thuật #5, khuyến nghị dựng `jest-expo` từ Đợt 1b.
+- **`bundleIdentifier`/`package` hiện đặt tạm `com.quizzgame.mobile`** — cần xác nhận lại trước khi nộp App Store/Play Store (không đổi dễ dàng sau khi đã phát hành).
+- **Đợt 1b trở đi**: lấp dần 4 tab "Sắp ra mắt" (Luyện tập, Thi thử, Xếp hạng, Tiến độ) bằng màn hình chức năng thật, tái sử dụng đúng các endpoint đã có ở `frontend/`.

@@ -1,23 +1,41 @@
 openapi: 3.0.3
 info:
   title: QuizzGame API — Practice, Thi thử, Admin, Ngân hàng câu hỏi & Leaderboard
-  version: "1.7.1"
+  version: "1.8.0"
   description: >-
     Contract cho module Ôn tập (Practice), module Thi thử (Exam/Mock Exam),
     các endpoint Admin liên quan (quản lý câu hỏi, xử lý báo cáo câu hỏi,
     quản lý đề thi thử), Ngân hàng câu hỏi (Question Bank),
     Bảng xếp hạng (Leaderboard), Ảnh đại diện (Avatar), Thông báo
     (Notifications), Học sinh đóng góp câu hỏi (Submissions), Khung
-    Free/Premium và Thi đấu đối kháng (PvP Quiz Battle).
+    Free/Premium, Thi đấu đối kháng (PvP Quiz Battle) và Auth/Onboarding
+    (đăng nhập, hồ sơ).
     Khớp với `docs/FEATURE_LOG.md` Section 4 (Practice Module), Section 5
     (Admin Dashboard), Section 6 (Exam Module), Section 7 (Ngân hàng câu hỏi),
     Section 8 (Leaderboard & Avatar), Section 13 (Notifications), Section 14
     (Quản lý câu hỏi — Submissions + Report Redesign), Section 15 (Khung
-    Free/Premium), Section 16 (Thi đấu đối kháng — PvP Quiz Battle).
+    Free/Premium), Section 16 (Thi đấu đối kháng — PvP Quiz Battle), Section 17
+    (Nền móng App Di Động — Mobile Foundation).
 
-    Các endpoint Auth, Onboarding (đăng nhập, tạo hồ sơ), Points chưa được mô
-    tả trong file này — ngoại lệ 2 endpoint đổi môn học (`/api/users/subjects*`)
-    được thêm riêng vì là trọng tâm gate Free/Premium.
+    Phần lớn endpoint Onboarding/Points khác (`PUT /api/users/profile`,
+    lịch sử điểm...) vẫn CHƯA được mô tả trong file này — ngoại lệ
+    `POST /api/auth/login` + `GET /api/users/me` (thêm ở v1.8.0, xem bên
+    dưới) và 2 endpoint đổi môn học (`/api/users/subjects*`, trọng tâm gate
+    Free/Premium).
+
+    ⚠️ **v1.8.0 — Đợt 1a (Mobile Foundation)**: thêm 2 endpoint vào contract
+    chính thức — `POST /api/auth/login` (đổi Firebase ID Token lấy JWT nội
+    bộ) và `GET /api/users/me` (đọc profile đầy đủ, dùng `UserMeDto` đã có
+    sẵn schema từ v1.6.0). Đây là 2 endpoint đã tồn tại và được `frontend/`
+    dùng từ trước Feature 001 (trước khi áp dụng workflow 9-session, nên
+    chưa từng được viết vào file này) — KHÔNG có thay đổi hành vi, chỉ bổ
+    sung tài liệu vì `mobile/` (client di động ĐẦU TIÊN của dự án, React
+    Native + Expo) coi 2 endpoint này là một phần cốt lõi của luồng đăng
+    nhập. `mobile/` tái sử dụng 100% các endpoint đã có (`POST
+    /api/auth/login`, `GET /api/users/me`, `POST /api/users/subjects`, `GET
+    /api/admin/settings/premium-default` làm "ping" xác minh admin secret)
+    — KHÔNG có endpoint mới nào riêng cho mobile, backend không đổi gì. Xem
+    `docs/api/drafts/mobile-foundation.yaml` + `docs/FEATURE_LOG.md` Section 17.
 
     ⚠️ **v1.5.0 — Breaking change**: `PATCH /api/admin/questions/reports/{id}`
     (cũ) đã bị XOÁ, thay bằng `PATCH /api/admin/questions/reports/{id}/resolve`
@@ -62,6 +80,10 @@ servers:
     description: Local dev
 
 tags:
+  - name: Auth
+    description: >-
+      Đăng nhập (đổi Firebase ID Token lấy session token nội bộ) — dùng
+      chung Web + Mobile, xem Section 17 (Mobile Foundation)
   - name: Practice
     description: Endpoint cho người dùng đã đăng nhập (session token)
   - name: Exam
@@ -93,6 +115,141 @@ tags:
 security: []
 
 paths:
+  # ───────────────────────────── Auth ─────────────────────────────
+  # Mới thêm ở v1.8.0 (Đợt 1a — Mobile Foundation) — endpoint đã tồn tại từ
+  # trước, chỉ mới được viết vào contract chính thức, xem info.description.
+
+  /api/auth/login:
+    post:
+      summary: Đăng nhập — đổi Firebase ID Token lấy JWT nội bộ (session token)
+      tags: [Auth]
+      security: []
+      description: >-
+        Header `Authorization: Bearer <firebase-id-token>` (KHÔNG phải
+        session token nội bộ — đây chính là request đổi token, nên không
+        thể yêu cầu đã có session token). Firebase ID Token có được sau khi
+        đăng nhập Google/Apple/... qua Firebase SDK (web hoặc mobile).
+        Nếu `firebaseUid` chưa từng đăng nhập, tự động tạo user mới
+        (đồng bộ `displayName`/`email` từ Firebase) — `subjects` rỗng cho
+        user mới, dùng để FE/mobile quyết định có cần vào Onboarding hay
+        không (`GET /api/users/me` mới là nguồn sự thật cho quyết định
+        này ở mobile — KHÔNG dựa vào `isNewUser`, vì user có thể đã từng
+        đăng ký qua kênh khác, xem Section 17 trong `FEATURE_LOG.md`).
+        JWT trả về có hạn **7 ngày**, dùng cho mọi request sau đó
+        (`Authorization: Bearer <token>`) và cho xác thực Socket.io
+        namespace `/battle`.
+      responses:
+        '200':
+          description: Đăng nhập thành công (user mới hoặc user cũ)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, isNewUser, user]
+                properties:
+                  token:
+                    type: string
+                    description: JWT nội bộ, hạn 7 ngày
+                  isNewUser:
+                    type: boolean
+                    description: >-
+                      true nếu đây là lần đầu firebaseUid này xuất hiện
+                      trong hệ thống. CHỈ mang tính tham khảo — KHÔNG dùng
+                      để quyết định có cần Onboarding hay không (dùng
+                      `subjects.length` từ `GET /api/users/me` thay thế)
+                  user:
+                    type: object
+                    required:
+                      [id, firebaseUid, displayName, email, phone, school, province, subjects, createdAt, lastLoginAt]
+                    description: >-
+                      Profile rút gọn — `subjects` ở đây CHỈ là mảng mã môn
+                      (string[]), KHÔNG kèm tên hiển thị (khác `UserMeDto`
+                      của `GET /api/users/me`, xem field `subjects` bên dưới)
+                    properties:
+                      id: { type: string, format: uuid }
+                      firebaseUid: { type: string }
+                      displayName: { type: string, nullable: true }
+                      email: { type: string, nullable: true }
+                      phone: { type: string, nullable: true }
+                      school: { type: string, nullable: true }
+                      province: { type: string, nullable: true }
+                      subjects:
+                        type: array
+                        items: { type: string }
+                        description: Mã môn đã đăng ký, ví dụ ["TOAN", "LY"]. Rỗng nếu chưa Onboarding.
+                      createdAt: { type: string, format: date-time }
+                      lastLoginAt: { type: string, format: date-time, nullable: true }
+              example:
+                token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                isNewUser: false
+                user:
+                  id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                  firebaseUid: aBcDeFgHiJkLmNoPqRsTuVwXyZ123456
+                  displayName: Nguyễn Văn A
+                  email: nguyenvana@gmail.com
+                  phone: null
+                  school: null
+                  province: null
+                  subjects: [TOAN, LY, HOA]
+                  createdAt: '2026-06-01T02:30:00.000Z'
+                  lastLoginAt: '2026-07-29T09:15:00.000Z'
+        '401':
+          description: >-
+            Thiếu header `Authorization`/sai định dạng
+            (`MISSING_AUTH_TOKEN`), Firebase ID Token không hợp lệ hoặc đã
+            hết hạn (`INVALID_FIREBASE_TOKEN`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: INVALID_FIREBASE_TOKEN
+                message: 'Token Firebase khong hop le hoac da het han (chi tiet: ...).'
+
+  /api/users/me:
+    get:
+      summary: Lấy profile đầy đủ của user đang đăng nhập (kèm điểm tích lũy, trạng thái Premium)
+      tags: [Users]
+      security:
+        - SessionToken: []
+      description: >-
+        Nguồn sự thật để quyết định 1 user (mobile) có cần vào màn
+        Onboarding hay không: `subjects.length > 0` → đã Onboarding
+        (`SubjectCatalogEntry[]` đầy đủ `id`+`name`, khác `user.subjects`
+        của `POST /api/auth/login` chỉ là mã môn thô).
+      responses:
+        '200':
+          description: Profile đầy đủ
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserMeDto' }
+              example:
+                id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                firebaseUid: aBcDeFgHiJkLmNoPqRsTuVwXyZ123456
+                displayName: Nguyễn Văn A
+                email: nguyenvana@gmail.com
+                phone: null
+                school: null
+                province: null
+                subjects:
+                  - { id: TOAN, name: Toán }
+                  - { id: LY, name: Vật lý }
+                avatarUrl: /uploads/avatars/3fa85f64-5717-4562-b3fc-2c963f66afa6.jpg
+                createdAt: '2026-06-01T02:30:00.000Z'
+                lastLoginAt: '2026-07-29T09:15:00.000Z'
+                points: 245
+                isPremium: true
+                premiumExpiresAt: '2026-08-30T00:00:00.000Z'
+        '401':
+          description: Thiếu hoặc sai session token (`MISSING_AUTH_TOKEN`/`INVALID_SESSION_TOKEN`/`SESSION_USER_NOT_FOUND`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: INVALID_SESSION_TOKEN
+                message: 'Phien dang nhap khong hop le hoac da het han (...). Vui long dang nhap lai (POST /api/auth/login).'
+
   # ───────────────────────────── Practice ─────────────────────────────
   /api/practice/start:
     get:

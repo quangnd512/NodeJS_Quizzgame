@@ -1,18 +1,21 @@
-// Dang nhap Google (native, qua @react-native-google-signin/google-signin) -> lay ID Token cua
-// Google -> doi lay Firebase ID Token (qua `signInWithCredential`) -> tra ve cho AuthContext de
-// goi tiep `POST /api/auth/login`.
+// Dang nhap Google -> lay Firebase ID Token (chuoi JWT) de AuthContext dung goi tiep
+// POST /api/auth/login.
 //
-// LUU Y QUAN TRONG (xem huong dan trong PENDING/S2.md tu S1):
-//   - Thu vien nay la NATIVE MODULE - KHONG chay duoc trong Expo Go, can build dev client
-//     (`npx expo prebuild` + `npx expo run:android` / `npx expo run:ios`, hoac EAS Build profile
-//     "development"). Day la ly do S1 goi y "SDK phu hop Expo tuy S2 danh gia" - day la lua chon
-//     duoc Google/Expo CHINH THUC khuyen nghi (uu tien hon AuthSession chung chung) cho san pham
-//     that, du danh doi la khong con dung Expo Go duoc nua SAU KHI da tich hop thu vien nay.
-//   - Can cau hinh `webClientId` (BAT BUOC de lay duoc idToken) va `iosClientId` tu Firebase/
-//     Google Cloud Console - xem README.md muc "Cau hinh Google Sign-In". Doc tu bien moi truong
-//     EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID / EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID, KHONG hardcode vi day
-//     la thong tin rieng cua tung moi truong (dev/prod co the dung OAuth client khac nhau).
-import { GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
+// HAI DUONG KHAC NHAU theo nen tang (xem ham signInWithGoogle ben duoi):
+//   - Android/iOS: dung @react-native-google-signin/google-signin (NATIVE MODULE - khong
+//     chay duoc trong Expo Go, can build dev client). Day la lua chon duoc Google/Expo
+//     CHINH THUC khuyen nghi cho san pham that (uu tien hon AuthSession chung chung).
+//   - Web: thu vien native tren KHONG hoat dong dung (goi hasPlayServices() se bao loi
+//     "khong co Google Play Services" mot cach vo nghia, vi Play Services la khai niem
+//     cua Android). Web dung thang Firebase Web SDK (`signInWithPopup` + GoogleAuthProvider)
+//     - day la duong CHINH THUC cua Firebase cho web, khong can webClientId rieng.
+//
+// LUU Y CAU HINH (xem README.md muc "Cau hinh Google Sign-In"):
+//   - Can `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` (BAT BUOC cho Android/iOS de lay duoc idToken)
+//     va `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` tu Firebase/Google Cloud Console.
+//   - Web KHONG can 2 bien tren - chi can `authDomain` trong firebase.ts (da co san).
+import { Platform } from 'react-native';
+import { GoogleAuthProvider, signInWithCredential, signInWithPopup } from 'firebase/auth';
 import {
   GoogleSignin,
   isErrorWithCode,
@@ -54,6 +57,27 @@ export class GoogleSignInCancelledError extends Error {
 }
 
 /**
+ * Nhanh WEB: dung Firebase Web SDK truc tiep (signInWithPopup) - KHONG dung
+ * @react-native-google-signin/google-signin vi thu vien do la native module,
+ * tren web no se bao loi "Play Services" sai ngu canh.
+ */
+async function signInWithGoogleOnWeb(): Promise<string> {
+  try {
+    const provider = new GoogleAuthProvider();
+    const userCredential = await signInWithPopup(firebaseAuth, provider);
+    return await userCredential.user.getIdToken();
+  } catch (err) {
+    // Ma loi cua Firebase Web SDK khi nguoi dung tu dong popup (khac ma loi cua thu vien
+    // native @react-native-google-signin dung o nhanh Android/iOS ben duoi).
+    const code = err instanceof Object && 'code' in err ? (err as { code: unknown }).code : undefined;
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+      throw new GoogleSignInCancelledError();
+    }
+    throw err;
+  }
+}
+
+/**
  * Thuc hien toan bo luong dang nhap Google -> tra ve Firebase ID Token (chuoi JWT) de
  * `AuthContext` dung goi `POST /api/auth/login`.
  *
@@ -61,6 +85,10 @@ export class GoogleSignInCancelledError extends Error {
  * @throws Error (cac truong hop khac: thieu Play Services, loi mang, cau hinh sai...)
  */
 export async function signInWithGoogle(): Promise<string> {
+  if (Platform.OS === 'web') {
+    return signInWithGoogleOnWeb();
+  }
+
   ensureConfigured();
 
   try {
