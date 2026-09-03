@@ -4,6 +4,28 @@
 
 ---
 
+## v1.15.1 — 2026-09-03
+
+### Security Patch — npm audit fixes (Vòng A/9)
+
+**Branch:** `fix/security-audit`
+
+#### Fixed
+
+- **Backend**: Giảm từ 8 HIGH → 4 HIGH
+  - Các unfixable: `xlsx` (đã thôi hỗ trợ), `@prisma/client` chain (phụ thuộc cấu trúc)
+- **Frontend**: Giảm từ 4 HIGH → **0 HIGH** ✅ (hoàn toàn sạch)
+- **Mobile**: Giảm từ 8 HIGH → 4 HIGH
+  - Các unfixable: `image-size` (v0.9.7 cuối cùng hỗ trợ RN), metro chain (phụ thuộc cấu trúc)
+
+#### Notes
+
+- Không có breaking changes hoặc major version bumps
+- 282/282 backend tests PASS
+- CI/Security workflows: PASS ✅
+
+---
+
 ## v1.15.0 — 2026-09-03
 
 ### Mobile Foundation — React Native + Expo App (Feature 017)
