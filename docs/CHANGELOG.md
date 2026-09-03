@@ -5,6 +5,27 @@
 
 ---
 
+## [Unreleased] — Tách App.tsx Vòng 1 (Nợ Kỹ Thuật)
+
+**Branch:** `refactor/split-app-tsx-round-1`
+**Ngày:** 2026-09-03
+
+### Changed
+
+- **Cấu trúc thư mục frontend** — tách 7 file nhỏ ra khỏi `App.tsx` (7.018 → 6.837 dòng, giảm 181 dòng)
+  - `frontend/src/lib/constants.ts` — hằng số toàn cục (SUBJECTS, SUBJECTS_MAP)
+  - `frontend/src/components/` — các component tái sử dụng (Spinner, GoogleIcon, AvatarCell)
+  - `frontend/src/screens/` — các màn hình auth (LoadingScreen, LoginPage, OnboardingPage)
+- Không thay đổi logic, CSS, behavior — chỉ di chuyển code để giảm kích thước file chính
+
+### Ghi chú
+
+- Vòng 1/7 của kế hoạch refactor nợ kỹ thuật (xem `workflow/handoff/backlog/S1_tech_debt_master_plan.md`)
+- Thêm 5 test file mới để kiểm thử các component/screen vừa tách (Spinner, GoogleIcon, AvatarCell, LoadingScreen, LoginPage, OnboardingPage)
+- App.tsx hiện 6.837 dòng — mục tiêu dài hạn là ≤ 1.500 dòng (vòng 7)
+
+---
+
 ## [Unreleased] — Nền móng App Di Động — Mobile Foundation (Đợt 1a)
 
 **Branch:** `feature/mobile-foundation`

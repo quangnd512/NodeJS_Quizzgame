@@ -21,6 +21,7 @@
 | 015 | Khung Free/Premium | ✅ Done | feature/premium-framework | 2026-07-19 |
 | 016 | Thi đấu đối kháng — PvP Quiz Battle (ĐỢT 1/MVP) | ✅ Done | feature/battle-mvp | 2026-07-27 |
 | A/9 | Vá bảo mật — npm audit (Sprint kỹ thuật) | ✅ Done | fix/security-audit | 2026-09-03 |
+| TD-B1 | Tách App.tsx Vòng 1/7 — components dùng chung + màn auth | ✅ Done | refactor/split-app-tsx-round-1 | 2026-09-03 |
 
 ---
 
