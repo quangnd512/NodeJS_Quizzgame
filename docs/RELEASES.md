@@ -4,6 +4,33 @@
 
 ---
 
+## v1.16.0 — 2026-09-03
+
+### Refactor: Tách App.tsx Vòng 1 — Giảm Nợ Kỹ Thuật
+
+**Branch:** `refactor/split-app-tsx-round-1`
+
+#### Changed
+
+- **Cấu trúc thư mục frontend** — tách 7 file nhỏ ra khỏi `App.tsx` (7.018 → 6.837 dòng, giảm 181 dòng):
+  - `frontend/src/lib/constants.ts` — hằng số toàn cục (SUBJECTS, SUBJECTS_MAP)
+  - `frontend/src/components/` — các component tái sử dụng (Spinner, GoogleIcon, AvatarCell)
+  - `frontend/src/screens/` — các màn hình auth (LoadingScreen, LoginPage, OnboardingPage)
+- Không thay đổi logic, CSS, behavior — chỉ di chuyển code để giảm kích thước file chính
+
+#### Test Results
+
+- 21 test case mới PASS ✅
+- Hồi quy 3/3 case (đăng nhập → chọn môn → vào app) PASS ✅
+
+#### Notes
+
+- Vòng 1/7 của kế hoạch refactor nợ kỹ thuật
+- App.tsx hiện 6.837 dòng — mục tiêu dài hạn là ≤ 1.500 dòng (vòng 7)
+- Tài liệu mới: `docs/FRONTEND_STRUCTURE.md` giải thích cấu trúc frontend sau tách
+
+---
+
 ## v1.15.1 — 2026-09-03
 
 ### Security Patch — npm audit fixes (Vòng A/9)
