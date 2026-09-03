@@ -47,6 +47,7 @@ import { SUBJECTS, SUBJECTS_MAP } from './lib/constants.js';
 import Spinner from './components/Spinner.js';
 import GoogleIcon from './components/GoogleIcon.js';
 import AvatarCell from './components/AvatarCell.js';
+import LoadingScreen from './screens/LoadingScreen.js';
 
 type Screen = 'loading' | 'login' | 'onboarding' | 'adGate' | 'profile' | 'practice' | 'exam' | 'admin' | 'leaderboard' | 'progress' | 'wrongAnswers' | 'submissions' | 'battle' | 'battleHistory';
 
@@ -378,17 +379,6 @@ export default function App() {
           onError={handleApiError}
         />
       )}
-    </div>
-  );
-}
-
-// ─── LoadingScreen ────────────────────────────────────────────────────────────
-
-function LoadingScreen() {
-  return (
-    <div className="screen screen-center">
-      <div className="loader-ring" />
-      <p className="loading-text">Đang kết nối…</p>
     </div>
   );
 }
