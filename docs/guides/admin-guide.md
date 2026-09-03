@@ -2060,3 +2060,70 @@ quên, hoặc trận cũ chưa kịp kết thúc). Đây là cơ chế chặn c�
 hẳn thiết bị/tab đang có trận cũ (hoặc chờ trận đó tự kết thúc) trước khi
 vào trận mới. Nếu `active:false` mà vẫn báo lỗi này, đây mới là bug thật
 cần điều tra thêm (không phải hành vi mong đợi).
+
+## 17. Ứng dụng Di động (Mobile) — Đợt 1a (Nền móng)
+
+Đợt 1a bổ sung `mobile/` (React Native + Expo) — client thứ 3 của dự án,
+dùng **chung 1 backend** với `frontend/` (web), **không có API mới, không
+đổi schema database**. Về phía Admin, điểm cần biết:
+
+### 17.1 Không có màn hình chức năng Admin riêng trên mobile ở đợt này
+
+`mobile/src/admin/AdminHomeScreen.tsx` hiện chỉ là khung placeholder
+("Sắp ra mắt") — mọi thao tác quản trị thật (duyệt câu hỏi, quản lý user,
+cấp Premium...) vẫn phải thực hiện qua **bản web** như bình thường. Đăng
+nhập Admin trên mobile hiện chỉ dùng để xác nhận `X-Admin-Secret` còn đúng
+— chưa có tác dụng thao tác gì thêm.
+
+### 17.2 Cơ chế xác thực Admin trên mobile — dùng `GET /api/admin/settings/premium-default` làm "ping"
+
+Vì chưa có màn hình chức năng thật để gọi API, mobile tận dụng endpoint có
+sẵn, chi phí thấp (`GET /api/admin/settings/premium-default`, đọc 1 giá trị
+boolean đơn giản) làm request "kiểm tra" ngay lúc đăng nhập Admin — nếu trả
+`200`, secret đúng; nếu `401`, secret sai. Đây KHÔNG phải endpoint mới,
+không cần cấu hình gì thêm ở backend — chỉ là cách tái sử dụng thông minh 1
+endpoint đã tồn tại từ Feature 015.
+
+### 17.3 `X-Admin-Secret` trên mobile lưu bằng `expo-secure-store` (khác web dùng `sessionStorage`)
+
+Web lưu `X-Admin-Secret` ở `sessionStorage` — mất khi đóng tab (chấp nhận
+được cho phiên làm việc trên máy tính công ty). Mobile lưu bằng
+`expo-secure-store` (mã hoá qua Keychain/Keystore của hệ điều hành) — tồn
+tại qua các lần tắt/mở app, vì điện thoại là thiết bị cá nhân cần "nhớ"
+phiên đăng nhập lâu hơn. Nếu secret bị đổi ở backend (`.env` →
+`ADMIN_SECRET`) trong khi 1 thiết bị mobile vẫn còn secret cũ đã lưu, thiết
+bị đó sẽ tự động đăng xuất Admin (`401` → `forceSignOut()`) ngay lần gọi API
+tiếp theo hoặc lúc mở lại app — không cần can thiệp thủ công.
+
+### 17.4 Danh mục môn học (`SUBJECT_CATALOG`) phải đồng bộ tay giữa 3 nơi
+
+Backend (`backend/src/services/users/users.types.ts`) là nguồn xác thực
+DUY NHẤT khi validate. Cả `frontend/src/App.tsx` (web) lẫn
+`mobile/src/constants/subjects.ts` (mobile) đều có **bản sao hardcode** chỉ
+để hiển thị UI (emoji, thứ tự...) — nếu Admin/kỹ thuật thêm/bớt 1 môn học ở
+backend, PHẢI cập nhật tay cả 2 bản sao này, nếu không mobile/web sẽ hiển
+thị thiếu môn mới (dù backend đã chấp nhận môn đó).
+
+### 17.5 Xử lý sự cố thường gặp — Mobile Foundation
+
+**User báo "Sai X-Admin-Secret" dù secret gõ đúng như trên web**
+→ Kiểm tra thiết bị mobile có đang cache secret CŨ từ trước lúc đổi
+`ADMIN_SECRET` hay không (mục 17.3) — yêu cầu đăng xuất Admin (hoặc xoá app
+data) rồi đăng nhập lại với secret mới nhất.
+
+**User báo môn học họ cần không xuất hiện trong danh sách chọn ở Onboarding
+trên mobile (nhưng có trên web)**
+→ Kiểm tra `mobile/src/constants/subjects.ts` có đang thiếu đồng bộ với
+`SUBJECT_CATALOG` phía backend hay không (mục 17.4) — đây là lỗi cấu hình
+cần dev sửa code, không phải hành vi mong đợi.
+
+**User báo app di động tự động đăng xuất dù nghĩ mình vẫn còn hạn 7 ngày**
+→ Có thể tài khoản vừa bị Admin khoá (`isBlocked=true`) hoặc xoá — kiểm tra
+nhanh ở tab "Người dùng" (mục 12). Cơ chế tự đăng xuất khi 401 hoạt động
+đúng thiết kế trong cả 2 trường hợp này, không phải bug.
+
+**Cần kiểm tra nhanh 1 user đang dùng mobile hay web?**
+→ Hiện tại backend KHÔNG lưu "user-agent"/nguồn client vào bảng `users`
+(client nào cũng gọi chung 1 JWT/API) — không có cách phân biệt trực tiếp
+qua DB. Nếu cần điều tra sự cố đặc thù mobile (ví dụ liên quan Google/Apple
+Sign-In), hỏi trực tiếp user họ đang dùng thiết bị/kênh nào.

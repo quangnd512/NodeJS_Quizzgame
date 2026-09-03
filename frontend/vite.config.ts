@@ -1,6 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+// Cau hinh TEST nam o file rieng `vitest.config.ts` — KHONG gop vao day.
+// Ly do: `npm run build` chay `tsc` kiem tra file nay, ma kieu cua `defineConfig`
+// tu 'vite' khong co truong `test` -> bao loi TS2769 lam hong build.
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],

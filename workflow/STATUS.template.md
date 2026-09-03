@@ -31,7 +31,10 @@
 | S8 | Giám Sát Chất Lượng | ⏸ Chờ | — | — |
 | S9 | Cố Vấn Ra Mắt | ⏸ Chờ | — | — |
 
-**Trạng thái hợp lệ**: `⏸ Chờ` | `🔄 Đang làm` | `✅ Done` | `↩️ Làm lại` | `⛔ Bị chặn`
+**Trạng thái hợp lệ**: `⏸ Chờ` | `🔄 Đang làm` | `✅ Done` | `↩️ Làm lại` | `⛔ Bị chặn` | `⏭ Bỏ qua`
+
+> ℹ️ **S6 là tùy chọn**: nếu người dùng không cần giải thích kỹ thuật, S5 đánh dấu S6
+> là `⏭ Bỏ qua` và gửi thẳng sang S8 — S8 không chờ S6 nữa.
 
 > ⚠️ **Quy tắc làm lại**: Nếu cột "Số lần làm lại" của một session đạt **3**, S8 phải dừng
 > tự động và báo người dùng trực tiếp — không tiếp tục vòng lặp.

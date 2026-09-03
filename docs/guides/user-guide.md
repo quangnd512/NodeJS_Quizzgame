@@ -1594,3 +1594,100 @@ tài khoản — mở 2 kết nối cùng lúc để vào 2 trận song song s�
 `BATTLE_ALREADY_IN_MATCH`), để tránh bị cược điểm 2 lần cho cùng 1 tài
 khoản. Hãy hoàn tất hoặc thoát hẳn trận đang chơi ở thiết bị/tab kia trước
 khi vào trận mới.
+
+## Ứng dụng Di động (Mobile App) — Đợt 1a (Nền móng)
+
+QuizzGame hiện có thêm **ứng dụng di động** (React Native + Expo, cài trên
+điện thoại Android/iOS), dùng **chung 1 tài khoản** với bản web — đăng nhập
+Google/Apple ở đâu cũng vào đúng hồ sơ, điểm số, môn học đã chọn của bạn.
+
+> ⚠️ **Đợt 1a chỉ là "nền móng"**: app di động hiện tại MỚI CÓ đăng nhập,
+> điều hướng, chọn môn học, dark mode. Các màn hình chức năng thật (Luyện
+> tập, Thi thử, Xếp hạng, Tiến độ) tạm hiện **"Sắp ra mắt"** — sẽ được bổ
+> sung dần ở các đợt tiếp theo. Muốn dùng đầy đủ tính năng, hiện tại vẫn nên
+> dùng bản web.
+
+### Đăng nhập lần đầu
+
+1. Mở app → bấm **"Đăng nhập bằng Google"** (mọi nền tảng) hoặc **"Đăng nhập
+   bằng Apple"** (chỉ hiện trên iPhone/iPad — Android không có tuỳ chọn này,
+   đúng quy định của Apple).
+2. Chọn tài khoản Google/Apple như bình thường.
+   - Nếu bạn đổi ý và bấm "Huỷ" ở giữa chừng (đóng popup đăng nhập) — app
+     quay lại màn Đăng nhập bình thường, không hiện thông báo lỗi gì.
+3. **Nếu đây là lần đầu bạn dùng QuizzGame** (chưa từng đăng ký ở đâu, kể cả
+   web) → màn hình **"Chọn môn học bạn muốn ôn thi"** hiện ra: chọn từ 1 đến
+   7 môn, bấm "Tiếp tục".
+4. **Nếu bạn đã từng đăng ký qua bản web trước đó** (đã chọn môn sẵn) → app
+   **bỏ qua** màn chọn môn, vào thẳng khung chính — không cần chọn lại.
+
+### Khung điều hướng chính
+
+5 tab dưới cùng màn hình:
+
+| Tab | Nội dung |
+|---|---|
+| ✏️ Luyện tập | "Sắp ra mắt" (Đợt 1b) |
+| 📝 Thi thử | "Sắp ra mắt" (Đợt 1b) |
+| 🏆 Xếp hạng | "Sắp ra mắt" (Đợt 1b) |
+| 📊 Tiến độ | "Sắp ra mắt" (Đợt 1b) |
+| 👤 Hồ sơ | Đầy đủ — xem điểm tích luỹ, môn đang ôn, đổi giao diện, đăng xuất |
+
+### Tab "Hồ sơ"
+
+- **Điểm tích luỹ** — số điểm hiện tại của bạn (đồng bộ với web).
+- **Môn học đang ôn** — danh sách môn đã chọn ở Onboarding.
+- **Giao diện** — chọn **Sáng / Tối / Theo hệ thống**. Đổi ngay lập tức toàn
+  bộ màu app, giữ nguyên lựa chọn kể cả sau khi tắt/mở lại app. "Theo hệ
+  thống" nghĩa là app tự đổi theo cài đặt Sáng/Tối của chính điện thoại bạn.
+- **Đăng xuất** — thoát tài khoản hiện tại, quay lại màn Đăng nhập.
+
+### Giữ đăng nhập
+
+Bạn KHÔNG cần đăng nhập lại mỗi lần mở app — phiên đăng nhập được giữ tới
+**7 ngày**. Sau 7 ngày (hoặc nếu tài khoản bị khoá/xoá), app tự động đưa bạn
+về màn Đăng nhập — không cần làm gì thêm, chỉ cần đăng nhập lại bình thường.
+
+### Mất kết nối mạng
+
+Nếu điện thoại mất wifi/data trong lúc dùng app, 1 banner đỏ **"⚠️ Mất kết
+nối mạng. Đang chờ kết nối lại..."** hiện ở trên cùng màn hình (bất kể bạn
+đang ở màn nào) — tự biến mất ngay khi có mạng lại, không cần khởi động lại
+app.
+
+### Đăng nhập Quản trị viên (Admin)
+
+Nếu bạn là quản trị viên hệ thống (không phải học sinh), bấm **"Bạn là Quản
+trị viên? Đăng nhập tại đây"** ở cuối màn Đăng nhập, nhập mã bí mật quản trị
+đã được cấp — đây là luồng **hoàn toàn tách biệt**, không dùng chung tài
+khoản Google/Apple với học sinh. Xem chi tiết cấu hình ở
+`docs/guides/admin-guide.md` mục 17.
+
+### Câu hỏi thường gặp
+
+**Q: Vì sao 4/5 tab chính chỉ hiện "Sắp ra mắt"?**
+
+A: App di động hiện đang ở giai đoạn **nền móng** (Đợt 1a) — mới dựng khung
+đăng nhập/điều hướng/giao diện. Các tính năng học tập thật (Luyện tập, Thi
+thử, Xếp hạng, Tiến độ) sẽ được bổ sung ở các đợt kế tiếp. Muốn dùng đầy đủ
+ngay bây giờ, hãy dùng bản web.
+
+**Q: Tôi đăng ký mới hoàn toàn trên điện thoại — có bị hỏi chọn môn lại nếu
+sau này tôi mở bản web không?**
+
+A: Không — môn học được lưu chung 1 nơi cho cả web lẫn mobile (cùng 1 tài
+khoản, cùng 1 backend). Chọn 1 lần ở đâu cũng có hiệu lực ở nơi khác.
+
+**Q: Nút "Đăng nhập bằng Apple" không hiện trên điện thoại Android của tôi —
+có phải lỗi không?**
+
+A: Không phải lỗi — "Sign in with Apple" chỉ tồn tại trên thiết bị Apple
+(iPhone/iPad), theo đúng quy định của Apple. Trên Android, dùng "Đăng nhập
+bằng Google" là đủ.
+
+**Q: Tôi bấm "Đăng nhập bằng Google" nhưng báo lỗi liên quan "Play
+Services"?**
+
+A: Thiết bị Android của bạn thiếu hoặc cần cập nhật Google Play Services —
+làm theo hướng dẫn cập nhật mà thông báo lỗi đưa ra, sau đó thử đăng nhập
+lại.

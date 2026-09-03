@@ -230,3 +230,54 @@ Ban đầu định tái dùng nguyên pattern "hiện banner hỏi có tiếp t�
 
 **6. Escrow betting (khoá cược ngay lúc bắt đầu, không trừ lúc kết thúc) để tránh khoảng hở "tiêu điểm đã cược"**
 Cân nhắc giữa "trừ điểm người thua lúc kết thúc" (đơn giản hơn) và "khoá cược cả 2 bên ngay lúc bắt đầu, chia lại lúc kết thúc" (escrow) — chọn escrow vì nó loại bỏ hoàn toàn khoảng thời gian (suốt trận đấu) mà người chơi có thể tiêu số điểm "coi như đã cược" vào việc khác. Xem chi tiết ADR-013 Quyết định 3.
+
+---
+
+## Cải tiến quy trình — 2026-09-02
+
+**Hạ tầng test `mobile/` — và bài học lớn nhất: node_modules hỏng âm thầm khi ổ đĩa đầy**
+
+Đã dựng xong `jest` + `jest-expo` + `@testing-library/react-native` cho `mobile/`:
+`jest.setup.js` mock `expo-secure-store`, test đầu tiên cho `secureStore` (5 case).
+Kết quả: **5/5 PASS trong 0.6 giây**.
+
+### Bài học 1: lệnh treo ở 0% CPU = kiểm tra node_modules, KHÔNG phải "máy yếu"
+
+Trước khi chạy được, `npm test` treo **14 phút ở 0.0% CPU**, không in gì, không báo lỗi.
+Đã chẩn đoán sai 2 lần:
+- Lần 1: đổ cho "máy yếu, jest-expo chậm" → sai
+- Lần 2: đổ cho "hết dung lượng nên jest không ghi được cache" → cũng sai
+
+Nguyên nhân THẬT: **`node_modules` bị hỏng**. Dấu hiệu nhận biết:
+```bash
+du -sh node_modules && find node_modules -type f | wc -l
+# 3.9MB cho 55.993 file  ← BẤT THƯỜNG (frontend: 10MB cho 18.611 file)
+du -sh node_modules/react-native   # 0B ← chắc chắn hỏng
+```
+File có tên nhưng **rỗng ruột**. Xảy ra vì các lệnh `npm install` trước đó chạy lúc ổ đĩa
+đầy 99% — npm không ghi được nội dung nhưng **vẫn thoát với mã 0 như thành công**.
+
+→ Sửa: `rm -rf node_modules && npm install --legacy-peer-deps` (sau khi đã dọn ổ đĩa).
+Sau đó test chạy trong 0.6 giây thay vì treo vô hạn.
+
+⚠️ Điều này nhiều khả năng cũng là nguyên nhân thật của 2 lỗi khó hiểu trước đó trong
+cùng phiên: `npx expo install --fix` báo `resolveWorkspaceRoot is not a function`, và
+`eas build` treo không rõ lý do — đều bị đổ nhầm cho "bug của Expo 57".
+
+### Bài học 2: test PASS không có nghĩa là test đúng — typecheck mới bắt được
+
+Test 5/5 PASS ngay lần đầu, nhưng `npm run typecheck` sau đó phát hiện test dùng
+`SecureStoreKeys.sessionToken` — **key này không tồn tại** (tên thật: `APP_SESSION_TOKEN`).
+Test vẫn "pass" vì key `undefined` vẫn lưu được vào `Map` của mock → đang test rỗng.
+
+→ Luôn chạy **cả** `test`, `typecheck` và `lint`. Ba lệnh bắt ba loại lỗi khác nhau.
+Cần thêm `"types": ["jest"]` vào `tsconfig.json` và khai báo global jest trong
+`eslint.config.js` để hai lệnh sau không báo lỗi giả ở file test.
+
+### Các xung đột version đã gỡ (ghi lại để lần sau nhanh hơn)
+- `jest@30` KHÔNG tương thích `jest-expo@57` → phải dùng `jest@29`
+  (triệu chứng: `TypeError: Cannot read properties of undefined (reading 'alias')`)
+- `jest-expo@57` cần cài thêm `@react-native/jest-preset@^0.86.3` như dependency riêng
+  (triệu chứng: "The React Native Jest preset ... has moved to a separate package")
+- Phải cài bằng `--legacy-peer-deps` vì `react-native@0.86.0` và `jest-expo` yêu cầu
+  hai version `@react-native/jest-preset` khác nhau

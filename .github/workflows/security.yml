@@ -1,0 +1,92 @@
+name: Security
+
+# Quet bao mat tu dong ("shift-left security") - phat hien lo hong NGAY khi day code,
+# thay vi doi den luc bi tan cong that.
+#
+# Ba lop kiem tra:
+#   1. CodeQL      - doc code tim lo hong logic (SQL injection, XSS, path traversal...)
+#   2. npm audit   - doi chieu thu vien voi co so du lieu lo hong da biet
+#   3. Gitleaks    - tim secret/API key bi commit nham vao git
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [master]
+  schedule:
+    # Quet lai hang tuan ke ca khi khong ai day code - lo hong moi duoc cong bo lien tuc
+    - cron: '0 2 * * 1'
+
+jobs:
+  codeql:
+    name: CodeQL - quet lo hong trong code
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: security-and-quality
+
+      - uses: github/codeql-action/analyze@v3
+
+  audit:
+    name: npm audit - lo hong trong thu vien
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [backend, frontend, mobile]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # CHAN khi co lo hong CRITICAL — day la muc phai sua ngay, khong duoc merge.
+      - name: Chan neu co lo hong CRITICAL
+        working-directory: ${{ matrix.part }}
+        run: npm audit --audit-level=critical
+
+      # BAO CAO muc high/moderate nhung KHONG chan.
+      #
+      # Vi sao khong chan o muc high: phan lon la phu thuoc GIAN TIEP (dependency cua
+      # dependency) — sua duoc chi bang cach nang major version, co the lam hong app.
+      # Chan o day se khien CI DO VINH VIEN, va CI do mai thi nguoi ta ngung nhin no
+      # — te hon la khong co CI. Dependabot se tao PR nang version dan dan.
+      #
+      # Con so nay phai GIAM dan qua thoi gian. Neu tang -> co gi do sai.
+      - name: Bao cao lo hong high/moderate
+        if: always()
+        working-directory: ${{ matrix.part }}
+        run: |
+          npm audit --json > /tmp/audit.json 2>/dev/null || true
+          node -e "
+            const m = require('/tmp/audit.json').metadata.vulnerabilities;
+            const icon = m.high > 0 ? '⚠️' : '✅';
+            console.log(\`### \${icon} npm audit — \${process.env.PART}\n\`);
+            console.log('| Mức | Số lượng |');
+            console.log('|---|---|');
+            console.log(\`| 🔴 Critical (chặn merge) | \${m.critical} |\`);
+            console.log(\`| 🟠 High (cần xử lý dần) | \${m.high} |\`);
+            console.log(\`| 🟡 Moderate | \${m.moderate} |\`);
+          " >> $GITHUB_STEP_SUMMARY
+        env:
+          PART: ${{ matrix.part }}
+
+  secrets:
+    name: Gitleaks - tim secret bi commit nham
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Quet toan bo lich su, khong chi commit moi nhat
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

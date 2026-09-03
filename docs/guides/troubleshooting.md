@@ -393,3 +393,48 @@ ORDER BY "completedAt" DESC LIMIT 30;
 **Nguyên nhân** (thay đổi phạm vi muộn — mục kỹ thuật #9): rất có thể đây là 1 trận đấu với **bot** (máy) — giao diện cố tình hiện tên giả kiểu người thật cho các trận này (không còn "Máy"/🤖), nên user không có cách nào tự phân biệt được qua giao diện. Đây là hành vi đúng thiết kế, không phải lỗi dữ liệu.
 
 **Giải pháp**: Không cần xử lý gì phía user (không có gì sai). Nếu cần XÁC NHẬN nội bộ đây đúng là trận với bot, tra trực tiếp cột `isBotMatch` trong bảng `battle_matches` cho `matchId` tương ứng (xem mục 16.2 trong `admin-guide.md`) — `isBotMatch=true` nghĩa là chắc chắn bot, bất kể tên hiển thị là gì.
+
+## Lỗi liên quan đến Ứng dụng Di động — Mobile Foundation (Đợt 1a)
+
+### 32. Nút "Đăng nhập bằng Google"/"Đăng nhập bằng Apple" không phản hồi hoặc báo lỗi module native
+
+**Triệu chứng**: Bấm nút đăng nhập trên app di động (chạy qua Expo Go thông thường, chưa build dev client) không có phản ứng gì, hoặc console báo lỗi liên quan native module (`RNGoogleSignin`, `ExpoAppleAuthentication`...).
+
+**Nguyên nhân**: `@react-native-google-signin/google-signin` và `expo-apple-authentication` là **native module** — theo khuyến nghị chính thức của Expo/Google, không chạy được trong app "Expo Go" cài từ App Store/Play Store thông thường sau khi đã tích hợp 2 thư viện này. Đây là giới hạn đã biết trước của toàn ngành, không phải lỗi cấu hình.
+
+**Giải pháp**: Phải build "dev build" riêng cho dự án — `npx expo prebuild` rồi `npx expo run:android`/`npx expo run:ios` (xem `mobile/README.md` mục 4c). Sau khi cài dev build lên máy/giả lập, `npm start` như bình thường sẽ hoạt động đầy đủ.
+
+### 33. App di động không gọi được API — báo lỗi `NETWORK_ERROR`/"Không thể kết nối đến máy chủ"
+
+**Triệu chứng**: Mọi request (đăng nhập, lấy hồ sơ...) đều thất bại với thông báo mạng, dù backend đang chạy bình thường và máy tính vẫn truy cập được `http://localhost:4000`.
+
+**Nguyên nhân phổ biến nhất**: Nhầm lẫn giữa các loại môi trường chạy app — `localhost` từ góc nhìn của **giả lập/thiết bị** không phải lúc nào cũng là `localhost` của máy tính đang chạy backend:
+- **Android emulator**: phải dùng `10.0.2.2` (địa chỉ đặc biệt trỏ về máy host), không phải `localhost`.
+- **iOS simulator**: `localhost` hoạt động bình thường (dùng chung mạng với máy Mac host).
+- **Thiết bị thật** (điện thoại thật, cả Android lẫn iOS): bắt buộc dùng địa chỉ IP LAN thật của máy chạy backend (ví dụ `http://192.168.1.5:4000`), và điện thoại phải cùng mạng Wifi với máy đó — `localhost`/`10.0.2.2` đều KHÔNG hoạt động.
+
+**Giải pháp**: Kiểm tra biến `EXPO_PUBLIC_API_URL` trong `mobile/.env` đúng theo bảng trên (xem `mobile/src/config/env.ts` + `mobile/README.md` mục 3). Nếu để trống lúc dev trên giả lập, app tự chọn giá trị mặc định phù hợp theo nền tảng — chỉ cần đặt tay khi test trên thiết bị thật hoặc build production.
+
+### 34. Đăng nhập Apple báo lỗi cấu hình thay vì đăng nhập thành công (trên thiết bị/giả lập iOS thật)
+
+**Triệu chứng**: Bấm "Đăng nhập bằng Apple" trên iPhone/giả lập iOS thật, nhận lỗi liên quan cấu hình Apple thay vì hoàn tất đăng nhập.
+
+**Nguyên nhân**: Test đăng nhập Apple THẬT trên thiết bị/giả lập iOS cần có **tài khoản Apple Developer Program** (99 USD/năm) đã bật "Sign In with Apple" capability cho App ID + bật provider Apple trong Firebase Console (xem `mobile/README.md` mục 4b). Nếu dự án chưa có tài khoản này, nút vẫn hiển thị và bấm được (đúng theo quy định của Apple — không được ẩn có điều kiện), nhưng Apple sẽ trả lỗi cấu hình.
+
+**Giải pháp**: Đây là giới hạn đã biết trước, không phải lỗi code — cần đăng ký Apple Developer Program để test thật. Trong lúc chưa có, dùng đăng nhập Google để tiếp tục test các luồng khác.
+
+### 35. Chọn môn ở Onboarding trên mobile xong nhưng vào web lại vẫn thấy chưa chọn (hoặc ngược lại)
+
+**Triệu chứng**: User chọn môn học trên app di động, nhưng khi mở bản web bằng cùng tài khoản, web vẫn hiện chưa Onboarding (hoặc ngược lại).
+
+**Nguyên nhân phổ biến nhất**: Đăng nhập **2 tài khoản Google/Apple khác nhau** ở 2 nơi (dễ nhầm nếu điện thoại có nhiều tài khoản Google) — môn học được lưu theo `userId` (liên kết `firebaseUid`), không phải theo thiết bị. Nếu đúng cùng 1 tài khoản, dữ liệu `subjects` là DÙNG CHUNG 100% giữa web và mobile (cùng bảng `users` trong backend) — không có cơ chế đồng bộ riêng vì bản chất chỉ có 1 nguồn dữ liệu.
+
+**Giải pháp**: Xác nhận với user họ đã đăng nhập đúng cùng 1 tài khoản Google/Apple ở cả 2 nơi (kiểm tra email hiển thị ở tab Hồ sơ). Nếu đúng cùng tài khoản mà vẫn lệch — yêu cầu kéo để làm mới lại màn hình (gọi lại `GET /api/users/me`), vì có thể chỉ là màn hình đang hiển thị dữ liệu cũ đã cache trước đó.
+
+### 36. App di động bị "kẹt" ở màn hình Splash, không bao giờ vào được màn Đăng nhập/khung chính
+
+**Triệu chứng**: Mở app, màn hình chờ (Splash) hiện mãi không chuyển sang màn Đăng nhập hay khung chính.
+
+**Nguyên nhân phổ biến nhất**: `RootNavigator` chỉ rời màn Splash khi CẢ HAI `AuthContext` và `AdminAuthContext` đều thoát trạng thái `'booting'` (xem `docs/FEATURE_LOG.md` Section 17, luồng "Khởi động app"). Nếu 1 trong 2 request xác thực lúc khởi động (`GET /api/users/me` hoặc `GET /api/admin/settings/premium-default`) bị treo vô thời hạn (backend không phản hồi, mất mạng ngay lúc khởi động mà chưa kịp raise lỗi rõ ràng) — cả app sẽ kẹt ở Splash.
+
+**Giải pháp**: Kiểm tra backend có đang chạy và phản hồi bình thường không (mục 33 nếu là lỗi kết nối). Nếu backend bình thường mà vẫn kẹt, thử tắt hẳn app (không chỉ đưa xuống nền) rồi mở lại; nếu vẫn kẹt, đây là bug thật cần báo cáo kỹ thuật kèm log console (`console.warn`/`console.error` của `AuthContext`/`AdminAuthContext` lúc boot).

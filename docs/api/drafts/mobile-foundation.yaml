@@ -1,0 +1,65 @@
+# API Draft: Đợt 1a — Nền móng App Di Động (Mobile Foundation)
+#
+# GHI CHÚ QUAN TRỌNG: Đợt này KHÔNG tạo endpoint mới. Toàn bộ là app di động
+# (thư mục mobile/, React Native + Expo) tái sử dụng các API đã có sẵn của
+# backend hiện tại. Backend KHÔNG cần sửa code (kiến trúc auth đã provider-
+# agnostic — verifyFirebaseToken chỉ verify Firebase ID token, không phân
+# biệt Google/Apple). Chỉ cần thêm cấu hình "Apple" làm sign-in provider
+# trong Firebase Console (không phải code).
+
+endpoints_tai_su_dung:
+  - method: POST
+    path: /api/auth/login
+    auth: "Bearer <firebase-id-token>"
+    mo_ta: >
+      Đổi Firebase ID Token (lấy được sau khi đăng nhập Google hoặc Apple qua
+      Firebase SDK trên mobile) thành JWT nội bộ (hạn 7 ngày). Client mobile
+      lưu JWT này bằng expo-secure-store, dùng cho MỌI request sau đó.
+    request: (không có body, chỉ cần header Authorization)
+    response_200: { token: string, user: { id, displayName, email, subjects, ... } }
+    errors: [401]
+
+  - method: GET
+    path: /api/users/me
+    auth: "Bearer <app-jwt>"
+    mo_ta: Lấy hồ sơ user hiện tại — dùng để kiểm tra đã chọn môn học (subjects) chưa,
+      quyết định có cần vào màn Onboarding hay vào thẳng khung điều hướng chính.
+    response_200: { id, displayName, email, subjects: string[], ... }
+    errors: [401]
+
+  - method: POST
+    path: /api/users/subjects
+    auth: "Bearer <app-jwt>"
+    mo_ta: Lưu danh sách môn học đăng ký ôn thi — dùng ở màn Onboarding lần đầu.
+    # SỬA bởi S3 (review): bản nháp ban đầu ghi `subjects: string[]` — SAI so với contract THẬT
+    # của endpoint đã tồn tại từ trước (xem backend/src/routes/users.route.ts dòng 91:
+    # 'Body: { "subjects": [{ "id": "TOAN", "name": "Toán" }, ...] }`). Code mobile
+    # (mobile/src/api/users.ts) đã implement ĐÚNG theo contract thật (giống hệt cách
+    # frontend/src/lib/api.ts web đang gửi) — chỉ có bản nháp yaml này viết tắt sai, đã sửa lại
+    # cho khớp thực tế.
+    request: { subjects: [{ id: string, name?: string }] }
+    response_200: { subjects: [{ id: string, name: string }] }
+    errors: [400, 401]
+
+admin_auth:
+  co_che: >
+    KHÔNG dùng JWT/Firebase. Header cố định "X-Admin-Secret: <ADMIN_SECRET>"
+    (so khớp với biến môi trường backend). Mobile lưu secret người admin nhập
+    bằng expo-secure-store, đính kèm header này cho mọi request admin — y hệt
+    cách frontend web đang làm (nhưng web lưu ở sessionStorage, mobile phải
+    dùng SecureStore vì bảo mật hơn và tồn tại sau khi tắt app).
+  loi: [401 ADMIN_UNAUTHORIZED khi thiếu/sai secret]
+  # Ghi chú S3 (review): S2 dùng GET /api/admin/settings/premium-default (endpoint đã có sẵn,
+  # đọc 1 giá trị boolean đơn giản, chi phí thấp) làm request "ping" để XÁC MINH admin secret
+  # đúng/sai lúc đăng nhập Admin (mobile/src/api/admin.ts) — hợp lý vì đợt này chưa có màn hình
+  # admin thật sự để gọi API nào khác. Đã xác nhận endpoint này có `adminUsersRouter.use(verifyAdminSecret)`
+  # bảo vệ đúng. Không phải endpoint mới, không cần backend đổi gì.
+
+khong_thay_doi_backend: true
+
+# Ghi chu S4 (viet tai lieu, sau khi S3 review xong): da merge 2 endpoint
+# `POST /api/auth/login` + `GET /api/users/me` vao `docs/api/openapi.yaml`
+# chinh thuc (truoc day file do ghi ro "chua duoc mo ta" - khoang trong tu
+# truoc Feature 001, khong phai loi cua dot nay). `POST /api/users/subjects`
+# va `GET /api/admin/settings/premium-default` da co san trong openapi.yaml
+# tu Feature 015, khong can sua gi them. Xem `docs/FEATURE_LOG.md` Section 17.
