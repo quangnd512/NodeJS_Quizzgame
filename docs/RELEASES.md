@@ -4,6 +4,47 @@
 
 ---
 
+## v1.15.0 — 2026-09-03
+
+### Mobile Foundation — React Native + Expo App (Feature 017)
+
+**Branch:** `feature/mobile-foundation`
+
+#### Added
+
+- **React Native + Expo 57 setup**: hạ tầng mobile app với TypeScript strict mode
+- **Authentication flow**: Google Sign-In, Apple Sign-In, Firebase authentication, JWT token management
+- **Type-safe Navigation**: React Navigation 7, root navigator, auth stack, main tab stack (home, profile, admin), type-safe route definitions
+- **Environment Configuration**: `.env` file support, theme colors (light/dark), subject constants
+- **Secure Token Storage**: expo-secure-store integration cho token lưu trữ bảo mật
+- **UI Components**: PrimaryButton, NetworkBanner (kết nối check), SplashScreen, ComingSoonScreen, LoginScreen, ProfileScreen, OnboardingSubjectsScreen
+- **API Client**: Typed HTTP client sử dụng axios, error handling, JWT interceptor, request/response logging
+- **Jest-Expo Test Infrastructure**: đầy đủ mock cho expo-secure-store, API client test, component test ready
+- **DevOps**: EAS build config, updated CI/security workflows, git hooks, CLAUDE.md workflow documentation
+- **Docs**: API spec (mobile-foundation.yaml), user guide, admin guide, test cases, code review log
+
+#### Changed
+
+- Updated CI workflow: thêm Mobile - lint, typecheck & test job (chạy tất cả 3 phần: backend, frontend, mobile)
+- Updated Security workflow: thêm npm audit cho mobile, Gitleaks whitelist cho docs/api/openapi.yaml + docs/FEATURE_LOG.md
+
+#### Fixed
+
+- Gitleaks false positive: token field trong OpenAPI 3.0 spec không phải secret thật
+
+**Migration cần chạy trên production:**
+
+- Không cần migration DB
+- Biến môi trường mới (optiona trên mobile): xem `.env.example`
+
+**Ghi chú:**
+
+- Feature này chỉ là foundation — chưa có screen tương tác thực tế ngoài splash/login/onboarding
+- Cần S5 kiểm thử end-to-end trên thiết bị thật hoặc emulator
+- EAS build cần credential Expo nếu deploy: `eas secret:create`
+
+---
+
 ## v1.14.0 — 2026-07-28
 
 ### Thi đấu đối kháng — PvP Quiz Battle, Đợt 1/MVP (Feature 016)
