@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
-import { firebaseAuth, googleProvider } from './lib/firebase.js';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { firebaseAuth } from './lib/firebase.js';
 import {
-  loginWithFirebaseToken, getMyProfile, updateSubjects, adUnlockSubjects, updateProfile, ApiError,
+  loginWithFirebaseToken, getMyProfile, adUnlockSubjects, updateProfile, ApiError,
   startPracticeSession, answerQuestion, completeSession, reportQuestion,
   getPracticeHistory, getPracticeStats,
   startExam, submitExam, getExamResult, getActiveExamSession, abandonExam,
@@ -43,20 +43,12 @@ import type {
   BattleConfig, PaginatedBattleHistory, BattleHistoryItem, BattleResult, ActiveBattleMatchSnapshot,
 } from './lib/api.js';
 import './App.css';
-
-// ─── Danh muc mon hoc ────────────────────────────────────────────────────────
-
-const SUBJECTS = [
-  { id: 'TOAN', name: 'Toán',              emoji: '📐' },
-  { id: 'VAN',  name: 'Ngữ văn',           emoji: '📖' },
-  { id: 'ANH',  name: 'Tiếng Anh',         emoji: '🌐' },
-  { id: 'LY',   name: 'Vật lý',            emoji: '⚛️' },
-  { id: 'HOA',  name: 'Hóa học',           emoji: '🧪' },
-  { id: 'SINH', name: 'Sinh học',          emoji: '🧬' },
-  { id: 'SU',   name: 'Lịch sử',           emoji: '🏛️' },
-  { id: 'DIA',  name: 'Địa lý',            emoji: '🗺️' },
-  { id: 'GDCD', name: 'Giáo dục công dân', emoji: '⚖️' },
-];
+import { SUBJECTS, SUBJECTS_MAP } from './lib/constants.js';
+import Spinner from './components/Spinner.js';
+import AvatarCell from './components/AvatarCell.js';
+import LoadingScreen from './screens/LoadingScreen.js';
+import LoginPage from './screens/LoginPage.js';
+import OnboardingPage from './screens/OnboardingPage.js';
 
 type Screen = 'loading' | 'login' | 'onboarding' | 'adGate' | 'profile' | 'practice' | 'exam' | 'admin' | 'leaderboard' | 'progress' | 'wrongAnswers' | 'submissions' | 'battle' | 'battleHistory';
 
@@ -388,137 +380,6 @@ export default function App() {
           onError={handleApiError}
         />
       )}
-    </div>
-  );
-}
-
-// ─── LoadingScreen ────────────────────────────────────────────────────────────
-
-function LoadingScreen() {
-  return (
-    <div className="screen screen-center">
-      <div className="loader-ring" />
-      <p className="loading-text">Đang kết nối…</p>
-    </div>
-  );
-}
-
-// ─── LoginPage ────────────────────────────────────────────────────────────────
-
-function LoginPage({ onError }: { onError: (m: string) => void }) {
-  const [busy, setBusy] = useState(false);
-
-  async function handleGoogle() {
-    setBusy(true);
-    try {
-      await signInWithPopup(firebaseAuth, googleProvider);
-    } catch (err) {
-      onError(err instanceof Error ? err.message : 'Đăng nhập thất bại');
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="screen screen-center screen-login">
-      <div className="login-card">
-        <div className="brand">
-          <div className="brand-icon">Q</div>
-          <h1 className="brand-name">QuizzGame</h1>
-          <p className="brand-sub">Ôn thi THPT Quốc gia</p>
-        </div>
-
-        <hr className="divider" />
-
-        <p className="login-headline">Chào mừng trở lại 👋</p>
-        <p className="login-hint">
-          Đăng nhập để bắt đầu ôn thi cùng hàng ngàn học sinh khác
-        </p>
-
-        <button className="btn-google" onClick={() => void handleGoogle()} disabled={busy}>
-          {busy ? <Spinner /> : <GoogleIcon />}
-          <span>{busy ? 'Đang đăng nhập…' : 'Đăng nhập bằng Google'}</span>
-        </button>
-
-        <p className="login-note">
-          Bằng cách đăng nhập, bạn đồng ý với điều khoản sử dụng của QuizzGame.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-// ─── OnboardingPage ───────────────────────────────────────────────────────────
-
-function OnboardingPage({
-  sessionToken, currentSubjects, onDone, onError,
-}: {
-  sessionToken: string;
-  /** Mã các môn ĐÃ chọn trước đó (profile.subjects) — dùng làm initial state để tránh bug hiển thị trống khi mở lại màn "Đổi môn". */
-  currentSubjects: string[];
-  onDone: () => void;
-  onError: (e: unknown) => void;
-}) {
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(currentSubjects));
-  const [busy, setBusy] = useState(false);
-
-  function toggle(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else if (next.size < 7) next.add(id);
-      return next;
-    });
-  }
-
-  async function handleSubmit() {
-    if (selected.size === 0) return;
-    setBusy(true);
-    try {
-      await updateSubjects(sessionToken, [...selected]);
-      onDone();
-    } catch (err) { onError(err); setBusy(false); }
-  }
-
-  const count = selected.size;
-
-  return (
-    <div className="screen screen-onboarding">
-      <div className="onboarding-header">
-        <h2 className="page-title">Chọn môn học</h2>
-        <p className="page-sub">Chọn các môn bạn muốn ôn thi để cá nhân hoá nội dung</p>
-        <div className="counter-badge">
-          <span className={count >= 7 ? 'full' : ''}>{count}</span>/7 môn đã chọn
-        </div>
-      </div>
-
-      <div className="subject-grid">
-        {SUBJECTS.map((s) => {
-          const isOn  = selected.has(s.id);
-          const isOff = !isOn && count >= 7;
-          return (
-            <button
-              key={s.id}
-              className={`subject-card ${isOn ? 'on' : ''} ${isOff ? 'off' : ''}`}
-              onClick={() => !isOff && toggle(s.id)}
-            >
-              <span className="sub-emoji">{s.emoji}</span>
-              <span className="sub-name">{s.name}</span>
-              {isOn && <span className="sub-check">✓</span>}
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="onboarding-footer">
-        <button
-          className="btn-primary btn-lg"
-          disabled={count === 0 || busy}
-          onClick={() => void handleSubmit()}
-        >
-          {busy && <Spinner />}
-          {busy ? 'Đang lưu…' : 'Bắt đầu ôn thi 🚀'}
-        </button>
-      </div>
     </div>
   );
 }
@@ -916,18 +777,6 @@ function ProfilePage({
 }
 
 // ─── PracticePage ─────────────────────────────────────────────────────────────
-
-const SUBJECTS_MAP: Record<string, { name: string; emoji: string }> = {
-  TOAN: { name: 'Toán', emoji: '📐' },
-  VAN:  { name: 'Ngữ văn', emoji: '📖' },
-  ANH:  { name: 'Tiếng Anh', emoji: '🌐' },
-  LY:   { name: 'Vật lý', emoji: '⚛️' },
-  HOA:  { name: 'Hóa học', emoji: '🧪' },
-  SINH: { name: 'Sinh học', emoji: '🧬' },
-  SU:   { name: 'Lịch sử', emoji: '🏛️' },
-  DIA:  { name: 'Địa lý', emoji: '🗺️' },
-  GDCD: { name: 'GDCD', emoji: '⚖️' },
-};
 
 const DIFF_LABEL: Record<number, string> = { 1: 'Dễ', 2: 'Trung bình', 3: 'Khó' };
 const SESSION_SECONDS = 17 * 60;
@@ -2100,19 +1949,6 @@ const TREND_COLOR: Record<string, string> = {
   up: '#22c55e', down: '#ef4444', same: '#94a3b8', new: '#94a3b8',
 };
 
-function AvatarCell({ avatarUrl, name, size = 40 }: { avatarUrl: string | null; name: string | null; size?: number }) {
-  const initials = (name ?? '?').split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('');
-  const colors = ['#6366f1','#ec4899','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ef4444'];
-  const color  = colors[(name?.charCodeAt(0) ?? 0) % colors.length];
-  return avatarUrl ? (
-    <img src={avatarUrl} alt={name ?? ''} style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-  ) : (
-    <div style={{ width: size, height: size, borderRadius: '50%', background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: size * 0.38, flexShrink: 0 }}>
-      {initials}
-    </div>
-  );
-}
-
 function LeaderboardPage({
   profile, sessionToken, onBack, onError,
 }: {
@@ -2336,23 +2172,6 @@ function LeaderboardPage({
         </div>
       )}
     </div>
-  );
-}
-
-// ─── Shared micro-components ──────────────────────────────────────────────────
-
-function Spinner() {
-  return <span className="spinner" aria-hidden />;
-}
-
-function GoogleIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" style={{ flexShrink: 0 }}>
-      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-    </svg>
   );
 }
 
