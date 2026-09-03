@@ -24,7 +24,7 @@ jobs:
       security-events: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: github/codeql-action/init@v3
         with:
@@ -41,7 +41,7 @@ jobs:
       matrix:
         part: [backend, frontend, mobile]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -82,7 +82,7 @@ jobs:
     name: Gitleaks - tim secret bi commit nham
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Quet toan bo lich su, khong chi commit moi nhat
           fetch-depth: 0
