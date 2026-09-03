@@ -55,20 +55,55 @@ git commit -m "feat: <mô tả ngắn tính năng>"
 - `refactor:` — refactor không thay đổi behavior
 - `test:` — thêm test
 
-### Bước 3 — Push lên GitHub
+### Bước 3 — Push và tạo Pull Request
+
+⚠️ **KHÔNG merge thẳng vào master tại máy.** Mọi thay đổi phải đi qua Pull Request —
+đó là nơi CI chạy, nơi lưu lịch sử review, và là chỗ duy nhất branch protection
+có thể chặn code hỏng. Merge cục bộ thì mọi lớp bảo vệ đều bị bỏ qua.
+
 ```bash
-git push origin feature/<tên-branch>
+git push -u origin feature/<tên-branch>
+
+gh pr create \
+  --base master \
+  --head feature/<tên-branch> \
+  --title "<loại>(<phạm vi>): <mô tả ngắn>" \
+  --body "$(cat <<'PRBODY'
+## Tính năng
+<mô tả đời thường — người đọc PR có thể không nhớ context>
+
+## Đã làm gì
+- <task 1>
+- <task 2>
+
+## Kiểm thử
+- Test tự động: <X> test PASS
+- Test tay (S5): <X> case PASS
+- Quality gate (S8): ĐẠT
+
+## Rủi ro / lưu ý
+- <migration DB? breaking change? cần biến môi trường mới?>
+PRBODY
+)"
 ```
 
-### Bước 4 — Chờ CI pass
+Nếu máy chưa có `gh`: `brew install gh && gh auth login`.
 
-Nếu repo có `.github/workflows/ci.yml`:
-- Kiểm tra trạng thái CI bằng `gh run list --branch feature/<tên-branch> --limit 1`
-- Nếu CI đang chạy, đợi và kiểm tra lại (`gh run watch`)
-- Nếu CI **FAIL**: đọc log lỗi (`gh run view --log-failed`), tự sửa lỗi, commit, push lại, chờ CI lại
-- Chỉ tiếp tục Bước 5 khi CI **PASS**
+### Bước 4 — Chờ CI pass trên Pull Request
 
-Nếu repo CHƯA có CI pipeline, bỏ qua bước này (ghi chú cho người dùng biết nên thiết lập CI).
+```bash
+gh pr checks --watch          # theo dõi tới khi xong
+```
+
+- CI có **3 workflow**: `CI` (typecheck/test/build cả 3 phần), `Security` (CodeQL,
+  npm audit, quét secret). Tất cả phải xanh.
+- Nếu **FAIL**: `gh run view --log-failed` → đọc lỗi, sửa, commit, push lại (PR tự cập nhật)
+- Chỉ sang Bước 5 khi **toàn bộ** check xanh
+
+⚠️ **Không bao giờ đề xuất merge khi CI còn đỏ**, kể cả khi người dùng giục. Nếu người
+dùng vẫn muốn merge gấp, nêu rõ rủi ro cụ thể và để họ tự quyết — nhưng đừng tự làm.
+
+Nếu repo CHƯA có CI, bỏ qua bước này và khuyên người dùng thiết lập.
 
 ### Bước 5 — Hỏi người dùng có muốn merge không
 Hiển thị tóm tắt tính năng:
@@ -98,11 +133,23 @@ Bạn có muốn merge branch này vào master không?
 
 ### Bước 6A — Nếu người dùng ĐỒNG Ý merge
 
+Merge **qua Pull Request**, không merge cục bộ:
+
 ```bash
-git checkout master
-git merge feature/<tên-branch> --no-ff -m "Merge feature/<tên-branch>: <tên tính năng>"
-git push origin master
+gh pr merge --merge --delete-branch
 ```
+
+- `--merge` giữ lại lịch sử từng commit (hợp với workflow này vì S2 commit theo từng TASK)
+- `--delete-branch` xoá nhánh sau khi merge — tránh tích tụ nhánh chết trên GitHub
+
+Rồi đồng bộ máy về master mới:
+```bash
+git checkout master && git pull origin master
+```
+
+⚠️ Nếu `gh pr merge` báo bị chặn (branch protection, CI chưa xong, thiếu approval)
+→ **KHÔNG tìm cách lách bằng merge cục bộ**. Đọc lý do bị chặn, xử lý đúng nguyên nhân,
+rồi thử lại. Branch protection tồn tại để bảo vệ bạn.
 
 **Sau khi merge thành công — Git tag và Release notes:**
 

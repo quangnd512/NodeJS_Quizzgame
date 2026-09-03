@@ -10,7 +10,7 @@ on:
 
 jobs:
   backend:
-    name: Backend - typecheck & build
+    name: Backend - typecheck, test & build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -33,10 +33,32 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
-      # Chạy toàn bộ unit + integration test (vitest).
+      # Chạy toàn bộ unit + integration test (vitest) kèm đo độ phủ.
       # Test đã mock Prisma nên KHÔNG cần database thật trên CI.
-      - name: Test
-        run: npm test
+      - name: Test + đo độ phủ
+        run: npm run test:coverage
+
+      # Hiện % độ phủ ngay trong tab Summary của lần chạy CI, để độ phủ là con số
+      # nhìn thấy được chứ không phải cảm tính. Không chặn merge — chỉ để theo dõi
+      # xu hướng: độ phủ phải TĂNG dần qua từng vòng, không được tụt.
+      - name: Ghi độ phủ vào Summary
+        if: always()
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            node -e "
+              const c = require('./coverage/coverage-summary.json').total;
+              const row = (n, m) => \`| \${n} | \${m.pct}% | \${m.covered}/\${m.total} |\`;
+              console.log('## 📊 Độ phủ test — Backend\n');
+              console.log('| Loại | % | Đã phủ |');
+              console.log('|---|---|---|');
+              console.log(row('Dòng lệnh', c.lines));
+              console.log(row('Hàm', c.functions));
+              console.log(row('Nhánh rẽ', c.branches));
+              console.log(row('Câu lệnh', c.statements));
+            " >> \$GITHUB_STEP_SUMMARY
+          else
+            echo 'Không tạo được báo cáo độ phủ.' >> \$GITHUB_STEP_SUMMARY
+          fi
 
       - name: Build
         run: npm run build

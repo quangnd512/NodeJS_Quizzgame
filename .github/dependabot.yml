@@ -1,0 +1,60 @@
+# Tu dong tao Pull Request khi thu vien co ban va loi bao mat hoac ban moi.
+# Giai quyet diem yeu "khong ai chiu trach nhiem cap nhat thu vien" cua quy trinh.
+#
+# Cach doc PR cua Dependabot (danh cho nguoi khong ranh ky thuat):
+#   - PR co nhan "security" = va lo hong bao mat -> UU TIEN merge som
+#   - PR nang version thuong -> cho CI xanh roi merge, khong voi
+#   - Neu CI do sau khi nang version -> dong PR lai, nho S1 xu ly rieng
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # Gom cac ban va nho vao 1 PR de do phai review nhieu lan
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "npm"
+    directory: "/mobile"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    ignore:
+      # Expo/React Native phai nang theo bo (expo upgrade), khong nang le tung goi
+      # -> de Dependabot dung vao se lam hong build. Nang tay khi len SDK moi.
+      - dependency-name: "expo"
+      - dependency-name: "react-native"
+      - dependency-name: "expo-*"
+      - dependency-name: "@expo/*"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # Cap nhat chinh cac GitHub Action dung trong CI
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore(ci)"

@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Git hook chay TRUOC moi lan commit — bat loi ngay tai may thay vi doi CI.
+#
+# Chi kiem tra phan NAO co file thay doi -> commit chi sua mobile thi khong chay
+# backend, tiet kiem thoi gian.
+#
+# Cai dat (chay 1 lan duy nhat):   ./workflow/setup-hooks.sh
+# Bo qua trong truong hop khan:    git commit --no-verify
+#
+# Co y CHI chay typecheck/lint (nhanh, vai giay) chu KHONG chay test —
+# test day du la viec cua CI. Hook cham qua se khien nguoi ta bo qua no.
+
+set -e
+
+CHANGED=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$CHANGED" ] && exit 0
+
+FAILED=0
+
+run_check() {
+  local part=$1 label=$2 cmd=$3
+  echo "  → $part: $label"
+  if ! (cd "$part" && eval "$cmd" >/tmp/hook_$part.log 2>&1); then
+    echo "  ❌ $part: $label THAT BAI"
+    tail -20 "/tmp/hook_$part.log"
+    FAILED=1
+  fi
+}
+
+echo "🔍 Kiem tra truoc khi commit..."
+
+if echo "$CHANGED" | grep -q "^backend/"; then
+  run_check backend "typecheck" "npx tsc --noEmit"
+fi
+
+if echo "$CHANGED" | grep -q "^frontend/"; then
+  run_check frontend "lint" "npm run lint"
+fi
+
+if echo "$CHANGED" | grep -q "^mobile/"; then
+  run_check mobile "typecheck" "npm run typecheck"
+  run_check mobile "lint" "npm run lint"
+fi
+
+if [ "$FAILED" -ne 0 ]; then
+  echo ""
+  echo "⛔ Commit bi chan vi co loi o tren. Sua roi commit lai."
+  echo "   (Neu that su can commit gap: git commit --no-verify)"
+  exit 1
+fi
+
+echo "✅ Kiem tra xong, tien hanh commit."

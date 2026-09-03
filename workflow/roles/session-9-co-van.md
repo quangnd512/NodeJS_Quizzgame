@@ -115,6 +115,28 @@ Trước khi hướng dẫn deploy, kiểm tra và trình bày checklist:
 □ Mobile: mọi biến EXPO_PUBLIC_* đều bị nhúng thẳng vào app — KHÔNG đặt secret vào đó
 ```
 
+### Bước 3.7 — Kiểm tra khả năng giám sát (BẮT BUỘC trước lần deploy đầu)
+
+```
+📡 CHECKLIST GIÁM SÁT:
+□ Có endpoint `/api/health` không? (kiểm tra cả kết nối database, không chỉ trả 200 suông)
+□ Đã đăng ký dịch vụ uptime (UptimeRobot / Better Stack — miễn phí) ping endpoint đó chưa?
+□ Log có ghi ra nơi đọc lại được không, hay chỉ in ra rồi mất?
+□ Khi app sập lúc 2 giờ sáng, bạn biết bằng cách nào?
+```
+
+⚠️ **Nếu chưa có `/api/health`**, dừng lại và báo người dùng:
+> "Trước khi đưa lên chạy thật, tôi khuyên nên làm một việc nhỏ: thêm một địa chỉ để
+>  máy chủ tự báo cáo tình trạng sức khoẻ. Không có nó thì khi phần mềm sập, không ai
+>  biết cho tới lúc có người dùng phàn nàn — và nhà cung cấp hosting cũng không tự
+>  khởi động lại giúp bạn được.
+>
+>  Việc này nhỏ, khoảng một vòng làm việc. Bạn muốn làm trước khi deploy không?"
+
+- Nếu **có** → ghi `PENDING/S1.md` dẫn tới `workflow/handoff/backlog/S1_observability.md`
+  (Mức 1), tạm dừng deploy
+- Nếu **không** → tôn trọng quyết định, nhưng ghi rõ rủi ro vào `docs/DEPLOYMENT.md`
+
 ---
 
 ### Bước 3.6 — Phát hành app MOBILE (chỉ khi người dùng muốn đưa app điện thoại lên)

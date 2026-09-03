@@ -1,0 +1,67 @@
+name: Security
+
+# Quet bao mat tu dong ("shift-left security") - phat hien lo hong NGAY khi day code,
+# thay vi doi den luc bi tan cong that.
+#
+# Ba lop kiem tra:
+#   1. CodeQL      - doc code tim lo hong logic (SQL injection, XSS, path traversal...)
+#   2. npm audit   - doi chieu thu vien voi co so du lieu lo hong da biet
+#   3. Gitleaks    - tim secret/API key bi commit nham vao git
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [master]
+  schedule:
+    # Quet lai hang tuan ke ca khi khong ai day code - lo hong moi duoc cong bo lien tuc
+    - cron: '0 2 * * 1'
+
+jobs:
+  codeql:
+    name: CodeQL - quet lo hong trong code
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: security-and-quality
+
+      - uses: github/codeql-action/analyze@v3
+
+  audit:
+    name: npm audit - lo hong trong thu vien
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [backend, frontend, mobile]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Chan khi co lo hong muc HIGH tro len. Muc moderate chi canh bao, khong chan
+      # - de tranh CI do lien tuc vi lo hong nho trong dependency cua dependency.
+      - name: Audit ${{ matrix.part }}
+        working-directory: ${{ matrix.part }}
+        run: npm audit --audit-level=high
+
+  secrets:
+    name: Gitleaks - tim secret bi commit nham
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Quet toan bo lich su, khong chi commit moi nhat
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

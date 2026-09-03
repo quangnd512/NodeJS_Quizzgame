@@ -106,6 +106,24 @@ Trước khi chạy, nếu không chắc: `node -e "console.log(Object.keys(requ
 - Branch hiện tại xem bằng: `git branch --show-current`
 - Không tự push lên master — chỉ push feature branch
 - Commit message: `feat/fix/chore(scope): mô tả ngắn`
+- **Merge BẮT BUỘC qua Pull Request** (`gh pr create` → `gh pr merge`), không bao giờ
+  `git checkout master && git merge` cục bộ — merge cục bộ bỏ qua toàn bộ CI và
+  branch protection
+- **Git hook**: chạy `./workflow/setup-hooks.sh` một lần sau khi clone. Hook tự chạy
+  typecheck/lint của phần vừa sửa trước mỗi commit
+
+## Tự động hoá đang có
+| Cơ chế | File | Làm gì |
+|---|---|---|
+| CI | `.github/workflows/ci.yml` | typecheck + test + build cho cả 3 phần, đo độ phủ |
+| Bảo mật | `.github/workflows/security.yml` | CodeQL, npm audit, quét secret (Gitleaks) |
+| Cập nhật thư viện | `.github/dependabot.yml` | Tự tạo PR khi có bản vá bảo mật (hàng tuần) |
+| Git hook | `.githooks/pre-commit` | Chặn commit nếu typecheck/lint hỏng |
+
+## Sức khoẻ kiến trúc
+S3 kiểm tra kích thước file ở tiêu chí review #9. Ngưỡng: **>1.000 dòng thì bắt buộc
+báo S1 lập kế hoạch tách**. Nợ hiện tại: `frontend/src/App.tsx` = 7.018 dòng
+(xem `workflow/handoff/backlog/S1_tach_app_tsx.md`).
 
 ## Workflow — 3 thư mục handoff (KHÔNG lẫn nhau)
 | Thư mục | Chứa gì |

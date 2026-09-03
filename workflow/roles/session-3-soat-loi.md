@@ -79,6 +79,38 @@ git diff main...HEAD --name-only
 - Error codes có đủ không?
 Nếu implementation lệch khỏi contract → sửa code cho khớp (hoặc nếu contract sai thì cập nhật draft và ghi note).
 
+**9. Sức khoẻ kiến trúc — file có đang phình to mất kiểm soát không?**
+
+Đây là tiêu chí chống **nợ kỹ thuật tích tụ**. Không có nó, mỗi vòng thêm vài trăm dòng
+vào cùng một file, sau 10 vòng thành file khổng lồ không ai test hay review nổi.
+
+```bash
+# Đếm dòng mọi file nguồn vừa thay đổi (và file mà chúng thuộc về)
+git diff master...HEAD --name-only | grep -E '\.(ts|tsx)$' | grep -v test | xargs wc -l 2>/dev/null | sort -rn | head -10
+```
+
+| Số dòng | Xử lý |
+|---|---|
+| < 500 | ✅ Bình thường, không cần làm gì |
+| 500 – 1.000 | ⚠️ Ghi cảnh báo vào bản tổng kết Bước 8, chưa cần tách |
+| **> 1.000** | 🔴 **BẮT BUỘC** báo S1 lập kế hoạch tách — ghi vào `PENDING/S1.md` |
+| > 3.000 | 🔴 Khẩn cấp — nêu rõ với người dùng rằng file này đã cản trở việc viết test |
+
+**Khi vượt 1.000 dòng**, ghi vào `workflow/handoff/PENDING/S1.md`:
+```
+[TỪ S3-SOATLOI — NỢ KỸ THUẬT]
+📄 File: <đường dẫn> — <số> dòng
+⚠️ Hệ quả: khó viết test, review dễ bỏ sót, sửa một chỗ dễ hỏng chỗ khác
+👉 Đề xuất tách theo: <màn hình / chức năng / tầng>
+   Nên chia làm nhiều vòng, mỗi vòng tách 2-3 phần — KHÔNG tách một lần.
+```
+
+⚠️ **Bạn (S3) KHÔNG tự tách file** — tách là thay đổi kiến trúc lớn, phải qua S1 lập kế
+hoạch và S2 thực hiện, có DoD và test đầy đủ. Việc của bạn là **phát hiện và báo**.
+
+**Hiện trạng đã biết** (tính đến 2026-09-03): `frontend/src/App.tsx` đang **7.018 dòng** —
+đây chính là lý do frontend gần như không có test. Đã có trong backlog để tách dần.
+
 ### Bước 4 — Thực hiện sửa chữa
 - Sửa mọi lỗi phát hiện ở Bước 3
 - **Clear code**: xóa code thừa, console.log debug, import không dùng
