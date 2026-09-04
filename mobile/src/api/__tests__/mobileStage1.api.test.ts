@@ -1,26 +1,26 @@
 // Tests cho cac API module duoc them trong Mobile Stage 1.
 // Mock toan bo `request` tu api/client de khong can backend thuc su.
-import { ApiError } from '../client.js';
-import { startPracticeSession, submitPracticeAnswer, completePracticeSession } from '../practice.js';
-import { listExamPapers, startExam, submitExam, abandonExam, getExamResult } from '../exam.js';
-import { getLeaderboard, getMyRank } from '../leaderboard.js';
-import { getProgressSummary, getExamHistory } from '../progress.js';
-import { getWrongAnswers, retryWrongAnswer } from '../wrongAnswer.js';
+import { ApiError } from '../client';
+import { startPracticeSession, submitPracticeAnswer, completePracticeSession } from '../practice';
+import { listExamPapers, startExam, submitExam, abandonExam, getExamResult } from '../exam';
+import { getLeaderboard, getMyRank } from '../leaderboard';
+import { getProgressSummary, getExamHistory } from '../progress';
+import { getWrongAnswers, retryWrongAnswer } from '../wrongAnswer';
 import {
   getUnreadCount,
   listNotifications,
   markAllAsRead,
   markAsRead,
-} from '../notifications.js';
+} from '../notifications';
 import {
   listMySubmissions,
   createSubmission,
   deleteSubmission,
-} from '../questionSubmission.js';
-import { getBattleConfig, getBattleHistory } from '../battle.js';
+} from '../questionSubmission';
+import { getBattleConfig, getBattleHistory } from '../battle';
 
 // Mock api/client — giu ApiError that de test throw/catch
-jest.mock('../client.js', () => {
+jest.mock('../client', () => {
   class ApiError extends Error {
     code: string;
     status: number;
@@ -38,7 +38,7 @@ jest.mock('../client.js', () => {
 });
 
 // Lay mock request de kiem soat ket qua
-const { request } = jest.requireMock('../client.js') as {
+const { request } = jest.requireMock('../client') as {
   request: jest.MockedFunction<(path: string, token: string, opts?: RequestInit) => Promise<unknown>>;
 };
 
@@ -53,16 +53,15 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('Practice API', () => {
-  test('startPracticeSession goi POST /api/practice/start voi subjectId', async () => {
+  test('startPracticeSession goi GET /api/practice/start?subject=... voi subjectId', async () => {
     const mockSession = { sessionId: 's1', questions: [], totalQuestions: 5 };
     request.mockResolvedValueOnce(mockSession);
 
     const result = await startPracticeSession(TOKEN, 'math');
 
     expect(request).toHaveBeenCalledWith(
-      '/api/practice/start',
+      '/api/practice/start?subject=math',
       TOKEN,
-      expect.objectContaining({ method: 'POST', body: JSON.stringify({ subjectId: 'math' }) }),
     );
     expect(result).toEqual(mockSession);
   });
@@ -120,7 +119,7 @@ describe('Exam API', () => {
     expect(result.data).toHaveLength(1);
   });
 
-  test('startExam goi POST /api/exam/start voi paperId', async () => {
+  test('startExam goi POST /api/exam/start voi examPaperId', async () => {
     const mockSession = { sessionId: 'es1', questions: [] };
     request.mockResolvedValueOnce(mockSession);
 
@@ -129,7 +128,7 @@ describe('Exam API', () => {
     expect(request).toHaveBeenCalledWith(
       '/api/exam/start',
       TOKEN,
-      expect.objectContaining({ method: 'POST', body: JSON.stringify({ paperId: 'p1' }) }),
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ examPaperId: 'p1' }) }),
     );
   });
 
@@ -227,10 +226,13 @@ describe('Progress API', () => {
     expect(result.overview.currentStreak).toBe(3);
   });
 
-  test('getExamHistory goi GET /api/progress/exam-history', async () => {
+  test('getExamHistory goi GET /api/progress/exam-history voi params phan trang', async () => {
     request.mockResolvedValueOnce({ history: [] });
     await getExamHistory(TOKEN);
-    expect(request).toHaveBeenCalledWith('/api/progress/exam-history', TOKEN);
+    expect(request).toHaveBeenCalledWith(
+      expect.stringContaining('/api/progress/exam-history'),
+      TOKEN,
+    );
   });
 });
 
