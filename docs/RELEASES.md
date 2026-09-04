@@ -4,6 +4,31 @@
 
 ---
 
+## v1.17.0 — 2026-09-04
+
+### Refactor: Tách App.tsx Vòn 2→5 — Giảm Nợ Kỹ Thuật
+
+**Branch:** `refactor/split-app-tsx-round-2to5`
+
+#### Changed
+
+- **Cấu trúc thư mục frontend** — tách 26 file từ `App.tsx` (6.837 → 358 dòng, giảm 6.479 dòng — đạt mục tiêu dài hạn ≤ 400 dòng)
+  - `frontend/src/screens/` — 18 màn hình (AdGatePage, ProfilePage, LeaderboardPage, PracticePage, PracticeSessionScreen, PracticeResultScreen, ExamPage, ExamSessionScreen, ExamQuestionCard, ExamResultScreen, ProgressPage, WrongAnswersPage, SubmissionsPage, BattleHistoryPage)
+  - `frontend/src/screens/admin/` — 8 màn hình admin
+  - `frontend/src/screens/battle/`, `frontend/src/screens/practice/`, `frontend/src/screens/exam/` — constants & utils
+  - `frontend/src/components/NotificationPanel.tsx`, `frontend/src/screens/submissionsConstants.ts`
+- `App.tsx` chỉ còn: imports + type + helper + `App()` component (358 dòng)
+- Thêm 80 test mới (101/101 PASS)
+
+#### Testing
+
+- TypeScript: PASS (0 error)
+- All tests: 101/101 PASS
+- Lint: PASS (0 error)
+- Build: PASS
+
+---
+
 ## v1.16.0 — 2026-09-03
 
 ### Refactor: Tách App.tsx Vòng 1 — Giảm Nợ Kỹ Thuật
