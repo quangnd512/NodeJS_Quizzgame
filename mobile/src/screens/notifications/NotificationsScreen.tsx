@@ -1,5 +1,5 @@
 // Man hinh danh sach thong bao — hien thi thong bao + danh dau da doc.
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -42,20 +42,17 @@ export function NotificationsScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(true);
   const [markingAll, setMarkingAll] = useState(false);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
     if (!sessionToken) return;
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
-    try {
-      const res = await listNotifications(sessionToken);
-      setNotifications(res.notifications);
-    } catch {
-      // silent
-    } finally {
-      setLoading(false);
-    }
+    listNotifications(sessionToken)
+      .then(res => { if (!cancelled) setNotifications(res.notifications); })
+      .catch(() => { /* silent */ })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [sessionToken]);
-
-  useEffect(() => { load(); }, [load]);
 
   const handleMarkAll = async () => {
     if (!sessionToken || markingAll) return;

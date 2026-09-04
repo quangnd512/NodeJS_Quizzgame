@@ -1,5 +1,5 @@
 // Man hinh danh sach de thi — hoc sinh chon de de bat dau.
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -27,23 +27,22 @@ export function ExamListScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (!sessionToken) return;
-    setLoading(true);
-    try {
-      const res = await listExamPapers(sessionToken);
-      setPapers(res.data);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Không thể tải danh sách đề thi.';
-      Alert.alert('Lỗi', msg);
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionToken]);
-
   useEffect(() => {
-    load();
-  }, [load]);
+    if (!sessionToken) return;
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoading(true);
+    listExamPapers(sessionToken)
+      .then(res => { if (!cancelled) setPapers(res.data); })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : 'Không thể tải danh sách đề thi.';
+          Alert.alert('Lỗi', msg);
+        }
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [sessionToken]);
 
   const handleStart = async (paper: ExamPaperPublicDto) => {
     if (!sessionToken) return;

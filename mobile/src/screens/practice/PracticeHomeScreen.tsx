@@ -16,6 +16,7 @@ import { useAuth } from '../../auth/AuthContext.js';
 import { startPracticeSession } from '../../api/practice.js';
 import { SUBJECT_CATALOG } from '../../constants/subjects.js';
 import type { PracticeStackScreenProps } from '../../navigation/types.js';
+import type { StartSessionResponse } from '../../api/practice.js';
 
 type Props = PracticeStackScreenProps<'PracticeHome'>;
 
@@ -117,7 +118,6 @@ const styles = StyleSheet.create({
 // Module-level session store (don gian, khong dung Redux/Context rieng).
 // Dung cho Mobile Stage 1 — co the nang cap sau.
 // ---------------------------------------------------------------------------
-import type { StartSessionResponse } from '../../api/practice.js';
 
 let _currentSession: StartSessionResponse | null = null;
 

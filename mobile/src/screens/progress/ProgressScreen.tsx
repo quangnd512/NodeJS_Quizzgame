@@ -1,5 +1,5 @@
 // Man hinh Tien do hoc tap — streak, diem, bieu do don gian, lich su bai thi.
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   ScrollView,
@@ -23,19 +23,17 @@ export function ProgressScreen({ navigation }: Props) {
   const [summary, setSummary] = useState<ProgressSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
     if (!sessionToken) return;
-    try {
-      const data = await getProgressSummary(sessionToken);
-      setSummary(data);
-    } catch {
-      // show nothing if fails
-    } finally {
-      setLoading(false);
-    }
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoading(true);
+    getProgressSummary(sessionToken)
+      .then(data => { if (!cancelled) setSummary(data); })
+      .catch(() => { /* show nothing if fails */ })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [sessionToken]);
-
-  useEffect(() => { load(); }, [load]);
 
   if (loading) {
     return (

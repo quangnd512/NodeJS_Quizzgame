@@ -119,8 +119,9 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Import screens (sau khi mock da setup)
-// ---------------------------------------------------------------------------
+// Import screens (sau khi mock da setup) — dung require() de load sau khi
+// jest.mock() da duoc thiet lap (ES6 import bi hoist nen khong the dung day).
+/* eslint-disable @typescript-eslint/no-require-imports */
 const { PracticeHomeScreen } = require('../../screens/practice/PracticeHomeScreen');
 const { PracticeResultScreen } = require('../../screens/practice/PracticeResultScreen');
 const { ExamListScreen } = require('../../screens/exam/ExamListScreen');
@@ -140,7 +141,7 @@ const { listExamPapers, getExamResult } = require('../../api/exam');
 const { getLeaderboard, getMyRank } = require('../../api/leaderboard');
 const { getProgressSummary } = require('../../api/progress');
 const { getWrongAnswers } = require('../../api/wrongAnswer');
-const { listNotifications, markAllAsRead } = require('../../api/notifications');
+const { listNotifications } = require('../../api/notifications');
 const { listMySubmissions } = require('../../api/questionSubmission');
 const { getBattleConfig } = require('../../api/battle');
 

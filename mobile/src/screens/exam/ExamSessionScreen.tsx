@@ -1,5 +1,5 @@
 // Man hinh lam bai thi — hien thi tung cau theo scroll, dem thoi gian.
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -59,35 +59,22 @@ export function ExamSessionScreen({ navigation, route }: Props) {
   const { sessionId, durationMinutes } = route.params;
 
   const session = getExamSession();
-  const questions: ExamQuestionPublicDto[] = session?.questions ?? [];
+  // useMemo de tranh tao mang moi moi render (tranh questions thay doi reference)
+  const questions: ExamQuestionPublicDto[] = useMemo(
+    () => session?.questions ?? [],
+    [session],
+  );
 
   const [answers, setAnswers] = useState<ExamAnswer[]>(questions.map(() => null));
   const [timeLeft, setTimeLeft] = useState(durationMinutes * 60);
   const [submitting, setSubmitting] = useState(false);
   const isMounted = useRef(true);
+  // Ref de timer co the goi handleSubmit ma khong can no trong dependency array
+  const handleSubmitRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     return () => { isMounted.current = false; };
   }, []);
-
-  // Dem thoi gian
-  useEffect(() => {
-    if (timeLeft <= 0) {
-      handleSubmit();
-      return;
-    }
-    const id = setInterval(() => {
-      setTimeLeft((t) => {
-        if (t <= 1) {
-          clearInterval(id);
-          return 0;
-        }
-        return t - 1;
-      });
-    }, 1000);
-    return () => clearInterval(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // chi chay 1 lan luc mount
 
   const handleSubmit = useCallback(async () => {
     if (!sessionToken || submitting) return;
@@ -107,6 +94,27 @@ export function ExamSessionScreen({ navigation, route }: Props) {
       setSubmitting(false);
     }
   }, [sessionToken, submitting, questions, answers, sessionId, navigation]);
+
+  // Cap nhat ref moi khi handleSubmit thay doi
+  useEffect(() => {
+    handleSubmitRef.current = handleSubmit;
+  }, [handleSubmit]);
+
+  // Dem thoi gian — chi chay 1 lan luc mount, dung ref de tranh stale closure
+  useEffect(() => {
+    const id = setInterval(() => {
+      setTimeLeft((t) => {
+        if (t <= 1) {
+          clearInterval(id);
+          // Nop bai khi het gio
+          if (handleSubmitRef.current) handleSubmitRef.current();
+          return 0;
+        }
+        return t - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, []); // chi chay 1 lan luc mount — dung handleSubmitRef.current de tranh stale closure
 
   const minutes = Math.floor(Math.max(0, timeLeft) / 60);
   const seconds = Math.max(0, timeLeft) % 60;

@@ -117,7 +117,7 @@ export async function startExam(token: string, examPaperId: string): Promise<Sta
 export async function submitExam(
   token: string,
   sessionId: string,
-  answers: Array<{ examQuestionId: string; selectedAnswer: unknown }>,
+  answers: { examQuestionId: string; selectedAnswer: unknown }[],
 ): Promise<SubmitExamResponse> {
   return request<SubmitExamResponse>('/api/exam/submit', token, {
     method: 'POST',

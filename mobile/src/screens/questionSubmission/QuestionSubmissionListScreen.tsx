@@ -1,5 +1,5 @@
 // Man hinh danh sach cau hoi hoc sinh da gui — xem trang thai duyet.
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -35,20 +35,17 @@ export function QuestionSubmissionListScreen({ navigation }: Props) {
   const [items, setItems] = useState<SubmissionDto[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
     if (!sessionToken) return;
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
-    try {
-      const res = await listMySubmissions(sessionToken);
-      setItems(res.data);
-    } catch {
-      // silent
-    } finally {
-      setLoading(false);
-    }
+    listMySubmissions(sessionToken)
+      .then(res => { if (!cancelled) setItems(res.data); })
+      .catch(() => { /* silent */ })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [sessionToken]);
-
-  useEffect(() => { load(); }, [load]);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>

@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/preserve-manual-memoization */
 // Man hinh lam bai on tap — hien thi tung cau hoi + nhan dap an.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {

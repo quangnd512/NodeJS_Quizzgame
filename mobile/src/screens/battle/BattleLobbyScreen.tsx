@@ -1,5 +1,5 @@
 // Man hinh Lobby Battle PvP — chon mon, muc cuoc, vao hang doi hoac phong rieng.
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react'; // useCallback needed for setupSocket
 import {
   ActivityIndicator,
   Alert,
@@ -46,24 +46,25 @@ export function BattleLobbyScreen({ navigation }: Props) {
     };
   }, []);
 
-  const loadConfig = useCallback(async () => {
+  useEffect(() => {
     if (!sessionToken) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
-    try {
-      const cfg = await getBattleConfig(sessionToken);
-      if (isMounted.current) {
-        setConfig(cfg);
-        if (cfg.stakes.length > 0) setStake(cfg.stakes[0] ?? null);
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Không thể tải cấu hình.';
-      Alert.alert('Lỗi', msg);
-    } finally {
-      if (isMounted.current) setLoading(false);
-    }
+    getBattleConfig(sessionToken)
+      .then(cfg => {
+        if (isMounted.current) {
+          setConfig(cfg);
+          if (cfg.stakes.length > 0) setStake(cfg.stakes[0] ?? null);
+        }
+      })
+      .catch((err: unknown) => {
+        if (isMounted.current) {
+          const msg = err instanceof Error ? err.message : 'Không thể tải cấu hình.';
+          Alert.alert('Lỗi', msg);
+        }
+      })
+      .finally(() => { if (isMounted.current) setLoading(false); });
   }, [sessionToken]);
-
-  useEffect(() => { loadConfig(); }, [loadConfig]);
 
   // Cleanup socket khi unmount
   useEffect(() => {

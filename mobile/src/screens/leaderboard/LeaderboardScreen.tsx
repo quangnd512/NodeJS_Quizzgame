@@ -1,5 +1,5 @@
 // Man hinh bang xep hang hoc sinh theo Diem Uy Tin.
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -31,26 +31,25 @@ export function LeaderboardScreen() {
   const [selectedSubject, setSelectedSubject] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    if (!sessionToken) return;
-    setLoading(true);
-    try {
-      const [board, rank] = await Promise.all([
-        getLeaderboard(sessionToken, selectedSubject),
-        getMyRank(sessionToken),
-      ]);
-      setEntries(board.data);
-      setMyRank(rank);
-    } catch {
-      // im lang — khong crash app
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionToken, selectedSubject]);
-
   useEffect(() => {
-    load();
-  }, [load]);
+    if (!sessionToken) return;
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoading(true);
+    Promise.all([
+      getLeaderboard(sessionToken, selectedSubject),
+      getMyRank(sessionToken),
+    ])
+      .then(([board, rank]) => {
+        if (!cancelled) {
+          setEntries(board.data);
+          setMyRank(rank);
+        }
+      })
+      .catch(() => { /* im lang */ })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [sessionToken, selectedSubject]);
 
   const SUBJECTS_WITH_ALL = [
     { id: undefined as string | undefined, name: 'Tổng hợp', emoji: '🌟' },
