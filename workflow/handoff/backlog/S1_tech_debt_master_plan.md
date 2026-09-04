@@ -8,7 +8,7 @@ Sau mỗi merge, S1 đánh dấu [x] vào vòng vừa xong rồi tiến hành v�
 ## Thứ tự thực hiện
 
 - [x] VÒNG A: Vá bảo mật (branch: fix/security-audit) ✅ merge 2026-09-03 v1.15.1
-- [ ] VÒNG 1: Tách App.tsx — shared components + auth screens (branch: refactor/split-app-tsx-round-1)
+- [x] VÒNG 1: Tách App.tsx — shared components + auth screens (branch: refactor/split-app-tsx-round-1) ✅ merge 2026-09-03 v1.16.0
 - [ ] VÒNG 2: Tách App.tsx — ProfilePage + AdGatePage + LeaderboardPage (branch: refactor/split-app-tsx-round-2)
 - [ ] VÒNG 3: Tách App.tsx — PracticePage + PracticeSessionScreen + PracticeResultScreen (branch: refactor/split-app-tsx-round-3)
 - [ ] VÒNG 4: Tách App.tsx — ExamPage + ExamSessionScreen + ExamQuestionCard + ExamResultScreen (branch: refactor/split-app-tsx-round-4)
