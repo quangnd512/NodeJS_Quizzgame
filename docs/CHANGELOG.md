@@ -5,6 +5,32 @@
 
 ---
 
+## [Unreleased] — Tách App.tsx Vòng 2→7 Gộp (Nợ Kỹ Thuật)
+
+**Branch:** `refactor/split-app-tsx-round-2to5`
+**Ngày:** 2026-09-04
+
+### Changed
+
+- **Cấu trúc thư mục frontend** — tách 26 file từ `App.tsx` (6.837 → 358 dòng, giảm 6.479 dòng — đạt mục tiêu dài hạn ≤ 400 dòng)
+  - `frontend/src/screens/` — 18 màn hình người dùng (AdGatePage, ProfilePage, LeaderboardPage, PracticePage, PracticeSessionScreen, PracticeResultScreen, ExamPage, ExamSessionScreen, ExamQuestionCard, ExamResultScreen, ProgressPage, WrongAnswersPage, SubmissionsPage, BattleHistoryPage)
+  - `frontend/src/screens/admin/` — 8 màn hình admin (AdminPage, AdminSubmissionsPage, AdminReportsPage, AdminExamPage, AdminQuestionBankPage, AdminDashboardPage, AdminUsersPage + adminConstants)
+  - `frontend/src/screens/battle/` — màn hình PvP (BattlePage + battleConstants)
+  - `frontend/src/screens/practice/` — constants (practiceConstants)
+  - `frontend/src/screens/exam/` — utils (examUtils)
+  - `frontend/src/components/NotificationPanel.tsx`, `frontend/src/screens/submissionsConstants.ts`
+- `App.tsx` chỉ còn: imports + `BattleResumeState` type + `getInitials` + `App()` component (358 dòng)
+- Thêm 80 test mới (101 test tổng, 13 file test) cho tất cả file vừa tách
+
+### Ghi chú
+
+- Không thay đổi logic, CSS, behavior, API — chỉ di chuyển code
+- Vòng 2→7/7 của kế hoạch refactor nợ kỹ thuật (xem `workflow/handoff/backlog/S1_tech_debt_master_plan.md`)
+- `BattleResumeState` duplicate trong App.tsx và BattlePage.tsx là thiết kế chủ ý (tránh circular import — đã S1 duyệt)
+- `SUBMISSION_STATUS_LABEL` tách thành `submissionsConstants.ts` riêng (tránh vi phạm `react-refresh/only-export-components`)
+
+---
+
 ## [Unreleased] — Tách App.tsx Vòng 1 (Nợ Kỹ Thuật)
 
 **Branch:** `refactor/split-app-tsx-round-1`
