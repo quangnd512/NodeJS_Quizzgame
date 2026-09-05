@@ -915,3 +915,41 @@
 | 16 | JWT hết hạn/không hợp lệ trong lúc đang dùng app | Bất kỳ request nào dùng sessionToken nhận 401 | `sessionUnauthorizedListener` tự kích hoạt → xoá SecureStore, chuyển thẳng về `signedOut` (màn Đăng nhập), không crash app | 401 |
 | 17 | Sai `X-Admin-Secret` | Nhập sai secret ở `AdminLoginScreen` | `lastError` hiện "Sai X-Admin-Secret. Vui lòng kiểm tra lại.", KHÔNG vào được khung Admin | 401 `ADMIN_UNAUTHORIZED` |
 | 18 | Admin secret cũ đã lưu không còn hợp lệ (bị đổi ở backend) lúc mở lại app | Boot đọc secret cũ từ SecureStore, `verifyAdminSecret` thất bại | Tự động `forceSignOut` về `signedOut`, không crash, không kẹt ở màn hình chờ | 401 |
+
+---
+
+## Test Cases: Mobile Stage 1 — Màn hình học tập mobile
+
+### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| M1 | Luyện tập: chọn môn → bắt đầu session | sessionToken hợp lệ, subjectId | Chuyển sang PracticeSessionScreen |
+| M2 | Luyện tập: chọn đáp án đúng | optionIndex đúng | Hiển thị màu xanh, isCorrect=true |
+| M3 | Luyện tập: hoàn thành session | Đã trả lời câu cuối, nhấn Hoàn thành | Chuyển PracticeResultScreen với score + pointsEarned |
+| M4 | Thi thử: danh sách đề thi load | sessionToken hợp lệ | Hiển thị danh sách exam papers |
+| M5 | Thi thử: nộp bài trước giờ | Nhấn Nộp bài | Chuyển ExamResultScreen với sessionId |
+| M6 | Thi thử: tự động nộp khi hết giờ | timer = 0 | handleSubmit được gọi tự động |
+| M7 | Bảng xếp hạng: load + filter môn | getLeaderboard → data | Hiển thị entries, filter chips |
+| M8 | Tiến độ: xem summary | getProgressSummary → data | Hiển thị streak, điểm, biểu đồ |
+| M9 | Ôn câu sai: load danh sách | getWrongAnswers → data | Hiển thị danh sách câu sai |
+| M10 | Thông báo: đánh dấu đã đọc tất cả | listNotifications → unread | Nút "Đọc tất cả" hiển thị và hoạt động |
+| M11 | Gửi câu hỏi: tạo submission mới | createSubmission → PENDING | Submission xuất hiện với status PENDING |
+| M12 | Battle: vào hàng đợi | subject + stake → battle:join-queue | Hiển thị UI "Đang tìm đối thủ" |
+| M13 | Battle: kết quả CHIẾN THẮNG | result='WIN', pointsChange>0 | Hiển thị "CHIẾN THẮNG" + điểm dương |
+
+### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| M14 | ExamSession: session null | getExamSession() = null | Hiển thị lỗi "Không tìm thấy phiên thi" |
+| M15 | Battle: đối thủ mất kết nối | battle:opponent-disconnected | Banner "chờ 30s" hiển thị |
+| M16 | Battle: battle:error → thử lại | battle:error → mode='select' → join lại | Không có duplicate event (socket.off đã fix) |
+| M17 | Thi thử: câu TRUE_FALSE_4 | options array, click toggle | Mảng boolean cập nhật đúng |
+| M18 | Thi thử: câu FILL_BLANK | TextInput + text | formatAnswer trả về string |
+
+### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error Code |
+|---|-------|-------|---------------|---------------------|
+| M19 | Practice: start session lỗi mạng | request reject | — | Alert hiển thị error message |
+| M20 | Ôn câu sai: Premium required | retryWrongAnswer → 403 | 403 | PREMIUM_REQUIRED |
+| M21 | Battle: join queue khi thiếu điểm | battle:error | — | Alert lỗi, mode reset 'select' |
+| M22 | Battle Lobby: thiếu subject/stake | handleJoinQueue không đủ data | — | Alert "Thiếu thông tin" |

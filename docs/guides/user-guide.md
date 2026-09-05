@@ -1595,17 +1595,15 @@ tài khoản — mở 2 kết nối cùng lúc để vào 2 trận song song s�
 khoản. Hãy hoàn tất hoặc thoát hẳn trận đang chơi ở thiết bị/tab kia trước
 khi vào trận mới.
 
-## Ứng dụng Di động (Mobile App) — Đợt 1a (Nền móng)
+## Ứng dụng Di động (Mobile App) — Đợt 1a-1b
 
 QuizzGame hiện có thêm **ứng dụng di động** (React Native + Expo, cài trên
 điện thoại Android/iOS), dùng **chung 1 tài khoản** với bản web — đăng nhập
 Google/Apple ở đâu cũng vào đúng hồ sơ, điểm số, môn học đã chọn của bạn.
 
-> ⚠️ **Đợt 1a chỉ là "nền móng"**: app di động hiện tại MỚI CÓ đăng nhập,
-> điều hướng, chọn môn học, dark mode. Các màn hình chức năng thật (Luyện
-> tập, Thi thử, Xếp hạng, Tiến độ) tạm hiện **"Sắp ra mắt"** — sẽ được bổ
-> sung dần ở các đợt tiếp theo. Muốn dùng đầy đủ tính năng, hiện tại vẫn nên
-> dùng bản web.
+**Đợt 1a (Nền móng, 2026-07-29):** Khung đăng nhập, điều hướng, chọn môn học, dark mode.
+
+**Đợt 1b (Màn hình học tập, 2026-09-04):** Luyện tập, Thi thử, Bảng xếp hạng, Tiến độ, Ôn câu sai, Thông báo, Gửi câu hỏi, Thi đấu PvP — tất cả tính năng chính đã hoàn thiện trên mobile.
 
 ### Đăng nhập lần đầu
 
@@ -1627,11 +1625,17 @@ Google/Apple ở đâu cũng vào đúng hồ sơ, điểm số, môn học đã
 
 | Tab | Nội dung |
 |---|---|
-| ✏️ Luyện tập | "Sắp ra mắt" (Đợt 1b) |
-| 📝 Thi thử | "Sắp ra mắt" (Đợt 1b) |
-| 🏆 Xếp hạng | "Sắp ra mắt" (Đợt 1b) |
-| 📊 Tiến độ | "Sắp ra mắt" (Đợt 1b) |
-| 👤 Hồ sơ | Đầy đủ — xem điểm tích luỹ, môn đang ôn, đổi giao diện, đăng xuất |
+| ✏️ Luyện tập | Chọn môn → 15 câu hỏi × 17 phút → nộp → xem điểm + chi tiết |
+| 📝 Thi thử | Danh sách đề thi → chọn đề → countdown timer → auto-submit hoặc nút nộp → kết quả |
+| 🏆 Xếp hạng | Filter theo môn, tab Tuần/Tháng/Tất cả → xem rank, score, avatar, tên của bạn và bạn bè |
+| 📊 Tiến độ | Streak hiện tại, điểm tuần/tháng, biểu đồ tiến độ theo từng môn |
+| 👤 Hồ sơ | Điểm tích luỹ, môn đang ôn, giao diện (Sáng/Tối/Hệ thống), đăng xuất, liên kết tới Ôn câu sai/Thông báo/Gửi câu hỏi/Lịch sử Battle |
+
+> **Ngoài 5 tab chính**, bạn cũng có thể truy cập từ tab Hồ sơ:
+> - **Ôn câu sai**: danh sách câu từng làm sai, retry để cộng thêm điểm
+> - **Thông báo**: nhận thông báo từ hệ thống (xếp hạng cao, bạn bè, ...) và điều hướng nhanh
+> - **Gửi câu hỏi**: đóng góp câu hỏi mới để cộng điểm (chờ admin duyệt)
+> - **Lịch sử thi đấu**: xem lại các trận PvP Battle đã tham gia (WIN/LOSE/DRAW)
 
 ### Tab "Hồ sơ"
 
@@ -1663,14 +1667,49 @@ trị viên? Đăng nhập tại đây"** ở cuối màn Đăng nhập, nhập 
 khoản Google/Apple với học sinh. Xem chi tiết cấu hình ở
 `docs/guides/admin-guide.md` mục 17.
 
+### Thi đấu PvP (Battle Mode)
+
+Bạn có thể thi đấu trực tiếp với người chơi khác qua chế độ **Battle** (tính năng mới từ Đợt 1b):
+
+1. Từ tab **Hồ sơ** → bấm vào **"Thi đấu"** hoặc **"Lịch sử Battle"** để xem trận cũ.
+2. **Lựa chọn cách thi đấu**:
+   - **Vào hàng đợi** (Ranked): Chọn môn + mức cược (điểm), hệ thống sẽ tìm đối thủ khác cùng mức (tối đa 30 giây chờ)
+   - **Tạo phòng riêng** (Casual): Tạo code phòng, chia sẻ cho bạn để cùng chơi (không cược điểm)
+3. **Khi match bắt đầu**:
+   - 3 giây chuẩn bị
+   - Đồng hồ 3 phút countdown
+   - Mỗi bên lần lượt nhận câu hỏi → chọn đáp án → server báo kết quả (ai nhanh hơn kiếm điểm nhiều hơn)
+   - Nếu đối thủ mất kết nối → banner "Chờ 30 giây để đối thủ quay lại"
+4. **Kết quả**:
+   - WIN/LOSE/DRAW
+   - Số điểm kiếm được (hoặc mất nếu cược Ranked)
+   - Lịch sử toàn bộ câu trả lời trong trận
+
+> ⚠️ **Lưu ý**: Thi đấu PvP cần internet ổn định (wifi/4G/5G). Nếu mất kết nối quá lâu, trận sẽ kết thúc.
+
+### Ôn câu sai (Wrong Answer Review)
+
+Muốn cải thiện điểm, bạn nên ôn lại những câu từng trả lời sai:
+
+1. Từ tab **Hồ sơ** → bấm **"Ôn câu sai"**.
+2. Danh sách hiển thị tất cả câu bạn từng làm sai → chọn 1 câu để **retry**.
+3. **Nếu bạn trả lời đúng lần này** → cộng **+5 điểm** bonus (ngoài điểm từ câu bình thường).
+4. Trả lời sai tiếp → không cộng điểm, câu vẫn ghi nhận là sai.
+
+> 💡 **Mẹo**: Ôn câu sai được ưu tiên từ những câu sai lâu nhất (để tránh quên). Mỗi câu bạn có thể retry vô số lần, miễn là là **thành viên Premium** (kiểm tra ở tab Hồ sơ).
+
+> 🔒 **Chỉ Premium được ôn?** Có — tính năng "Ôn câu sai" là một phần lợi ích Premium. Nếu bạn chưa nâng cấp, bạn vẫn có thể xem danh sách câu sai nhưng không thể retry để cộng điểm.
+
 ### Câu hỏi thường gặp
 
-**Q: Vì sao 4/5 tab chính chỉ hiện "Sắp ra mắt"?**
+**Q: Màn hình nào đã sẵn có trên mobile, cái nào chưa?**
 
-A: App di động hiện đang ở giai đoạn **nền móng** (Đợt 1a) — mới dựng khung
-đăng nhập/điều hướng/giao diện. Các tính năng học tập thật (Luyện tập, Thi
-thử, Xếp hạng, Tiến độ) sẽ được bổ sung ở các đợt kế tiếp. Muốn dùng đầy đủ
-ngay bây giờ, hãy dùng bản web.
+A: Kể từ **Đợt 1b (2026-09-04)**, mobile đã có tất cả tính năng học tập:
+- ✅ Luyện tập, Thi thử, Bảng xếp hạng, Tiến độ (hoàn thành từ Đợt 1a nền móng)
+- ✅ Ôn câu sai, Thông báo, Gửi câu hỏi (mới từ Đợt 1b)
+- ✅ Thi đấu PvP / Battle Mode (mới từ Đợt 1b, tính năng realtime)
+
+Các tính năng admin (duyệt câu, xem báo cáo, ...) vẫn chỉ có trên web bản admin.
 
 **Q: Tôi đăng ký mới hoàn toàn trên điện thoại — có bị hỏi chọn môn lại nếu
 sau này tôi mở bản web không?**

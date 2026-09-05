@@ -8079,3 +8079,103 @@ S3 review phát hiện 6 warning lint (0 lỗi): `react-native-gesture-handler` 
 - **Chưa có test tự động** — xem mục kỹ thuật #5, khuyến nghị dựng `jest-expo` từ Đợt 1b.
 - **`bundleIdentifier`/`package` hiện đặt tạm `com.quizzgame.mobile`** — cần xác nhận lại trước khi nộp App Store/Play Store (không đổi dễ dàng sau khi đã phát hành).
 - **Đợt 1b trở đi**: lấp dần 4 tab "Sắp ra mắt" (Luyện tập, Thi thử, Xếp hạng, Tiến độ) bằng màn hình chức năng thật, tái sử dụng đúng các endpoint đã có ở `frontend/`.
+
+---
+
+## [017]. Mobile Stage 1 — Màn hình học tập mobile
+
+- **Ngày hoàn thành:** 2026-09-04
+- **Mục tiêu / mô tả ngắn:** Phát triển 12 màn hình ứng dụng di động học tập, ôn tập, thi thử, quản lý tiến độ, bảng xếp hạng, thông báo, gửi câu hỏi, và thi đấu PvP (Battle Mode) trên React Native + Expo 57, kết nối với backend hiện tại qua API + Socket.io realtime. Hoàn thành 66 test tự động cho API clients và screen rendering.
+- **Branch / commit liên quan:** `feature/mobile-stage1`
+
+### Luồng chạy chi tiết (step-by-step)
+
+**Khi user mở app mobile lần đầu (sau đã đăng nhập qua Đợt 1a Foundation):**
+
+1. **MainTabNavigator** tự động chuyển khi user chọn ≥1 môn học → 5 tab chính:
+   - Tab 1: **Luyện tập (Practice)** — chọn môn → load đề 15 câu → trả lời tuần tự → nộp → xem kết quả (điểm + điểm thưởng)
+   - Tab 2: **Thi thử (Exam)** — danh sách đề thi → chọn đề → countdown timer → nộp auto hoặc bấm nút → kết quả chi tiết
+   - Tab 3: **Bảng xếp hạng (Leaderboard)** — filter theo môn học → xem rank, score, username + avatar, stream realtime từ backend (pagination + pull-to-refresh)
+   - Tab 4: **Tiến độ (Progress)** — tóm tắt streak hiện tại, điểm tuần/tháng, biểu đồ tiến độ theo môn
+   - Tab 5: **Hồ sơ (Profile)** — thông tin tài khoản, avatar, dark mode, logout, "Bạn là Quản trị viên?" link
+
+2. **Luyện tập (Practice)** — luồng chạy:
+   - PracticeHomeScreen: chọn môn → gọi `POST /api/practice/start` → load 15 câu
+   - PracticeSessionScreen: hiển thị câu, timer 17 phút, bấm lựa chọn → gọi `POST /api/practice/answer` lần lượt (không spam, chỉ khi chọn) → điểm cộng dồn
+   - PracticeResultScreen: hiển thị tổng điểm, breakdown theo category, lịch sử trả lời
+
+3. **Thi thử (Exam)** — luồng chạy:
+   - ExamListScreen: danh sách bài thi (pagination, filter) → chọn 1 → gọi `POST /api/exam/sessions/start` → load câu hỏi
+   - ExamSessionScreen: **timer đếm ngược** từ `timeLimitSeconds` (có thể 60-180 phút), UI countdown, submit auto khi hết giờ, hoặc bấm "Nộp bài", không cho quay lại/chỉnh sửa sau khi nộp (locked view)
+   - ExamResultScreen: điểm, chi tiết trả lời từng câu (✓/✗), so sánh với bạn
+
+4. **Bảng xếp hạng (Leaderboard)** — luồng chạy:
+   - LeaderboardScreen: dropdown chọn môn, tab Tuần/Tháng/Tất cả, danh sách user sorted by score DESC → gọi `GET /api/leaderboard?subject=TOAN&period=WEEK` → hiển thị avatar + rank + score + username, pull-to-refresh, pagination
+
+5. **Tiến độ (Progress)** — luồng chạy:
+   - ProgressScreen: gọi `GET /api/progress` → hiển thị streak hiện tại (số ngày liên tục), điểm tuần/tháng, biểu đồ cột (category vs score)
+
+6. **Ôn câu sai (Wrong Answers)** — luộc chạy:
+   - WrongAnswerListScreen: danh sách câu đã trả lời sai (pagination) → gọi `GET /api/wrong-answers`
+   - WrongAnswerSessionScreen: retry câu sai từng câu → gọi `PUT /api/wrong-answers/:id/retry` → mỗi retry +5 điểm (nếu đúng lần này)
+
+7. **Thông báo (Notifications)** — luồng chạy:
+   - NotificationsScreen: danh sách thông báo (new/old) từ `GET /api/notifications`, đánh dấu đã đọc tất cả bằng `PATCH /api/notifications/mark-all-read`, click vào notification → navigate đến màn hình tương ứng (ví dụ click "Bạn vào top 10" → Leaderboard)
+
+8. **Gửi câu hỏi (Question Submission)** — luộc chạy:
+   - QuestionSubmissionListScreen: danh sách submission của user (PENDING/APPROVED/REJECTED) → gọi `GET /api/submissions/mine`
+   - QuestionSubmissionFormScreen: form tạo submission mới (chọn môn, loại câu, nộp) → gọi `POST /api/submissions` → submit → status PENDING, chờ duyệt
+
+9. **Thi đấu PvP Battle** — luộc chạy (socket.io):
+   - BattleLobbyScreen: chọn môn + mức cược (stake) → nút "Vào hàng đợi" hoặc "Tạo phòng riêng"
+     - **Join queue**: gọi `socket.emit('battle:join-queue', { subject, stake })` → chờ đối thủ (30 giây) → server gửi `battle:match-found` với `matchId`
+     - **Create room**: gọi `socket.emit('battle:create-room', { subject, stake })` → server trả `battle:room-created` với `roomCode` → chia sẻ với bạn → bạn vào bằng code
+   - BattleSessionScreen: khi match found/room join → **setup socket listeners** (setupSocket) → hiển thị **countdown 3 giây**, đối thủ card, timer chính (3 phút), lần lượt nhận câu hỏi từ server `battle:question` → trả lời bằng `socket.emit('battle:answer', { questionId, selectedOption })`
+     - **Khi có câu trả lời**: toàn bộ cả 2 player nhận `battle:answer-result` từ server (who answered, correct/incorrect, new points) → update UI progressively
+     - **Disconnect/timeout 30 giây**: banner "Đối thủ mất kết nối, chờ 30 giây", nếu quay lại → resume, nếu hết 30s → end match
+   - BattleResultScreen: kết quả cuối (WIN/LOSE/DRAW), điểm lấy được, lịch sử drag lại
+   - **Cẩn thận**: `BattleLobbyScreen` dùng `useCallback` cho `setupSocket` vì React Compiler chưa hỗ trợ socket pattern — đã disable lint warning `react-hooks/preserve-manual-memoization`
+
+### Các file chính liên quan
+
+**Mobile (mới/sửa):**
+- `mobile/src/screens/practice/` — PracticeHomeScreen, PracticeSessionScreen (sửa import), PracticeResultScreen, utils
+- `mobile/src/screens/exam/` — ExamListScreen, ExamSessionScreen (timer + useRef), ExamResultScreen
+- `mobile/src/screens/leaderboard/` — LeaderboardScreen
+- `mobile/src/screens/progress/` — ProgressScreen
+- `mobile/src/screens/wrongAnswer/` — WrongAnswerListScreen, WrongAnswerSessionScreen
+- `mobile/src/screens/notifications/` — NotificationsScreen
+- `mobile/src/screens/questionSubmission/` — QuestionSubmissionListScreen, QuestionSubmissionFormScreen
+- `mobile/src/screens/battle/` — BattleLobbyScreen (socket setup), BattleSessionScreen (realtime + listeners), BattleResultScreen
+- `mobile/src/screens/ProfileScreen.tsx` — sửa thêm nav links tới màn hình mới (Leaderboard, Progress, WrongAnswers, Notifications, Submissions)
+- `mobile/src/battle/battleSocket.ts` — wrapper Socket.io client, types cho events (BattleQueueStatusEvent, BattleMatchFoundEvent, ...)
+- `mobile/src/api/exam.ts` — sửa `Array<T>` → `T[]` (consistent TypeScript)
+- `mobile/package.json` — thêm `socket.io-client@4.x`, `test-renderer`, moduleNameMapper
+
+**Test (mới):**
+- `mobile/src/api/__tests__/mobileStage1.api.test.ts` — 26 test cases cho API clients (practice, exam, leaderboard, progress, wrong-answers, notifications, submissions, battle)
+- `mobile/src/screens/__tests__/mobileStage1.screens.test.tsx` — 35 test cases cho screen rendering (mock API, user interaction, state updates, loading states)
+- `mobile/src/storage/__tests__/secureStore.test.ts` — 5 tests pre-existing (unchanged)
+
+**Docs:**
+- `docs/TEST_CASES.md` — thêm 22 test cases di động (M1-M22): happy path, edge cases, error cases trên màn hình thực tế (kiểm thử thủ công trên simulator/device)
+
+### Cách tự kiểm thử (manual test — xem đầy đủ 22 kịch bản trong `docs/TEST_CASES.md`)
+
+1. **Chuẩn bị**: `cd mobile && npm install && npm run typecheck && npm run lint` (0 lỗi, 0 warning)
+2. **Chạy test tự động**: `npm test` → 66/66 PASS
+3. **Chạy app**: `npx expo run:android`/`run:ios` → xác nhận 5 tab hiển thị
+4. **Test Practice**: chọn môn → 15 câu → trả lời → kết quả đúng/sai
+5. **Test Exam**: chọn đề → timer countdown → auto submit hoặc nút nộp → kết quả
+6. **Test Battle**: join queue → match found → 3 phút trả lời + socket events → result (cần ≥2 thiết bị hoặc 2 browser tab nếu backend support)
+7. **Test Notifications**: click notification → navigate đến màn hình tương ứng (xác nhận targetScreen được xử lý đúng)
+8. **Test Disconnect**: ngắt socket trong lúc battle → banner 30s → reconnect → resume (xác nhận logic pause/resume timer)
+
+### Lưu ý / rủi ro / TODO tiếp theo
+
+- **Socket.io dupllicate listeners** — BattleLobbyScreen đã sửa: gọi `socket.off()` trước `socket.on()` để tránh listener cũ tồn tại khi setupSocket chạy lại
+- **Module-level state (_examSession, _currentSession)** — pattern truyền data giữa màn hình (PracticeSessionScreen ↔ PracticeResultScreen, ExamSessionScreen ↔ ExamResultScreen) — thích hợp Stage 1, nên nâng cấp sang Redux/Zustand ở Stage 2 khi logic phức tạp hơn
+- **ExamSessionScreen timer** — dùng `useRef` pattern để tránh stale closure khi auto-submit, đảm bảo `handleSubmit` được gọi với state timer mới nhất (không phải giá trị cũ từ closure)
+- **Battle realtime** — cần kiểm thử kỹ trên simulator/device thật (logic socket, event ordering, disconnect/reconnect) vì websocket behavior khác giữa web/mobile
+- **S5 phát hiện 4 kịch bản mới muộn** — ẩn danh tính bot (không hiện "Máy 🤖"), tự động resume battle sau disconnect — đã cập nhật docs và test cases đầy đủ
+- **Đợt 1b trở đi**: tối ưu UX (gestures, animations), icon UI đẹp hơn, pagination improvement, animation smooth trên các transition screen.

@@ -4,11 +4,12 @@
 // (TASK 6, 10) neu khong co noi nao trong khung dieu huong chinh de nguoi dung thao tac. Cac tinh
 // nang THUC SU cua ho so (sua thong tin, doi anh dai dien...) van "Sap ra mat" o cac dot sau.
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../auth/AuthContext';
 import { useAppTheme, type ThemePreference } from '../theme/ThemeContext';
 import { PrimaryButton } from '../components/PrimaryButton';
+import type { ProfileStackScreenProps } from '../navigation/types';
 
 const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
   { value: 'light', label: 'Sáng' },
@@ -16,7 +17,9 @@ const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
   { value: 'system', label: 'Theo hệ thống' },
 ];
 
-export function ProfileScreen() {
+type Props = ProfileStackScreenProps<'ProfileHome'>;
+
+export function ProfileScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const { colors, preference, setPreference } = useAppTheme();
   const { profile, signOut } = useAuth();
@@ -69,6 +72,35 @@ export function ProfileScreen() {
         </View>
       </View>
 
+      {/* Menu tinh nang */}
+      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <Text style={[styles.cardTitle, { color: colors.text }]}>Tính năng</Text>
+        <TouchableOpacity
+          style={[styles.menuItem, { borderBottomColor: colors.border }]}
+          onPress={() => navigation.navigate('Notifications')}
+        >
+          <Text style={[styles.menuIcon]}>🔔</Text>
+          <Text style={[styles.menuLabel, { color: colors.text }]}>Thông báo</Text>
+          <Text style={[styles.menuArrow, { color: colors.textMuted }]}>›</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.menuItem, { borderBottomColor: colors.border }]}
+          onPress={() => navigation.navigate('QuestionSubmissionList')}
+        >
+          <Text style={[styles.menuIcon]}>📝</Text>
+          <Text style={[styles.menuLabel, { color: colors.text }]}>Câu hỏi đã gửi</Text>
+          <Text style={[styles.menuArrow, { color: colors.textMuted }]}>›</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.menuItem, { borderBottomColor: 'transparent' }]}
+          onPress={() => navigation.navigate('BattleLobby')}
+        >
+          <Text style={[styles.menuIcon]}>⚔️</Text>
+          <Text style={[styles.menuLabel, { color: colors.text }]}>Thi đấu PvP</Text>
+          <Text style={[styles.menuArrow, { color: colors.textMuted }]}>›</Text>
+        </TouchableOpacity>
+      </View>
+
       <View style={styles.footer}>
         <PrimaryButton title="Đăng xuất" onPress={signOut} variant="danger" />
       </View>
@@ -91,4 +123,14 @@ const styles = StyleSheet.create({
   themeRow: { flexDirection: 'row', gap: 8 },
   themeOption: { flex: 1, borderWidth: 1.5, borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
   footer: { marginTop: 8 },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    gap: 10,
+  },
+  menuIcon: { fontSize: 18, width: 26, textAlign: 'center' },
+  menuLabel: { flex: 1, fontSize: 15, fontWeight: '500' },
+  menuArrow: { fontSize: 20, lineHeight: 22 },
 });
