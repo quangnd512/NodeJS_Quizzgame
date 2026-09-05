@@ -4,6 +4,45 @@
 
 ---
 
+## v1.18.0 — 2026-09-05
+
+### Feature: Mobile Stage 1 — Màn Hình Học Tập Di Động
+
+**Branch:** `feature/mobile-stage1`
+
+#### Added
+
+- **15 màn hình học tập mới cho mobile app** (React Native + Expo 57):
+  - **Practice screens**: trang chủ, phiên học realtime, kết quả phân tích
+  - **Exam screens**: danh sách đề thi, phiên thi realtime, kết quả phản hồi
+  - **Leaderboard screen**: bảng xếp hạng realtime với bộ lọc theo chủ đề
+  - **Progress screen**: phân tích tiến độ học tập + hiển thị streak
+  - **Wrong answers screen**: xem lại bộ sưu tập + phiên ôn tập câu sai
+  - **Notifications screen**: thông báo realtime + điều hướng nhanh
+  - **Question submission screen**: form + danh sách đóng góp câu hỏi
+  - **Battle PvP screens**: phòng chờ + gameplay Socket.io realtime
+- **8 API modules mới**: practice, exam, leaderboard, progress, notifications, questionSubmission, wrongAnswer, battle
+- **6 navigation stacks**: ExamStackNavigator, LeaderboardStackNavigator, PracticeStackNavigator, ProfileStackNavigator, ProgressStackNavigator, QuestionSubmissionStackNavigator
+- **Socket.io realtime integration** cho Battle PvP (kết nối websocket, disconnect/reconnect handling)
+
+#### Testing
+
+- **Test tự động**: 66/66 test PASS
+- **TypeScript**: 0 error
+- **Lint (ESLint)**: PASS (0 lỗi)
+- **Quality gate (S8)**: ✅ ĐẠT (10/10 tiêu chí)
+- **Bug fixes**: 3 bugs sửa (NodeJS.Timeout type annotation, Battle answer display logic, NaN guard)
+
+#### Ghi chú
+
+- Không có migration database mới
+- Không có breaking change
+- Không cần biến môi trường mới
+- Tất cả màn hình đều dùng chung 1 backend hiện có (không thêm API mới)
+- Mobile app tiếp tục chia sẻ cơ sở dữ liệu và xác thực với web + backend
+
+---
+
 ## v1.17.0 — 2026-09-04
 
 ### Refactor: Tách App.tsx Vòn 2→5 — Giảm Nợ Kỹ Thuật
