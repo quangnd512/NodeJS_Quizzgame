@@ -10,9 +10,9 @@
 
 | Mục | Giá trị |
 |-----|---------|
-| Tính năng | Nợ kỹ thuật — Tách App.tsx Vòng 2→7 gộp (TD-B2) |
-| Branch | refactor/split-app-tsx-round-2to5 |
-| Bắt đầu từ | 2026-09-04 |
+| Tính năng | Mobile Complete (Stage 2→6) — hoàn thiện 4 tab + màn hình bổ sung |
+| Branch | feature/mobile-complete (S7 tạo sau khi merge TD-B2) |
+| Bắt đầu từ | 2026-09-06 |
 
 ---
 
@@ -20,14 +20,14 @@
 
 | Session | Tên | Trạng thái | Việc cần làm | Số lần làm lại |
 |---------|-----|------------|--------------|---------------|
-| S1 | Kiến Trúc Sư | ✅ Done (27 TASK, DoD 6 tiêu chí, kế hoạch tách 6 vòng gộp) | — | 0 |
-| S2 | Thợ Code | ✅ Done (27/27 TASK, 26 file mới, App.tsx 358 dòng, 101 test) | — | 0 |
-| S3 | Người Soát Lỗi | ✅ Done (0 lỗi, 9 tiêu chí sạch, 101/101 PASS, lint PASS, build PASS) | — | 0 |
-| S4 | Người Ghi Chép | ⏭ Bỏ qua (refactor thuần — không thay đổi behavior/API/UI) | — | — |
-| S5 | Người Thử Nghiệm | ⏭ Bỏ qua (refactor thuần — 101 test tự động PASS là đủ) | — | — |
+| S1 | Kiến Trúc Sư | ✅ Done (Mobile Complete kế hoạch với 16 TASK) | — | 0 |
+| S2 | Thợ Code | 🔄 Đang làm | Cài đặt 7 API client + 16 screen (feature/mobile-complete) | 0 |
+| S3 | Người Soát Lỗi | ⏸ Chờ | — | 0 |
+| S4 | Người Ghi Chép | ⏸ Chờ | — | — |
+| S5 | Người Thử Nghiệm | ⏸ Chờ | — | — |
 | S6 | Người Giảng Giải | ⏭ Bỏ qua | — | — |
-| S7 | Người Đóng Gói | ⏸ Chờ lệnh | Push & merge refactor/split-app-tsx-round-2to5 | 0 |
-| S8 | Giám Sát Chất Lượng | ✅ Done (TD-B2 — 6/6 DoD đạt, 101/101 PASS, lint/build/tsc sạch) | — | — |
+| S7 | Người Đóng Gói | 🔄 Đang làm | Tạo branch feature/mobile-complete + push | 0 |
+| S8 | Giám Sát Chất Lượng | ⏸ Chờ | Review Mobile Complete khi S2/S3/S5 xong | — |
 | S9 | Cố Vấn Ra Mắt | ⏸ Chờ | — | — |
 
 **Trạng thái**: `⏸ Chờ` | `🔄 Đang làm` | `✅ Done` | `↩️ Làm lại` | `⛔ Bị chặn` | `⏭ Bỏ qua` (S6 khi người dùng không cần giải thích)
