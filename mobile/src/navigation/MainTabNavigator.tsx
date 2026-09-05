@@ -1,15 +1,14 @@
-// Khung dieu huong chinh cho HOC SINH - Bottom Tab 5 muc (TASK 8). Moi tab (tru "Ho so") hien
-// tam man hinh placeholder "Sap ra mat" - se duoc thay dan o cac dot tiep theo (1b/1c/1d...).
-//
-// Dung EMOJI lam icon tab thay vi 1 thu vien icon rieng (vd @expo/vector-icons) - giu dung so
-// luong dependency toi thieu can thiet cho nen mong nay, van nhat quan voi phong cach UI da dung
-// emoji o nhieu noi khac trong app web (vd danh muc mon hoc).
+// Khung dieu huong chinh cho HOC SINH - Bottom Tab 5 muc.
+// Moi tab (tru "Ho so") duoc thay the bang nested stack navigator chua cac man hinh thuc.
 import React from 'react';
 import { Text } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useAppTheme } from '../theme/ThemeContext';
-import { ComingSoonScreen } from '../screens/ComingSoonScreen';
-import { ProfileScreen } from '../screens/ProfileScreen';
+import { LeaderboardScreen } from '../screens/LeaderboardScreen';
+import { ProgressScreen } from '../screens/ProgressScreen';
+import { PracticeStackNavigator } from './PracticeStackNavigator';
+import { ExamStackNavigator } from './ExamStackNavigator';
+import { ProfileStackNavigator } from './ProfileStackNavigator';
 import type { MainTabParamList } from './types';
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -41,11 +40,11 @@ export function MainTabNavigator() {
         };
       }}
     >
-      <Tab.Screen name="Practice">{() => <ComingSoonScreen emoji="✏️" title="Luyện tập" />}</Tab.Screen>
-      <Tab.Screen name="Exam">{() => <ComingSoonScreen emoji="📝" title="Thi thử" />}</Tab.Screen>
-      <Tab.Screen name="Leaderboard">{() => <ComingSoonScreen emoji="🏆" title="Xếp hạng" />}</Tab.Screen>
-      <Tab.Screen name="Progress">{() => <ComingSoonScreen emoji="📊" title="Tiến độ" />}</Tab.Screen>
-      <Tab.Screen name="Profile" component={ProfileScreen} />
+      <Tab.Screen name="Practice" component={PracticeStackNavigator} />
+      <Tab.Screen name="Exam" component={ExamStackNavigator} />
+      <Tab.Screen name="Leaderboard" component={LeaderboardScreen} />
+      <Tab.Screen name="Progress" component={ProgressScreen} />
+      <Tab.Screen name="Profile" component={ProfileStackNavigator} />
     </Tab.Navigator>
   );
 }

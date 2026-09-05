@@ -60,13 +60,25 @@ export type BattleStackParamList = {
 export type BattleStackScreenProps<T extends keyof BattleStackParamList> =
   NativeStackScreenProps<BattleStackParamList, T>;
 
+/** Stack trong tab Ho so — cho phep ProfileScreen push cac man hinh phu. */
+export type ProfileStackParamList = {
+  ProfileHome: undefined;
+  Notifications: undefined;
+  WrongAnswers: undefined;
+  Submissions: undefined;
+  Battle: undefined; // BattleStackNavigator luon bat dau tu BattleHome
+};
+
+export type ProfileStackScreenProps<T extends keyof ProfileStackParamList> =
+  NativeStackScreenProps<ProfileStackParamList, T>;
+
 /** 5 tab chinh cua hoc sinh. */
 export type MainTabParamList = {
   Practice: NavigatorScreenParams<PracticeStackParamList>;
   Exam: NavigatorScreenParams<ExamStackParamList>;
   Leaderboard: undefined;
   Progress: undefined;
-  Profile: undefined;
+  Profile: NavigatorScreenParams<ProfileStackParamList>;
 };
 
 export type MainTabScreenProps<T extends keyof MainTabParamList> = BottomTabScreenProps<MainTabParamList, T>;
