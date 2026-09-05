@@ -2,8 +2,8 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppTheme } from '../../theme/ThemeContext.js';
-import type { ProfileStackScreenProps } from '../../navigation/types.js';
+import { useAppTheme } from '../../theme/ThemeContext';
+import type { ProfileStackScreenProps } from '../../navigation/types';
 
 type Props = ProfileStackScreenProps<'BattleResult'>;
 
@@ -18,7 +18,10 @@ const RESULT_CONFIG: Record<string, { emoji: string; label: string; color: strin
 export function BattleResultScreen({ navigation, route }: Props) {
   const { colors } = useAppTheme();
   const insets = useSafeAreaInsets();
-  const { myScore, opponentScore, result, pointsChange } = route.params;
+  const { myScore: rawMyScore, opponentScore: rawOppScore, result, pointsChange: rawPointsChange } = route.params;
+  const myScore = rawMyScore ?? 0;
+  const opponentScore = rawOppScore ?? 0;
+  const pointsChange = rawPointsChange ?? 0;
 
   const cfg = RESULT_CONFIG[result] ?? { emoji: '❓', label: result, color: colors.textMuted };
 

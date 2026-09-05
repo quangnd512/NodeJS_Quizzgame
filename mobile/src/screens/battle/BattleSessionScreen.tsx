@@ -9,8 +9,8 @@ import {
   Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppTheme } from '../../theme/ThemeContext.js';
-import { useAuth } from '../../auth/AuthContext.js';
+import { useAppTheme } from '../../theme/ThemeContext';
+import { useAuth } from '../../auth/AuthContext';
 import {
   getBattleSocket,
   disconnectBattleSocket,
@@ -20,8 +20,8 @@ import {
   type BattleMatchEndedEvent,
   type BattleErrorEvent,
   type BattleOpponentDisconnectedEvent,
-} from '../../battle/battleSocket.js';
-import type { ProfileStackScreenProps } from '../../navigation/types.js';
+} from '../../battle/battleSocket';
+import type { ProfileStackScreenProps } from '../../navigation/types';
 import type { Socket } from 'socket.io-client';
 
 type Props = ProfileStackScreenProps<'BattleSession'>;
@@ -45,6 +45,10 @@ export function BattleSessionScreen({ navigation, route }: Props) {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isMounted = useRef(true);
 
+  /**
+   * Bắt đầu đếm ngược thời gian cho câu hỏi mới.
+   * Luôn clear interval cũ trước khi tạo mới — tránh nhiều interval chạy song song.
+   */
   const startTimer = useCallback((limit: number) => {
     if (timerRef.current) clearInterval(timerRef.current);
     setTimeLeft(limit);
@@ -123,6 +127,10 @@ export function BattleSessionScreen({ navigation, route }: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionToken]);
 
+  /**
+   * Xử lý khi người dùng chọn đáp án.
+   * Guard `selectedOpt !== null` ngăn gửi 2 lần (race condition UI).
+   */
   const handleSelect = (optIndex: number) => {
     if (selectedOpt !== null || qResult !== null || !currentQ) return;
     setSelectedOpt(optIndex);
@@ -142,10 +150,18 @@ export function BattleSessionScreen({ navigation, route }: Props) {
         backgroundColor: selectedOpt === i ? (colors.primary + '20') : colors.surface,
       };
     }
-    const isCorrect = i === qResult.correctAnswer;
-    const isSelected = i === selectedOpt;
-    if (isCorrect) return { borderColor: '#16a34a', backgroundColor: '#dcfce7' };
-    if (isSelected && !isCorrect) return { borderColor: colors.danger, backgroundColor: '#fee2e2' };
+    // User trả lời đúng: highlight xanh cho đáp án đã chọn
+    if (qResult.isCorrect && i === selectedOpt) {
+      return { borderColor: '#16a34a', backgroundColor: '#dcfce7' };
+    }
+    // Server gửi correctAnswer rõ ràng: highlight xanh cho đáp án đúng
+    if (qResult.correctAnswer !== null && i === qResult.correctAnswer) {
+      return { borderColor: '#16a34a', backgroundColor: '#dcfce7' };
+    }
+    // User chọn sai: highlight đỏ
+    if (i === selectedOpt && !qResult.isCorrect) {
+      return { borderColor: colors.danger, backgroundColor: '#fee2e2' };
+    }
     return { borderColor: colors.border, backgroundColor: colors.surface };
   };
 

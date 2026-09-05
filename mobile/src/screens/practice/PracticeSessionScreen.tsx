@@ -11,12 +11,12 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppTheme } from '../../theme/ThemeContext.js';
-import { useAuth } from '../../auth/AuthContext.js';
-import { submitPracticeAnswer, completePracticeSession } from '../../api/practice.js';
-import { getPracticeSession, clearPracticeSession } from './PracticeHomeScreen.js';
-import type { PracticeStackScreenProps } from '../../navigation/types.js';
-import type { AnswerResponse, QuestionPublicDto } from '../../api/practice.js';
+import { useAppTheme } from '../../theme/ThemeContext';
+import { useAuth } from '../../auth/AuthContext';
+import { submitPracticeAnswer, completePracticeSession } from '../../api/practice';
+import { getPracticeSession, clearPracticeSession } from './PracticeHomeScreen';
+import type { PracticeStackScreenProps } from '../../navigation/types';
+import type { AnswerResponse, QuestionPublicDto } from '../../api/practice';
 
 type Props = PracticeStackScreenProps<'PracticeSession'>;
 
@@ -42,6 +42,7 @@ export function PracticeSessionScreen({ navigation, route }: Props) {
   );
   const [submitting, setSubmitting] = useState(false);
   const [completing, setCompleting] = useState(false);
+  const [timeRemaining, setTimeRemaining] = useState(1020); // 17 phút = 1020 giây
   const isMounted = useRef(true);
 
   useEffect(() => {
@@ -49,6 +50,50 @@ export function PracticeSessionScreen({ navigation, route }: Props) {
       isMounted.current = false;
     };
   }, []);
+
+  // Timer countdown — auto-submit khi hết giờ
+  useEffect(() => {
+    if (!sessionToken || !sessionId) return;
+    let countdownInterval: ReturnType<typeof setInterval> | undefined;
+    let autoSubmitDone = false;
+
+    const startTimer = () => {
+      countdownInterval = setInterval(() => {
+        setTimeRemaining((prev) => {
+          if (prev <= 1 && !autoSubmitDone) {
+            autoSubmitDone = true;
+            // Auto-complete khi timer = 0 (gọi API trực tiếp)
+            (async () => {
+              if (!isMounted.current || completing) return;
+              setCompleting(true);
+              try {
+                const result = await completePracticeSession(sessionToken, sessionId);
+                clearPracticeSession();
+                if (isMounted.current) {
+                  navigation.replace('PracticeResult', {
+                    sessionId: result.sessionId,
+                    score: result.score,
+                    pointsEarned: result.pointsEarned,
+                  });
+                }
+              } catch (err: unknown) {
+                if (!isMounted.current) return;
+                const msg = err instanceof Error ? err.message : 'Không thể hoàn thành phiên.';
+                Alert.alert('Lỗi', msg);
+              }
+            })();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    };
+
+    startTimer();
+    return () => {
+      if (countdownInterval) clearInterval(countdownInterval);
+    };
+  }, [sessionToken, sessionId, navigation, completing]);
 
   const currentQ = questions[currentIndex];
   const currentState = states[currentIndex];
@@ -85,11 +130,13 @@ export function PracticeSessionScreen({ navigation, route }: Props) {
     try {
       const result = await completePracticeSession(sessionToken, sessionId);
       clearPracticeSession();
-      navigation.replace('PracticeResult', {
-        sessionId: result.sessionId,
-        score: result.score,
-        pointsEarned: result.pointsEarned,
-      });
+      if (isMounted.current) {
+        navigation.replace('PracticeResult', {
+          sessionId: result.sessionId,
+          score: result.score,
+          pointsEarned: result.pointsEarned,
+        });
+      }
     } catch (err: unknown) {
       if (!isMounted.current) return;
       const msg = err instanceof Error ? err.message : 'Không thể hoàn thành phiên.';
@@ -111,6 +158,13 @@ export function PracticeSessionScreen({ navigation, route }: Props) {
   const answeredCount = states.filter((s) => s.answered).length;
   const allAnswered = answeredCount === questions.length;
 
+  // Format time: giây → mm:ss
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
   const getOptionStyle = (optionIndex: number) => {
     if (!currentState?.answered) return [styles.option, { borderColor: colors.border, backgroundColor: colors.surface }];
     const isCorrect = optionIndex === currentState.result?.correctAnswer;
@@ -128,9 +182,14 @@ export function PracticeSessionScreen({ navigation, route }: Props) {
           <Text style={[styles.backText, { color: colors.primary }]}>← Thoát</Text>
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>{subjectName}</Text>
-        <Text style={[styles.progress, { color: colors.textMuted }]}>
-          {answeredCount}/{questions.length}
-        </Text>
+        <View style={styles.headerRight}>
+          <Text style={[styles.progress, { color: colors.textMuted }]}>
+            {answeredCount}/{questions.length}
+          </Text>
+          <Text style={[styles.timer, { color: timeRemaining <= 60 ? colors.danger : colors.textMuted }]}>
+            ⏱ {formatTime(timeRemaining)}
+          </Text>
+        </View>
       </View>
 
       {/* Question navigation dots */}
@@ -226,7 +285,9 @@ const styles = StyleSheet.create({
   backBtn: { marginRight: 8 },
   backText: { fontSize: 14 },
   headerTitle: { flex: 1, fontSize: 16, fontWeight: '700', textAlign: 'center' },
+  headerRight: { alignItems: 'flex-end', gap: 4 },
   progress: { fontSize: 13 },
+  timer: { fontSize: 12, fontWeight: '600' },
   dots: { paddingHorizontal: 12, paddingVertical: 8, maxHeight: 52 },
   dot: {
     width: 28,
