@@ -1,6 +1,6 @@
 // API module cho Thi thu (Exam) — mobile.
 // Goi cac endpoint /api/exam/*.
-import { request } from './client.js';
+import { request } from './client';
 
 // ---------------------------------------------------------------------------
 // Types (khop voi backend/src/services/exam/exam.types.ts)

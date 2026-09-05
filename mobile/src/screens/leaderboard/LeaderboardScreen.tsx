@@ -9,10 +9,10 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppTheme } from '../../theme/ThemeContext.js';
-import { useAuth } from '../../auth/AuthContext.js';
-import { getLeaderboard, getMyRank, type LeaderboardEntry, type MyRankResponse } from '../../api/leaderboard.js';
-import { SUBJECT_CATALOG } from '../../constants/subjects.js';
+import { useAppTheme } from '../../theme/ThemeContext';
+import { useAuth } from '../../auth/AuthContext';
+import { getLeaderboard, getMyRank, type LeaderboardEntry, type MyRankResponse } from '../../api/leaderboard';
+import { SUBJECT_CATALOG } from '../../constants/subjects';
 
 const TREND_ICON: Record<string, string> = {
   up: '↑',

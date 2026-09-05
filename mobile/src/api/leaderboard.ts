@@ -1,5 +1,5 @@
 // API module cho Leaderboard (Bang xep hang) — mobile.
-import { request } from './client.js';
+import { request } from './client';
 
 // ---------------------------------------------------------------------------
 // Types (khop voi backend/src/services/leaderboard/leaderboard.types.ts)

@@ -1,8 +1,8 @@
 // Stack navigator cho tab Xep hang (Leaderboard).
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import type { LeaderboardStackParamList } from './types.js';
-import { LeaderboardScreen } from '../screens/leaderboard/LeaderboardScreen.js';
+import type { LeaderboardStackParamList } from './types';
+import { LeaderboardScreen } from '../screens/leaderboard/LeaderboardScreen';
 
 const Stack = createNativeStackNavigator<LeaderboardStackParamList>();
 

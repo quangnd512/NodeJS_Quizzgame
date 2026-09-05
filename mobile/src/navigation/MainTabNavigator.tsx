@@ -7,15 +7,15 @@
 import React, { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { useAppTheme } from '../theme/ThemeContext.js';
-import { useAuth } from '../auth/AuthContext.js';
-import { getUnreadCount } from '../api/notifications.js';
-import { PracticeStackNavigator } from './PracticeStackNavigator.js';
-import { ExamStackNavigator } from './ExamStackNavigator.js';
-import { LeaderboardStackNavigator } from './LeaderboardStackNavigator.js';
-import { ProgressStackNavigator } from './ProgressStackNavigator.js';
-import { ProfileStackNavigator } from './ProfileStackNavigator.js';
-import type { MainTabParamList } from './types.js';
+import { useAppTheme } from '../theme/ThemeContext';
+import { useAuth } from '../auth/AuthContext';
+import { getUnreadCount } from '../api/notifications';
+import { PracticeStackNavigator } from './PracticeStackNavigator';
+import { ExamStackNavigator } from './ExamStackNavigator';
+import { LeaderboardStackNavigator } from './LeaderboardStackNavigator';
+import { ProgressStackNavigator } from './ProgressStackNavigator';
+import { ProfileStackNavigator } from './ProfileStackNavigator';
+import type { MainTabParamList } from './types';
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 

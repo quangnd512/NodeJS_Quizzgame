@@ -9,10 +9,10 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppTheme } from '../../theme/ThemeContext.js';
-import { useAuth } from '../../auth/AuthContext.js';
-import { getProgressSummary, type ProgressSummary } from '../../api/progress.js';
-import type { ProgressStackScreenProps } from '../../navigation/types.js';
+import { useAppTheme } from '../../theme/ThemeContext';
+import { useAuth } from '../../auth/AuthContext';
+import { getProgressSummary, type ProgressSummary } from '../../api/progress';
+import type { ProgressStackScreenProps } from '../../navigation/types';
 
 type Props = ProgressStackScreenProps<'ProgressHome'>;
 

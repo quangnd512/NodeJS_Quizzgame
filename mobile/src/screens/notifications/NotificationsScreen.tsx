@@ -9,14 +9,14 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppTheme } from '../../theme/ThemeContext.js';
-import { useAuth } from '../../auth/AuthContext.js';
+import { useAppTheme } from '../../theme/ThemeContext';
+import { useAuth } from '../../auth/AuthContext';
 import {
   listNotifications,
   markAllAsRead,
   type NotificationItem,
-} from '../../api/notifications.js';
-import type { ProfileStackScreenProps } from '../../navigation/types.js';
+} from '../../api/notifications';
+import type { ProfileStackScreenProps } from '../../navigation/types';
 
 type Props = ProfileStackScreenProps<'Notifications'>;
 

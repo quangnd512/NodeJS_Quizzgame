@@ -1,5 +1,5 @@
 // API module cho Progress (Tien do hoc tap) — mobile.
-import { request } from './client.js';
+import { request } from './client';
 
 // ---------------------------------------------------------------------------
 // Types (khop voi backend/src/services/progress/progress.types.ts)

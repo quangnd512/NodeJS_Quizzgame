@@ -1343,3 +1343,49 @@ cảnh báo rõ, để nguyên cho S5 test thủ công theo checklist đã bổ 
 - `docs/TEST_CASES.md` — thêm mục "Mobile Foundation" (18 kịch bản test thủ công, khớp 17 dòng
   DoD của S1)
 - `docs/CODE_REVIEW_LOG.md` — file này
+
+---
+
+## [2026-09-04] Mobile Stage 1 — Màn hình học tập mobile
+**Branch**: feature/mobile-stage1
+**Reviewer**: S3-SoatLoi
+
+### Kết quả 9 tiêu chí review
+
+| # | Tiêu chí | Kết quả |
+|---|----------|---------|
+| 1 | Atomic transaction | ✅ Không áp dụng (mobile client, không thao tác DB trực tiếp) |
+| 2 | Race condition | ✅ OK — `selectedOpt !== null` guard (Battle), `submitting` state guard (Exam/Practice) |
+| 3 | Error handling | ✅ Mọi async có try/catch, `isMounted.current` check trước setState |
+| 4 | Input validation | ✅ Validate subject+stake trước emit, roomCode trim+maxLength |
+| 5 | N+1 / Index | ✅ Không áp dụng (mobile client) |
+| 6 | TypeScript `any` | ✅ 0 `any` trong toàn bộ source |
+| 7 | Edge cases | ✅ opponent disconnect banner, timer cleanup, session null guard |
+| 8 | API contract | ✅ Khớp endpoints đã có từ backend (mobile-foundation.yaml) |
+| 9 | Kiến trúc | ✅ Max 335 dòng/file, tất cả < 500 |
+
+### Lỗi tìm thấy và đã sửa
+
+**[BUG] Duplicate socket listeners trong BattleLobbyScreen**
+- Kịch bản: `battle:error` reset mode → 'select' mà không disconnect socket
+  → user nhấn join lại → `setupSocket()` trả về socket cũ (còn connected)
+  → `socket.on(...)` được gọi lần 2 → duplicate listeners
+  → khi match-found: `navigation.replace()` gọi 2 lần gây lỗi React Navigation
+- Fix: thêm `socket.off(event)` trước mỗi `socket.on(event)` trong `setupSocket()`
+- File: `mobile/src/screens/battle/BattleLobbyScreen.tsx`
+
+### Chú thích tiếng Việt đã thêm (JSDoc)
+
+- `battleSocket.ts`: `getBattleSocket`, `disconnectBattleSocket`
+- `BattleLobbyScreen.tsx`: `setupSocket`, `handleJoinQueue`, `handleCancelQueue`, `handleCreateRoom`, `handleJoinRoom`
+- `BattleSessionScreen.tsx`: `startTimer`, `handleSelect`
+- `ExamSessionScreen.tsx`: `formatAnswer`, `storeExamSession`, `getExamSession`, `clearExamSession`
+
+### npm audit
+- 4 high vulnerabilities từ `image-size` → `@expo/config-plugins` (Expo build tooling, không phải runtime production)
+- Pre-existing với Expo 57 framework, không do code mới gây ra — chấp nhận rủi ro
+
+### Kết quả kiểm tra tự động
+- Test: 66/66 PASS
+- Lint: 0 errors, 0 warnings
+- Typecheck: sạch

@@ -1,6 +1,6 @@
 // API module cho On cau sai (Wrong Answer Review) — mobile.
 // Luu y: backend yeu cau Premium de truy cap endpoint nay.
-import { request } from './client.js';
+import { request } from './client';
 
 // ---------------------------------------------------------------------------
 // Types (khop voi backend/src/services/wrongAnswer/wrongAnswer.types.ts)
@@ -65,6 +65,6 @@ export async function retryWrongAnswer(
 ): Promise<RetryResult> {
   return request<RetryResult>(`/api/wrong-answers/${id}/retry`, token, {
     method: 'POST',
-    body: JSON.stringify({ selectedAnswer }),
+    body: JSON.stringify({ answer: selectedAnswer }),
   });
 }

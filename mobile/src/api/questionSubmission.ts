@@ -1,5 +1,5 @@
 // API module cho Dong gop cau hoi (Student Question Submissions) — mobile.
-import { request } from './client.js';
+import { request } from './client';
 
 // ---------------------------------------------------------------------------
 // Types (khop voi backend/src/services/submission/submission.types.ts)

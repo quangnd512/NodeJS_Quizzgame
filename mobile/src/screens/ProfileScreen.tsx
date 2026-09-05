@@ -9,7 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../auth/AuthContext';
 import { useAppTheme, type ThemePreference } from '../theme/ThemeContext';
 import { PrimaryButton } from '../components/PrimaryButton';
-import type { ProfileStackScreenProps } from '../navigation/types.js';
+import type { ProfileStackScreenProps } from '../navigation/types';
 
 const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
   { value: 'light', label: 'Sáng' },

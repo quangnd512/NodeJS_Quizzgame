@@ -11,13 +11,13 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppTheme } from '../../theme/ThemeContext.js';
-import { useAuth } from '../../auth/AuthContext.js';
-import { getBattleConfig, type BattleConfigResponse } from '../../api/battle.js';
-import { getBattleSocket, disconnectBattleSocket } from '../../battle/battleSocket.js';
-import { SUBJECT_CATALOG } from '../../constants/subjects.js';
-import type { ProfileStackScreenProps } from '../../navigation/types.js';
-import type { BattleMatchFoundEvent, BattleQueueStatusEvent, BattleRoomCreatedEvent, BattleErrorEvent } from '../../battle/battleSocket.js';
+import { useAppTheme } from '../../theme/ThemeContext';
+import { useAuth } from '../../auth/AuthContext';
+import { getBattleConfig, type BattleConfigResponse } from '../../api/battle';
+import { getBattleSocket, disconnectBattleSocket } from '../../battle/battleSocket';
+import { SUBJECT_CATALOG } from '../../constants/subjects';
+import type { ProfileStackScreenProps } from '../../navigation/types';
+import type { BattleMatchFoundEvent, BattleQueueStatusEvent, BattleRoomCreatedEvent, BattleErrorEvent } from '../../battle/battleSocket';
 import type { Socket } from 'socket.io-client';
 
 type Props = ProfileStackScreenProps<'BattleLobby'>;
@@ -73,10 +73,21 @@ export function BattleLobbyScreen({ navigation }: Props) {
     };
   }, []);
 
+  /**
+   * Khởi tạo (hoặc tái sử dụng) socket battle và đăng ký các event listeners.
+   * Gọi `socket.off` trước `socket.on` để tránh duplicate listeners khi người dùng
+   * gặp lỗi và thử lại lần nữa mà không unmount màn hình (ví dụ: battle:error → select → join lại).
+   */
   const setupSocket = useCallback(() => {
     if (!sessionToken) return null;
     const socket = getBattleSocket(sessionToken);
     socketRef.current = socket;
+
+    // Xoá listeners cũ trước khi đăng ký mới — tránh duplicate khi gọi lại
+    socket.off('battle:match-found');
+    socket.off('battle:queue-status');
+    socket.off('battle:room-created');
+    socket.off('battle:error');
 
     socket.on('battle:match-found', (data: BattleMatchFoundEvent) => {
       if (!isMounted.current) return;
@@ -107,6 +118,7 @@ export function BattleLobbyScreen({ navigation }: Props) {
     return socket;
   }, [sessionToken, navigation]);
 
+  /** Vào hàng đợi tìm đối thủ ngẫu nhiên theo môn + mức cược đã chọn. */
   const handleJoinQueue = () => {
     if (!subject || !stake) {
       Alert.alert('Thiếu thông tin', 'Vui lòng chọn môn học và mức cược.');
@@ -118,6 +130,7 @@ export function BattleLobbyScreen({ navigation }: Props) {
     socket.emit('battle:join-queue', { subject, stake });
   };
 
+  /** Huỷ hàng đợi và ngắt kết nối socket. */
   const handleCancelQueue = () => {
     socketRef.current?.emit('battle:cancel-queue');
     disconnectBattleSocket();
@@ -125,6 +138,7 @@ export function BattleLobbyScreen({ navigation }: Props) {
     setQueueStatus(null);
   };
 
+  /** Tạo phòng riêng — server trả về roomCode qua event battle:room-created. */
   const handleCreateRoom = () => {
     if (!subject || !stake) {
       Alert.alert('Thiếu thông tin', 'Vui lòng chọn môn học và mức cược.');
@@ -136,6 +150,7 @@ export function BattleLobbyScreen({ navigation }: Props) {
     socket.emit('battle:create-room', { subject, stake });
   };
 
+  /** Vào phòng có sẵn bằng mã phòng người khác chia sẻ. */
   const handleJoinRoom = () => {
     if (!roomCode.trim()) {
       Alert.alert('Thiếu thông tin', 'Nhập mã phòng.');

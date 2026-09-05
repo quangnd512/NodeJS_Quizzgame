@@ -2,7 +2,7 @@
 // Ket noi den namespace "/battle" voi session token.
 // Xem backend/src/services/battle/battle.socket.ts de biet cac event.
 import { io, type Socket } from 'socket.io-client';
-import { API_BASE_URL } from '../config/env.js';
+import { API_BASE_URL } from '../config/env';
 
 // ---------------------------------------------------------------------------
 // Types cho cac socket event
@@ -67,7 +67,11 @@ export interface BattleRoomCreatedEvent {
 
 let _socket: Socket | null = null;
 
-/** Tao + tra ve socket instance ket noi den /battle namespace. */
+/**
+ * Tạo hoặc trả về socket instance đang kết nối đến namespace /battle.
+ * Nếu socket cũ vẫn còn connected → trả lại socket đó (tái sử dụng).
+ * Nếu không → tạo mới với auth token và cấu hình reconnect.
+ */
 export function getBattleSocket(sessionToken: string): Socket {
   if (_socket && _socket.connected) return _socket;
 
@@ -87,7 +91,10 @@ export function getBattleSocket(sessionToken: string): Socket {
   return _socket;
 }
 
-/** Ngat ket noi socket va xoa instance. */
+/**
+ * Ngắt kết nối socket và xoá instance.
+ * Phải gọi khi unmount màn hình hoặc huỷ trận — tránh socket zombie.
+ */
 export function disconnectBattleSocket(): void {
   if (_socket) {
     _socket.disconnect();

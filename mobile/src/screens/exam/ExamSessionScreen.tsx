@@ -11,10 +11,10 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppTheme } from '../../theme/ThemeContext.js';
-import { useAuth } from '../../auth/AuthContext.js';
-import { submitExam, type StartExamResponse, type ExamQuestionPublicDto } from '../../api/exam.js';
-import type { ExamStackScreenProps } from '../../navigation/types.js';
+import { useAppTheme } from '../../theme/ThemeContext';
+import { useAuth } from '../../auth/AuthContext';
+import { submitExam, type StartExamResponse, type ExamQuestionPublicDto } from '../../api/exam';
+import type { ExamStackScreenProps } from '../../navigation/types';
 
 type Props = ExamStackScreenProps<'ExamSession'>;
 
@@ -24,12 +24,15 @@ type Props = ExamStackScreenProps<'ExamSession'>;
 
 let _examSession: StartExamResponse | null = null;
 
+/** Lưu dữ liệu phiên thi vào module-level store để ExamSessionScreen đọc. */
 export function storeExamSession(s: StartExamResponse): void {
   _examSession = s;
 }
+/** Lấy dữ liệu phiên thi hiện tại (trả về null nếu chưa có hoặc đã clear). */
 export function getExamSession(): StartExamResponse | null {
   return _examSession;
 }
+/** Xoá phiên thi sau khi nộp bài thành công hoặc huỷ. */
 export function clearExamSession(): void {
   _examSession = null;
 }
@@ -40,7 +43,13 @@ export function clearExamSession(): void {
 
 type ExamAnswer = number | boolean[] | string | null;
 
-/** Dinh dang lai dap an de gui len backend. */
+/**
+ * Định dạng lại đáp án thô (từ state UI) thành dạng backend chấp nhận.
+ * - MCQ_4: số nguyên index (0-3)
+ * - TRUE_FALSE_4: mảng boolean 4 phần tử
+ * - FILL_BLANK: chuỗi văn bản
+ * - null → {} (sentinel "bỏ trống" để backend xử lý câu chưa làm)
+ */
 function formatAnswer(
   q: ExamQuestionPublicDto,
   raw: ExamAnswer,

@@ -9,10 +9,10 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppTheme } from '../../theme/ThemeContext.js';
-import { useAuth } from '../../auth/AuthContext.js';
-import { getExamResult, type ExamResultResponse } from '../../api/exam.js';
-import type { ExamStackScreenProps } from '../../navigation/types.js';
+import { useAppTheme } from '../../theme/ThemeContext';
+import { useAuth } from '../../auth/AuthContext';
+import { getExamResult, type ExamResultResponse } from '../../api/exam';
+import type { ExamStackScreenProps } from '../../navigation/types';
 
 type Props = ExamStackScreenProps<'ExamResult'>;
 

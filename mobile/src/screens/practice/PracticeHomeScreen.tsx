@@ -11,12 +11,12 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppTheme } from '../../theme/ThemeContext.js';
-import { useAuth } from '../../auth/AuthContext.js';
-import { startPracticeSession } from '../../api/practice.js';
-import { SUBJECT_CATALOG } from '../../constants/subjects.js';
-import type { PracticeStackScreenProps } from '../../navigation/types.js';
-import type { StartSessionResponse } from '../../api/practice.js';
+import { useAppTheme } from '../../theme/ThemeContext';
+import { useAuth } from '../../auth/AuthContext';
+import { startPracticeSession } from '../../api/practice';
+import { SUBJECT_CATALOG } from '../../constants/subjects';
+import type { PracticeStackScreenProps } from '../../navigation/types';
+import type { StartSessionResponse } from '../../api/practice';
 
 type Props = PracticeStackScreenProps<'PracticeHome'>;
 

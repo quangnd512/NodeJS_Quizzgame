@@ -14,11 +14,11 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppTheme } from '../../theme/ThemeContext.js';
-import { useAuth } from '../../auth/AuthContext.js';
-import { createSubmission, type ExamQuestionType } from '../../api/questionSubmission.js';
-import { SUBJECT_CATALOG } from '../../constants/subjects.js';
-import type { ProfileStackScreenProps } from '../../navigation/types.js';
+import { useAppTheme } from '../../theme/ThemeContext';
+import { useAuth } from '../../auth/AuthContext';
+import { createSubmission, type ExamQuestionType } from '../../api/questionSubmission';
+import { SUBJECT_CATALOG } from '../../constants/subjects';
+import type { ProfileStackScreenProps } from '../../navigation/types';
 
 type Props = ProfileStackScreenProps<'QuestionSubmissionForm'>;
 

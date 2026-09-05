@@ -10,11 +10,11 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppTheme } from '../../theme/ThemeContext.js';
-import { useAuth } from '../../auth/AuthContext.js';
-import { listExamPapers, startExam, type ExamPaperPublicDto } from '../../api/exam.js';
-import type { ExamStackScreenProps } from '../../navigation/types.js';
-import { storeExamSession } from './ExamSessionScreen.js';
+import { useAppTheme } from '../../theme/ThemeContext';
+import { useAuth } from '../../auth/AuthContext';
+import { listExamPapers, startExam, type ExamPaperPublicDto } from '../../api/exam';
+import type { ExamStackScreenProps } from '../../navigation/types';
+import { storeExamSession } from './ExamSessionScreen';
 
 type Props = ExamStackScreenProps<'ExamList'>;
 

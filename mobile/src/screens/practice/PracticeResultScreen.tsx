@@ -2,8 +2,8 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppTheme } from '../../theme/ThemeContext.js';
-import type { PracticeStackScreenProps } from '../../navigation/types.js';
+import { useAppTheme } from '../../theme/ThemeContext';
+import type { PracticeStackScreenProps } from '../../navigation/types';
 
 type Props = PracticeStackScreenProps<'PracticeResult'>;
 

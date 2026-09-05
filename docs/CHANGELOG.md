@@ -5,6 +5,51 @@
 
 ---
 
+## [Unreleased] — Mobile Stage 1 — Màn hình học tập mobile
+
+**Branch:** `feature/mobile-stage1`
+**Ngày:** 2026-09-04
+
+### Added
+
+- **12 màn hình ứng dụng di động** (React Native + Expo 57) — hoàn thành 12 TASK từ kế hoạch S1
+  - **Luyện tập (Practice)**: PracticeHomeScreen (chọn môn), PracticeSessionScreen (15 câu, timer 17 phút), PracticeResultScreen (điểm + chi tiết)
+  - **Thi thử (Exam)**: ExamListScreen (danh sách đề), ExamSessionScreen (countdown timer, auto-submit hết giờ), ExamResultScreen (kết quả chi tiết)
+  - **Bảng xếp hạng (Leaderboard)**: filter môn, tab Tuần/Tháng/Tất cả, pagination, avatar + rank + score
+  - **Tiến độ (Progress)**: streak, điểm tuần/tháng, biểu đồ cột theo môn
+  - **Ôn câu sai (Wrong Answers)**: danh sách câu sai, retry +5 điểm/lần (Premium required)
+  - **Thông báo (Notifications)**: danh sách, mark all read, navigate tới màn hình tương ứng khi click
+  - **Gửi câu hỏi (Question Submission)**: form tạo submission (loại câu, môn), lịch sử PENDING/APPROVED/REJECTED
+  - **Thi đấu PvP (Battle Mode)**: 
+    - BattleLobbyScreen (chọn môn + stake, join queue hoặc create room)
+    - BattleSessionScreen (realtime Socket.io, lần lượt nhận câu, timer 3 phút, disconnect 30s pause/resume)
+    - BattleResultScreen (WIN/LOSE/DRAW, điểm, lịch sử)
+  - **ProfileScreen cập nhật**: nav links tới 5 màn hình mới
+- **26 test case API clients** — mobileStage1.api.test.ts (practice, exam, leaderboard, progress, wrong-answers, notifications, submissions, battle)
+- **35 test case screen rendering** — mobileStage1.screens.test.tsx (mock API, user interaction, state updates, loading states)
+- **22 test case kiểm thử thủ công** — TEST_CASES.md section Mobile Stage 1 (M1-M22: happy path, edge cases, error cases)
+- **Socket.io client** — `battleSocket.ts` (wrapper, event types, listener setup/cleanup)
+- `mobile/package.json` — thêm `socket.io-client@4.x`, `test-renderer`
+
+### Fixed (phát hiện trong review S3)
+
+- **BattleLobbyScreen**: duplicate socket listeners — gọi `socket.off()` trước `socket.on()` trong `setupSocket()` để tránh listener cũ tồn tại khi setup chạy lại
+- **ExamSessionScreen**: timer stale closure — dùng `useRef` pattern để `handleSubmit` auto khi hết giờ luôn dùng state timer mới nhất
+- **JSDoc**: thêm chú thích tiếng Việt cho BattleLobbyScreen, BattleSessionScreen, ExamSessionScreen, battleSocket.ts
+
+### Changed
+
+- `mobile/src/api/exam.ts` — sửa `Array<T>` → `T[]` (consistent TypeScript)
+
+### Ghi chú
+
+- **Socket.io realtime** — tính năng đầu tiên của dự án sử dụng websocket, cần kiểm thử kỹ trên simulator/device thật (logic disconnect/reconnect, event ordering)
+- **Timer logic** — ExamSessionScreen sử dụng `useRef` pattern để tránh stale closure, đảm bảo auto-submit chính xác
+- **Module-level state** — _examSession, _currentSession dùng để truyền data giữa màn hình (Stage 1), nên nâng cấp sang Redux/Zustand ở Stage 2
+- **S5 phát hiện 4 kịch bản muộn** — ẩn danh tính bot, tự động resume battle → đã cập nhật TEST_CASES.md đầy đủ
+
+---
+
 ## [Unreleased] — Tách App.tsx Vòng 2→7 Gộp (Nợ Kỹ Thuật)
 
 **Branch:** `refactor/split-app-tsx-round-2to5`

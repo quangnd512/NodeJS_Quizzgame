@@ -9,10 +9,10 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppTheme } from '../../theme/ThemeContext.js';
-import { useAuth } from '../../auth/AuthContext.js';
-import { listMySubmissions, type SubmissionDto } from '../../api/questionSubmission.js';
-import type { ProfileStackScreenProps } from '../../navigation/types.js';
+import { useAppTheme } from '../../theme/ThemeContext';
+import { useAuth } from '../../auth/AuthContext';
+import { listMySubmissions, type SubmissionDto } from '../../api/questionSubmission';
+import type { ProfileStackScreenProps } from '../../navigation/types';
 
 type Props = ProfileStackScreenProps<'QuestionSubmissionList'>;
 
@@ -66,7 +66,7 @@ export function QuestionSubmissionListScreen({ navigation }: Props) {
         <View style={styles.center}>
           <ActivityIndicator color={colors.primary} size="large" />
         </View>
-      ) : items.length === 0 ? (
+      ) : (items ?? []).length === 0 ? (
         <View style={styles.center}>
           <Text style={styles.emptyEmoji}>💡</Text>
           <Text style={[styles.emptyText, { color: colors.textMuted }]}>

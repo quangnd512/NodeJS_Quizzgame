@@ -1,5 +1,5 @@
 // API module cho Notifications (Thong bao) — mobile.
-import { request } from './client.js';
+import { request } from './client';
 
 // ---------------------------------------------------------------------------
 // Types (khop voi backend/src/services/notification/notification.types.ts)

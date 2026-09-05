@@ -1,10 +1,10 @@
 // Stack navigator cho tab Tien do (Progress) — gom ca On cau sai (Wrong Answer).
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import type { ProgressStackParamList } from './types.js';
-import { ProgressScreen } from '../screens/progress/ProgressScreen.js';
-import { WrongAnswerListScreen } from '../screens/wrongAnswer/WrongAnswerListScreen.js';
-import { WrongAnswerSessionScreen } from '../screens/wrongAnswer/WrongAnswerSessionScreen.js';
+import type { ProgressStackParamList } from './types';
+import { ProgressScreen } from '../screens/progress/ProgressScreen';
+import { WrongAnswerListScreen } from '../screens/wrongAnswer/WrongAnswerListScreen';
+import { WrongAnswerSessionScreen } from '../screens/wrongAnswer/WrongAnswerSessionScreen';
 
 const Stack = createNativeStackNavigator<ProgressStackParamList>();
 

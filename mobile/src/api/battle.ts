@@ -1,7 +1,7 @@
 // API module cho Thi dau doi khang (PvP Battle) — mobile.
 // REST endpoints: config, active match, history.
 // Realtime qua Socket.io: xem src/battle/battleSocket.ts.
-import { request } from './client.js';
+import { request } from './client';
 
 // ---------------------------------------------------------------------------
 // Types (khop voi backend/src/services/battle/battle.types.ts)

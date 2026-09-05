@@ -1,6 +1,6 @@
 // API module cho On tap (Practice) — mobile.
 // Goi cac endpoint POST /api/practice/* va GET /api/practice/*.
-import { request } from './client.js';
+import { request } from './client';
 
 // ---------------------------------------------------------------------------
 // Types (khop voi backend/src/services/practice/practice.types.ts)

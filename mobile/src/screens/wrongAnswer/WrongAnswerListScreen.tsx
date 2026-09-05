@@ -9,10 +9,10 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppTheme } from '../../theme/ThemeContext.js';
-import { useAuth } from '../../auth/AuthContext.js';
-import { getWrongAnswers, type WrongAnswerListItem } from '../../api/wrongAnswer.js';
-import type { ProgressStackScreenProps } from '../../navigation/types.js';
+import { useAppTheme } from '../../theme/ThemeContext';
+import { useAuth } from '../../auth/AuthContext';
+import { getWrongAnswers, type WrongAnswerListItem } from '../../api/wrongAnswer';
+import type { ProgressStackScreenProps } from '../../navigation/types';
 
 type Props = ProgressStackScreenProps<'WrongAnswerList'>;
 
