@@ -70,7 +70,7 @@ export function BattleResultScreen({ navigation, route }: Props) {
 
       <TouchableOpacity
         style={[styles.btnOutline, { borderColor: colors.border }]}
-        onPress={() => navigation.getParent()?.navigate('Profile')}
+        onPress={() => navigation.getParent()?.navigate('ProfileHome')}
       >
         <Text style={[styles.btnOutlineText, { color: colors.text }]}>← Về hồ sơ</Text>
       </TouchableOpacity>

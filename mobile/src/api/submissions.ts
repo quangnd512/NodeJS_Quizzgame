@@ -5,32 +5,10 @@
 import { request } from './client';
 import type { ExamResult } from './exam';
 
-export interface ExamHistoryItem {
-  id: string;
-  examPaperId: string;
-  title: string;
-  subject: string;
-  score: number | null;
-  pointsAwarded: number;
-  completedAt: string;
-}
-
-export interface PaginatedExamHistory {
-  items: ExamHistoryItem[];
-  total: number;
-  limit: number;
-  offset: number;
-}
-
-/** GET /api/progress/exam-history?limit=&offset= */
-export async function getExamHistory(
-  token: string,
-  limit = 10,
-  offset = 0,
-): Promise<PaginatedExamHistory> {
-  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-  return request<PaginatedExamHistory>(`/api/progress/exam-history?${params.toString()}`, token);
-}
+// Re-export tu progress.ts de tranh dinh nghia trung lap - ExamHistoryItem + PaginatedExamHistory
+// + getExamHistory dung chung endpoint /api/progress/exam-history.
+export type { ExamHistoryItem, PaginatedExamHistory } from './progress';
+export { getExamHistory } from './progress';
 
 /** GET /api/exam/:id/result - Premium: xem chi tiet dap an; Free: backend tra loi 403 PREMIUM_REQUIRED */
 export async function getExamResultDetail(

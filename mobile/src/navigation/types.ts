@@ -5,7 +5,7 @@ import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { NavigatorScreenParams } from '@react-navigation/native';
 import type { StartSessionResult, CompleteResult } from '../api/practice';
 import type { StartExamResult } from '../api/exam';
-import type { BattleMatchFoundPayload, BattleMatchEndedPayload } from '../battle/battleSocket';
+import type { BattleMatchEndedPayload } from '../battle/battleSocket';
 
 /** Stack luc CHUA dang nhap - man Dang nhap hoc sinh + loi vao Dang nhap Admin. */
 export type AuthStackParamList = {
@@ -53,7 +53,7 @@ export type ExamStackScreenProps<T extends keyof ExamStackParamList> =
 /** Stack thi dau doi khang (truy cap tu Profile). */
 export type BattleStackParamList = {
   BattleHome: undefined;
-  BattleMatch: { matchInfo: BattleMatchFoundPayload };
+  // BattleMatch khong dung: BattleScreen xu ly toan bo phase (setup/queue/play) trong 1 man hinh
   BattleResult: { ended: BattleMatchEndedPayload; opponentName: string };
 };
 

@@ -915,3 +915,39 @@
 | 16 | JWT hết hạn/không hợp lệ trong lúc đang dùng app | Bất kỳ request nào dùng sessionToken nhận 401 | `sessionUnauthorizedListener` tự kích hoạt → xoá SecureStore, chuyển thẳng về `signedOut` (màn Đăng nhập), không crash app | 401 |
 | 17 | Sai `X-Admin-Secret` | Nhập sai secret ở `AdminLoginScreen` | `lastError` hiện "Sai X-Admin-Secret. Vui lòng kiểm tra lại.", KHÔNG vào được khung Admin | 401 `ADMIN_UNAUTHORIZED` |
 | 18 | Admin secret cũ đã lưu không còn hợp lệ (bị đổi ở backend) lúc mở lại app | Boot đọc secret cũ từ SecureStore, `verifyAdminSecret` thất bại | Tự động `forceSignOut` về `signedOut`, không crash, không kẹt ở màn hình chờ | 401 |
+
+## Test Cases: Mobile Complete (Stage 2→6) — 7 API clients + 13 screens + navigation
+
+### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 19 | Bắt đầu phiên luyện tập môn Toán | `startPracticeSession(token, 'TOAN')` | `sessionId`, `subject='TOAN'`, mảng `questions` |
+| 20 | Nộp đáp án đúng trong phiên luyện tập | `answerQuestion(token, sessionId, qId, 2)` | `isCorrect: true`, `correctAnswer: 2` |
+| 21 | Hoàn thành phiên luyện tập | `completeSession(token, sessionId)` | `score`, `pointsEarned` |
+| 22 | Bắt đầu thi thử (POST exam/start) | `startExam(token, 'LY')` | `sessionId`, `durationMinutes`, `questions` |
+| 23 | Nộp bài thi với đủ đáp án | `submitExam(token, sessionId, answers)` | `sessionId`, `score`, `pointsAwarded` |
+| 24 | Xem bảng xếp hạng trang đầu | `getLeaderboard(token, 1)` | `data[]`, `total`, `page: 1` |
+| 25 | Lấy thông tin tiến độ học | `getProgressSummary(token)` | `overview`, `streakFreeze`, `isPremium` |
+| 26 | Lấy số thông báo chưa đọc | `getUnreadCount(token)` | `{ count: N }` |
+| 27 | Tạo socket thi đấu với token | `createBattleSocket('my-jwt')` | Socket io với `auth.token='my-jwt'`, `autoConnect: false` |
+| 28 | Lấy cấu hình thi đấu | `getBattleConfig(token)` | `stakes[]`, `currentPoints` |
+
+### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| 29 | Thống kê luyện tập khi chưa có phiên nào | `getPracticeStats(token)` → server trả `[]` | Mảng rỗng, không crash |
+| 30 | Lịch sử thi khi chưa thi lần nào | `getExamHistory(token)` → server trả `{ items: [], total: 0 }` | `items = []`, `total = 0` |
+| 31 | Kết thúc trận battle sau khi match-found (ref pattern) | socket nhận `battle:match-found` rồi `battle:match-ended` | `BattleResultScreen` nhận `opponentName` đúng (tên từ match-found, không phải 'Đối thủ') |
+| 32 | Nộp đáp án sai trong luyện tập | selectedOption sai | `isCorrect: false`, không nem lỗi |
+| 33 | WrongAnswersScreen với tài khoản Free | `profile.isPremium = false` | Hiện thông báo nâng cấp, không gọi API |
+| 34 | battleSocket với `autoConnect: false` | Gọi `createBattleSocket(token)` | Socket KHÔNG tự kết nối; phải gọi `.connect()` thủ công |
+
+### Error Cases
+| # | Mô tả | Input | Expected HTTP/Kết quả | Expected Error Code |
+|---|-------|-------|------------------------|----------------------|
+| 35 | API trả 401 (JWT hết hạn) | request() nhận status 401 | `sessionUnauthorizedListener` được gọi, ném `ApiError(status=401)` | 401 |
+| 36 | Mất mạng khi gọi API | fetch() ném NetworkError | `ApiError('NETWORK_ERROR', ..., status=0)`, không crash | NETWORK_ERROR |
+| 37 | Server trả HTML thay vì JSON (503 proxy) | body = `<html>Service Unavailable</html>` | `ApiError('UNKNOWN_ERROR', ..., status=503)`, không crash JSON.parse | UNKNOWN_ERROR |
+| 38 | WrongAnswersScreen Premium gate từ server (403) | `getWrongAnswers` trả 403 | `isPremiumBlocked = true`, hiện thông báo nâng cấp | 403 PREMIUM_REQUIRED |
+| 39 | Nộp bài thi khi sessionToken null | `sessionToken = null` trong `doSubmit` | Hàm return sớm, không gọi API | — |
+| 40 | `navigate('ProfileHome')` từ BattleResultScreen | Bấm "Về hồ sơ" trong BattleResultScreen | Navigate đến ProfileHome trong ProfileStack (không phải tab Profile) | — |

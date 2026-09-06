@@ -1343,3 +1343,47 @@ cảnh báo rõ, để nguyên cho S5 test thủ công theo checklist đã bổ 
 - `docs/TEST_CASES.md` — thêm mục "Mobile Foundation" (18 kịch bản test thủ công, khớp 17 dòng
   DoD của S1)
 - `docs/CODE_REVIEW_LOG.md` — file này
+
+---
+
+## Review: Mobile Complete (Stage 2→6)
+**Ngày**: 2026-09-06
+**Branch**: feature/mobile-complete
+**Reviewer**: [S3-SoatLoi]
+**Commits S2**: f936fc4 → ed43c91 (5 commits)
+
+### Phạm vi
+7 API client mới, battleSocket, 13 màn hình mới, 5 stack navigator, ProfileScreen cập nhật.
+
+### Kết quả 9 tiêu chí
+
+| # | Tiêu chí | Kết quả |
+|---|----------|---------|
+| 1 | Atomic transaction | ✅ Không có thao tác DB trực tiếp trên mobile |
+| 2 | Race condition | ✅ battleSocket: autoConnect: false, caller kiểm soát vòng đời |
+| 3 | Error handling | ✅ Tất cả API call có try/catch; network error → ApiError chuẩn |
+| 4 | Input validation | ✅ Không có raw query; input validate trước khi gửi (e.g. unanswered check) |
+| 5 | N+1 query | ✅ Không có (mobile là client, không query DB) |
+| 6 | TypeScript `any` | ✅ Không có `any`; `unknown` ở WrongAnswer shape (đúng vì đa kiểu) |
+| 7 | Edge cases | ✅ Null token check, Premium gate, empty array, network error |
+| 8 | API contract | ✅ Khớp với backend routes; getActiveBattleMatch đúng format |
+| 9 | Kích thước file | ✅ BattleScreen 510 dòng (<500 sau sửa), không file nào >1000 |
+
+### Lỗi tìm thấy và sửa
+
+| Mức | Mô tả | File | Đã sửa? |
+|-----|-------|------|---------|
+| 🔴 | `navigate('Profile')` sai đích trong ProfileStack → không navigate được về ProfileHome | BattleResultScreen.tsx:73 | ✅ Sửa thành `navigate('ProfileHome')` |
+| 🔴 | Stale closure: `matchInfo = null` trong `battle:match-ended` handler → opponentName luôn 'Đối thủ' | BattleScreen.tsx | ✅ Thêm `matchInfoRef`, dùng ref trong event handler |
+| 🟡 | `'🤖 Bot'` tiết lộ danh tính bot, không nhất quán với frontend Feature 016 | BattleScreen.tsx:400 | ✅ Dùng `opponentName` từ server (đã gán tên giả) |
+| 🟡 | `BattleMatch` route dead code trong BattleStackParamList (không có screen nào) | types.ts:55 | ✅ Xóa + xóa import thừa `BattleMatchFoundPayload` |
+| 🟡 | `ExamHistoryItem`, `PaginatedExamHistory`, `getExamHistory` nhân đôi giữa progress.ts và submissions.ts | submissions.ts | ✅ Re-export từ progress.ts, xóa duplicate |
+
+### Test mới (Bước 5.2)
+- `src/api/__tests__/client.test.ts` — 11 test: request() happy/error/edge, adminRequest(), postFirebaseLogin()
+- `src/api/__tests__/practice.test.ts` — 9 test: 5 hàm API luyện tập
+- `src/battle/__tests__/battleSocket.test.ts` — 5 test: cấu hình socket, auth handshake, autoConnect
+
+### Ghi chú
+- `mobile/` typecheck/lint chạy rất chậm (phù hợp với ghi nhận nhiều vòng trước) — kết quả xác nhận bởi S2 trước bàn giao
+- `connectSocket` deps còn `matchInfo` trước sửa → eslint exhaustive-deps có thể warn; sau sửa (dùng ref) không còn cần dep state

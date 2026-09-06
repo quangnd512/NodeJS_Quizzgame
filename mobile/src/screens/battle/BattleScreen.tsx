@@ -72,6 +72,8 @@ export function BattleScreen({ navigation }: Props) {
 
   const socketRef = useRef<BattleSocket | null>(null);
   const gracePeriodRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Ref lu matchInfo de tranh stale closure trong socket event handler cua connectSocket
+  const matchInfoRef = useRef<BattleMatchFoundPayload | null>(null);
 
   // Load config + kiem tra tran dang do
   useEffect(() => {
@@ -130,6 +132,7 @@ export function BattleScreen({ navigation }: Props) {
     });
 
     socket.on('battle:match-found', (payload) => {
+      matchInfoRef.current = payload;  // cap nhat ref truoc khi setState de event handler tiep theo dung gia tri moi
       setMatchInfo(payload);
       setMyScore(0);
       setOpponentScore(0);
@@ -161,9 +164,11 @@ export function BattleScreen({ navigation }: Props) {
     });
 
     socket.on('battle:match-ended', (payload: BattleMatchEndedPayload) => {
+      // Dung matchInfoRef (khong phai matchInfo state) de tranh stale closure:
+      // matchInfo = null luc connectSocket chay, nhung ref luon duoc cap nhat khi nhan match-found.
       navigation.replace('BattleResult', {
         ended: payload,
-        opponentName: matchInfo?.opponentName ?? 'Đối thủ',
+        opponentName: matchInfoRef.current?.opponentName ?? 'Đối thủ',
       });
       socket.disconnect();
     });
@@ -184,7 +189,7 @@ export function BattleScreen({ navigation }: Props) {
     });
 
     socket.connect();
-  }, [sessionToken, navigation, matchInfo]);
+  }, [sessionToken, navigation]); // matchInfo khong can trong deps: dung matchInfoRef thay the de tranh stale closure va tranh socket bi reconnect khi match found
 
   // Cleanup khi unmount
   useEffect(() => {
@@ -397,7 +402,7 @@ export function BattleScreen({ navigation }: Props) {
             </View>
             <View style={styles.scoreCol}>
               <Text style={[styles.scoreName, { color: colors.text }]} numberOfLines={1}>
-                {matchInfo.isBotMatch ? '🤖 Bot' : (matchInfo.opponentName || 'Đối thủ')}
+                {matchInfo.opponentName || 'Đối thủ'}
               </Text>
               <Text style={[styles.scoreVal, { color: '#dc2626' }]}>{opponentScore}</Text>
             </View>
