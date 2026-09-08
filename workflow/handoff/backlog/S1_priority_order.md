@@ -42,6 +42,23 @@ việc phải sửa lại các phần đã làm khi làm tới phần sau):
    workflow/handoff/PENDING/S1_saved_plan_frontend_optimization.md — có ghi chú mâu
    thuẫn tiềm ẩn cần hỏi lại (bước này có áp dụng cho app React Native mới từ bước 6 hay
    frontend web hiện tại, hay cả hai) trước khi lên task.
+7b. ⏭️ MỚI THÊM (2026-09-08): Chia sẻ kết quả lên mạng xã hội
+   (workflow/handoff/backlog/S1_saved_plan_share_results.md)
+   → Tính năng nhỏ, tác động viral cao. Làm ngay sau Mobile Complete, không cần chờ các
+   bước khác. Card hình đẹp chia sẻ Facebook/Zalo/TikTok sau thi/Battle.
+
+7c. ⏭️ MỚI THÊM (2026-09-08): Nhiệm vụ hàng ngày + Huy hiệu thành tích
+   (workflow/handoff/backlog/S1_saved_plan_daily_quests.md)
+   → Giữ người dùng quay lại mỗi ngày. Làm sau Mở rộng Premium vì dùng chung cơ chế
+   điểm thưởng. PHÂN BIỆT: huy hiệu này khác với danh hiệu ELO Battle ở bước 9.
+
+7d. ⏭️ GHI NHỚ — Lớp học / Teacher System
+   → Người dùng chưa làm ngay — đúng quyết định. Lý do: chưa đủ học sinh để thu hút
+   giáo viên. Điều kiện để xem xét lại: ~500-1.000 học sinh đang dùng thường xuyên HOẶC
+   có giáo viên chủ động hỏi. Khi đó xem backlog S1_saved_plan_class_system.md (chưa có,
+   tạo khi tới lượt). Phiên bản nhẹ hơn có thể là "link ôn tập theo chủ đề" không cần
+   tài khoản giáo viên — phân tích lại khi tới thời điểm.
+
 9. ⏭️ CUỐI CÙNG (thêm 2026-07-20 theo yêu cầu người dùng): Battle ĐỢT 2 — hệ ELO theo
    môn, danh hiệu (Đồng/Bạc/Vàng/Kim Cương/Huyền Thoại), mùa giải 3 tháng/4 mùa, phần
    thưởng cuối mùa, danh hiệu "Toàn Năng", tích hợp Bảng xếp hạng 2 tab, VÀ toàn bộ phân
@@ -57,3 +74,23 @@ soát lại kế hoạch "Battle" đã lưu sẵn (workflow/handoff/PENDING/S1_s
 chỗ nhắc "Free/Premium" (mức cược, số trận/ngày, xem lại lịch sử trận...) cho khớp với
 cơ chế thật vừa xây (isUserPremium, premiumExpiresAt...) trước khi chốt task — không nên
 copy nguyên xi kế hoạch cũ mà không đối chiếu.
+
+---
+
+## THAY ĐỔI QUY TRÌNH — Ghi nhận 2026-09-08 (Người dùng xác nhận)
+
+### 1. Mobile song song với Web — từ tính năng tiếp theo trở đi
+- Mọi tính năng mới: S1 lập kế hoạch CHO CẢ 3 PHẦN (backend + frontend + mobile) trong 1 lần
+- S2 build cả 3 trong cùng 1 sprint
+- S5 test cả 3 trong cùng 1 lần (không test từng phần riêng lẻ)
+- Ngoại lệ duy nhất: tính năng Admin → chỉ cần web, không cần mobile
+
+### 2. Vai trò S5 được làm rõ
+- S5 CHỈ test và viết báo cáo bug → KHÔNG sửa code
+- Khi S5 phát hiện bug: ghi vào PENDING/S3.md → S3 sửa → S5 test lại
+- Nếu S5 tự sửa code = vi phạm quy trình, S1 cần nhắc lại khi mở session tiếp theo
+
+### 3. Căn cứ thay đổi
+- Mobile Complete hiện đã cover đủ mọi tính năng web (trừ admin — đúng)
+- Test từng đợt mobile nhỏ khiến S5 liên tục gặp bug dở dang, phải sửa code = không đúng vai
+- Từ giờ: tính năng mới = build xong hoàn chỉnh cả web + mobile trước → test 1 lần
