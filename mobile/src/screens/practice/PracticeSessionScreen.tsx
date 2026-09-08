@@ -1,6 +1,6 @@
 // Man hinh Phien luyen tap — hien tung cau hoi, cho nguoi dung chon dap an,
 // goi API answer sau moi cau, sau do goi complete khi xong tat ca.
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -20,6 +20,7 @@ import type { PracticeStackScreenProps } from '../../navigation/types';
 type Props = PracticeStackScreenProps<'PracticeSession'>;
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D'];
+const PRACTICE_DURATION_SECONDS = 30 * 60; // 30 phút
 
 type QuestionState = 'unanswered' | 'answered';
 
@@ -36,9 +37,52 @@ export function PracticeSessionScreen({ navigation, route }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [correctCount, setCorrectCount] = useState(0);
+  const [timeRemaining, setTimeRemaining] = useState(PRACTICE_DURATION_SECONDS);
 
   const currentQ = session.questions[questionIndex];
   const isLastQ = questionIndex === session.questions.length - 1;
+
+  /**
+   * Tự động hoàn thành phiên luyện tập khi hết 30 phút.
+   * Dùng useCallback để tránh lỗi "accessed before declaration" khi dùng trong useEffect phía sau.
+   */
+  const handleAutoComplete = useCallback(async () => {
+    if (!sessionToken) return;
+    setFinishing(true);
+    try {
+      const complete = await completeSession(sessionToken, session.sessionId);
+      navigation.replace('PracticeResult', {
+        complete,
+        subject: session.subject,
+        totalQuestions: session.questions.length,
+        correctCount,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Không thể hoàn tất phiên.';
+      Alert.alert('Lỗi', msg);
+      setFinishing(false);
+    }
+  }, [sessionToken, session, navigation, correctCount]);
+
+  // Timer đếm ngược 30 phút — auto-complete khi về 0
+  useEffect(() => {
+    if (timeRemaining <= 0) {
+      // Auto-complete khi hết thời gian.
+      // handleAutoComplete là async — setState bên trong nó chạy sau await,
+      // không synchronous trong effect, nên disable rule này là hợp lệ.
+      if (!finishing && !submitting) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        void handleAutoComplete();
+      }
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setTimeRemaining((t) => t - 1);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [timeRemaining, finishing, submitting, handleAutoComplete]);
 
   async function handleSelectOption(optionIdx: number) {
     if (questionState === 'answered' || !sessionToken) return;
@@ -110,6 +154,12 @@ export function PracticeSessionScreen({ navigation, route }: Props) {
     return colors.text;
   }
 
+  function formatTime(seconds: number): string {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       {/* Header */}
@@ -117,9 +167,16 @@ export function PracticeSessionScreen({ navigation, route }: Props) {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Text style={[styles.backText, { color: colors.primary }]}>← Thoát</Text>
         </TouchableOpacity>
-        <Text style={[styles.progress, { color: colors.textMuted }]}>
-          Câu {questionIndex + 1}/{session.questions.length}
-        </Text>
+        <View style={styles.headerCenterContainer}>
+          <Text style={[styles.progress, { color: colors.textMuted }]}>
+            Câu {questionIndex + 1}/{session.questions.length}
+          </Text>
+        </View>
+        <View style={[styles.timerContainer, { backgroundColor: timeRemaining <= 60 ? '#dc262618' : 'transparent' }]}>
+          <Text style={[styles.timerText, { color: timeRemaining <= 60 ? '#dc2626' : colors.textMuted }]}>
+            ⏱ {formatTime(timeRemaining)}
+          </Text>
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
@@ -203,7 +260,10 @@ const styles = StyleSheet.create({
   },
   backBtn: { padding: 4 },
   backText: { fontSize: 15, fontWeight: '600' },
+  headerCenterContainer: { flex: 1, alignItems: 'center' },
   progress: { fontSize: 14, fontWeight: '600' },
+  timerContainer: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+  timerText: { fontSize: 14, fontWeight: '600' },
   content: { padding: 20, gap: 12 },
   progressBar: { height: 6, borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 3 },

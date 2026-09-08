@@ -53,6 +53,24 @@ examRouter.get(
 );
 
 // ---------------------------------------------------------------------------
+// GET /api/exam/resume — lay lai day du data phien thi dang IN_PROGRESS de resume
+// Tra ve StartExamResponse (co questions) de frontend navigate thang vao ExamTaking.
+// Khac /active: /active chi tra meta (ten, thoi gian); /resume tra ca cau hoi.
+// ---------------------------------------------------------------------------
+
+examRouter.get(
+  '/resume',
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const result = await examService.resumeSession(req.currentUser!.id);
+      res.status(200).json({ session: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
 // POST /api/exam/:id/abandon — huy phien thi thu dang IN_PROGRESS
 // ---------------------------------------------------------------------------
 

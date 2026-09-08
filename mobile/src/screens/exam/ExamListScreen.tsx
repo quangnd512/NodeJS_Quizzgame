@@ -1,6 +1,6 @@
 // Man hinh Danh sach de thi — hien tat ca de thi (bao gom de admin moi tao) theo mon hoc.
 // Bat dau phien thi bang nut "Bắt đầu thi".
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -11,10 +11,11 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../auth/AuthContext';
 import { useAppTheme } from '../../theme/ThemeContext';
-import { startExam, getActiveExamSession, abandonExam } from '../../api/exam';
+import { startExam, getActiveExamSession, abandonExam, resumeExam } from '../../api/exam';
 import type { ActiveExamSession } from '../../api/exam';
 import { SUBJECT_CATALOG } from '../../constants/subjects';
 import type { ExamStackScreenProps } from '../../navigation/types';
@@ -30,12 +31,13 @@ export function ExamListScreen({ navigation }: Props) {
   const [loadingActive, setLoadingActive] = useState(true);
   const [startingSubject, setStartingSubject] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [noExamsSubjects, setNoExamsSubjects] = useState<Set<string>>(new Set());
 
   const mySubjects = SUBJECT_CATALOG.filter(
     (s) => profile?.subjects.some((ps) => ps.id === s.id),
   );
 
-  // Inline fetch trong useEffect – tranh ham wrapper gay canh bao react-hooks/set-state-in-effect
+  // Lần đầu load — fetch phiên thi dở dang
   useEffect(() => {
     if (!sessionToken) return;
     getActiveExamSession(sessionToken)
@@ -43,6 +45,79 @@ export function ExamListScreen({ navigation }: Props) {
       .catch(() => { setActiveSession(null); })
       .finally(() => { setLoadingActive(false); });
   }, [sessionToken]);
+
+  // Lần đầu focus: refresh activeSession + hiện dialog nếu có phiên dở dang.
+  // Dùng useRef thay vì useState để tránh stale closure trong async callback:
+  // setAlertShown(false) chạy nhưng closure vẫn thấy giá trị cũ → dialog không hiện lại.
+  const alertShownRef = useRef(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!sessionToken) return;
+      // Reset flag mỗi khi màn hình được focus (quay về từ ExamTaking)
+      alertShownRef.current = false;
+
+      getActiveExamSession(sessionToken)
+        .then((res) => {
+          // Nếu phiên đã expire (remainingSeconds < 0) → xóa
+          if (res.session && res.session.remainingSeconds < 0) {
+            setActiveSession(null);
+            return;
+          }
+
+          setActiveSession(res.session);
+          // Lưu vào local var để TypeScript biết non-null trong closure bên dưới
+          const pendingSession = res.session;
+          // Nếu có phiên dở dang + chưa hết hạn + chưa hiện dialog → hiện ngay
+          if (pendingSession && pendingSession.remainingSeconds >= 0 && !alertShownRef.current) {
+            Alert.alert(
+              'Đang có phiên thi dở',
+              `Bạn đang có phiên thi "${pendingSession.title}" chưa hoàn thành. Muốn tiếp tục hay hủy phiên cũ?`,
+              [
+                {
+                  text: 'Tiếp tục phiên cũ',
+                  style: 'cancel',
+                  onPress: () => { void handleResumeExam(); },
+                },
+                {
+                  text: 'Hủy phiên cũ',
+                  style: 'destructive',
+                  onPress: async () => {
+                    if (!sessionToken) return;
+                    try {
+                      await abandonExam(sessionToken, pendingSession.id);
+                      setActiveSession(null);
+                    } catch (err) {
+                      const msg = err instanceof Error ? err.message : 'Không thể hủy phiên.';
+                      Alert.alert('Lỗi', msg);
+                    }
+                  },
+                },
+              ],
+            );
+            alertShownRef.current = true;  // Đánh dấu đã hiện dialog trong lần focus này
+          }
+        })
+        .catch(() => { setActiveSession(null); });
+    }, [sessionToken, navigation, handleResumeExam]),  // alertShown đã xóa khỏi deps vì dùng ref
+  );
+
+  /**
+   * Tiếp tục phiên thi đang dở — gọi /api/exam/resume để lấy đầy đủ câu hỏi,
+   * rồi navigate ExamTaking. Cần full data (questions) nên không dùng ActiveExamSession.
+   */
+  async function handleResumeExam() {
+    if (!sessionToken) return;
+    try {
+      const res = await resumeExam(sessionToken);
+      if (res.session) {
+        navigation.navigate('ExamTaking', { session: res.session });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Không thể tiếp tục phiên thi.';
+      Alert.alert('Lỗi', msg);
+    }
+  }
 
   async function handleRefresh() {
     if (!sessionToken) return;
@@ -67,7 +142,11 @@ export function ExamListScreen({ navigation }: Props) {
         'Đang có phiên thi dở',
         `Bạn đang có phiên thi "${activeSession.title}" chưa hoàn thành. Muốn tiếp tục hay hủy phiên cũ?`,
         [
-          { text: 'Tiếp tục phiên cũ', style: 'cancel' },
+          {
+            text: 'Tiếp tục phiên cũ',
+            style: 'cancel',
+            onPress: () => { void handleResumeExam(); },
+          },
           {
             text: 'Hủy phiên cũ',
             style: 'destructive',
@@ -93,13 +172,30 @@ export function ExamListScreen({ navigation }: Props) {
   async function doStartExam(subjectId: string) {
     if (!sessionToken) return;
     setStartingSubject(subjectId);
+
+    // Auto-reset sau 30 giây (fallback nếu navigation bị block)
+    const timeout = setTimeout(() => {
+      setStartingSubject(null);
+    }, 30000);
+
     try {
       const session = await startExam(sessionToken, subjectId);
+      clearTimeout(timeout);
       navigation.navigate('ExamTaking', { session });
     } catch (err) {
+      clearTimeout(timeout);
       const msg = err instanceof Error ? err.message : 'Không thể bắt đầu thi.';
-      Alert.alert('Lỗi', msg);
-    } finally {
+
+      // Nếu lỗi liên quan "không có đề thi" → disable chip
+      if (msg.toLowerCase().includes('not found') || msg.toLowerCase().includes('không có')) {
+        setNoExamsSubjects((prev) => new Set([...prev, subjectId]));
+        Alert.alert(
+          'Chưa có đề thi',
+          `Môn này chưa có đề thi nào. Vui lòng chọn môn khác.`,
+        );
+      } else {
+        Alert.alert('Lỗi', msg);
+      }
       setStartingSubject(null);
     }
   }
@@ -127,8 +223,34 @@ export function ExamListScreen({ navigation }: Props) {
           <TouchableOpacity
             style={[styles.resumeBtn, { backgroundColor: '#f59e0b' }]}
             onPress={() => {
-              // Khong co du data de resume full session — bao nguoi dung reload
-              Alert.alert('Tiếp tục phiên thi', 'Bạn cần bắt đầu lại từ đầu vì câu hỏi chưa được lưu ở thiết bị này.');
+              // Hiện dialog "Tiếp tục hay hủy phiên cũ"
+              if (activeSession) {
+                Alert.alert(
+                  'Đang có phiên thi dở',
+                  `Bạn đang có phiên thi "${activeSession.title}" chưa hoàn thành. Muốn tiếp tục hay hủy phiên cũ?`,
+                  [
+                    {
+                      text: 'Tiếp tục phiên cũ',
+                      style: 'cancel',
+                      onPress: () => { void handleResumeExam(); },
+                    },
+                    {
+                      text: 'Hủy phiên cũ',
+                      style: 'destructive',
+                      onPress: async () => {
+                        if (!sessionToken) return;
+                        try {
+                          await abandonExam(sessionToken, activeSession.id);
+                          setActiveSession(null);
+                        } catch (err) {
+                          const msg = err instanceof Error ? err.message : 'Không thể hủy phiên.';
+                          Alert.alert('Lỗi', msg);
+                        }
+                      },
+                    },
+                  ],
+                );
+              }
             }}
           >
             <Text style={{ color: '#fff', fontWeight: '700' }}>Quản lý phiên →</Text>
@@ -144,20 +266,33 @@ export function ExamListScreen({ navigation }: Props) {
       <View style={styles.subjectGrid}>
         {mySubjects.map((s) => {
           const isActive = selectedSubject === s.id;
+          const isDisabled = noExamsSubjects.has(s.id);
           return (
             <TouchableOpacity
               key={s.id}
               style={[
                 styles.subjectChip,
                 {
-                  backgroundColor: isActive ? colors.primary : colors.surface,
-                  borderColor: isActive ? colors.primary : colors.border,
+                  backgroundColor: isDisabled ? colors.border : isActive ? colors.primary : colors.surface,
+                  borderColor: isDisabled ? colors.border : isActive ? colors.primary : colors.border,
+                  opacity: isDisabled ? 0.5 : 1,
                 },
               ]}
-              onPress={() => setSelectedSubject(isActive ? '' : s.id)}
+              onPress={() => {
+                if (!isDisabled) {
+                  setSelectedSubject(isActive ? '' : s.id);
+                }
+              }}
+              disabled={isDisabled}
             >
               <Text style={{ fontSize: 18 }}>{s.emoji}</Text>
-              <Text style={{ color: isActive ? colors.primaryText : colors.text, fontWeight: '600', fontSize: 13 }}>
+              <Text
+                style={{
+                  color: isDisabled ? colors.textMuted : isActive ? colors.primaryText : colors.text,
+                  fontWeight: '600',
+                  fontSize: 13,
+                }}
+              >
                 {s.name}
               </Text>
             </TouchableOpacity>

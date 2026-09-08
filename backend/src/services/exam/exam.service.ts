@@ -701,6 +701,48 @@ export class ExamService {
   }
 
   /**
+   * Lấy lại đầy đủ dữ liệu phiên thi đang dở để resume — trả về shape giống startExam.
+   * Dùng khi user quay lại app và chọn "Tiếp tục phiên cũ".
+   * KHÔNG trừ điểm và KHÔNG tạo session mới — chỉ đọc data hiện có.
+   *
+   * @returns StartExamResponse nếu có phiên đang IN_PROGRESS, null nếu không có
+   */
+  async resumeSession(userId: string): Promise<StartExamResponse | null> {
+    const session = await prisma.examSession.findFirst({
+      where: { userId, status: 'IN_PROGRESS' },
+      select: {
+        id: true,
+        subjectId: true,
+        examPaperId: true,
+        durationMinutes: true,
+        startedAt: true,
+      },
+    });
+
+    if (!session) return null;
+
+    const [paper, questions] = await Promise.all([
+      prisma.examPaper.findUnique({
+        where: { id: session.examPaperId },
+        select: { title: true },
+      }),
+      prisma.examQuestion.findMany({
+        where: { examPaperId: session.examPaperId, isActive: true },
+      }),
+    ]);
+
+    return {
+      sessionId: session.id,
+      examPaperId: session.examPaperId,
+      subject: session.subjectId,
+      title: paper?.title ?? '',
+      durationMinutes: session.durationMinutes,
+      startedAt: session.startedAt,
+      questions: questions.map(toPublicDto),
+    };
+  }
+
+  /**
    * Huy phien thi thu dang IN_PROGRESS (nguoi dung chu dong thoat).
    * Doi status → ABANDONED. Khong hoan lai diem da tru khi vao thi.
    * Sau khi ABANDONED, user co the bat dau phien thi thu moi bat ky mon nao.

@@ -121,6 +121,17 @@ export async function getActiveExamSession(
   return request<{ session: ActiveExamSession | null }>('/api/exam/active', token);
 }
 
+/**
+ * Lấy lại đầy đủ dữ liệu phiên thi đang dở để resume (có câu hỏi).
+ * Khác getActiveExamSession: trả về StartExamResult với questions để navigate ExamTaking.
+ * GET /api/exam/resume
+ */
+export async function resumeExam(
+  token: string,
+): Promise<{ session: StartExamResult | null }> {
+  return request<{ session: StartExamResult | null }>('/api/exam/resume', token);
+}
+
 /** POST /api/exam/:id/abandon */
 export async function abandonExam(
   token: string,
