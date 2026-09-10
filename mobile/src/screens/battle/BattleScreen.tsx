@@ -265,6 +265,15 @@ export function BattleScreen({ navigation }: Props) {
           <Text style={[styles.backText, { color: colors.primary }]}>← Quay lại</Text>
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>⚔️ Thi đấu đối kháng</Text>
+        {/* Nut Lich su — chi hien o giai doan setup/queue, an khi dang choi */}
+        {phase !== 'play' && (
+          <TouchableOpacity
+            onPress={() => navigation.navigate('BattleHistory')}
+            style={styles.historyBtn}
+          >
+            <Text style={[styles.historyBtnText, { color: colors.primary }]}>📋 Lịch sử</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* ─── SETUP phase ─── */}
@@ -476,6 +485,8 @@ const styles = StyleSheet.create({
   backBtn: { padding: 4 },
   backText: { fontSize: 15, fontWeight: '600' },
   headerTitle: { flex: 1, fontSize: 16, fontWeight: '700' },
+  historyBtn: { padding: 4 },
+  historyBtnText: { fontSize: 13, fontWeight: '600' },
   setupContent: { padding: 20, gap: 14 },
   connectBtn: { borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
   connectBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },

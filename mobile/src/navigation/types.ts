@@ -55,6 +55,7 @@ export type BattleStackParamList = {
   BattleHome: undefined;
   // BattleMatch khong dung: BattleScreen xu ly toan bo phase (setup/queue/play) trong 1 man hinh
   BattleResult: { ended: BattleMatchEndedPayload; opponentName: string };
+  BattleHistory: undefined;
 };
 
 export type BattleStackScreenProps<T extends keyof BattleStackParamList> =
