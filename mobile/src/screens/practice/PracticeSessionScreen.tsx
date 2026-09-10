@@ -20,7 +20,6 @@ import type { PracticeStackScreenProps } from '../../navigation/types';
 type Props = PracticeStackScreenProps<'PracticeSession'>;
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D'];
-const PRACTICE_DURATION_SECONDS = 30 * 60; // 30 phút
 
 type QuestionState = 'unanswered' | 'answered';
 
@@ -37,7 +36,8 @@ export function PracticeSessionScreen({ navigation, route }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [correctCount, setCorrectCount] = useState(0);
-  const [timeRemaining, setTimeRemaining] = useState(PRACTICE_DURATION_SECONDS);
+  // Dung timeLimitSeconds tu server (1020s = 17 phut), khong hardcode 30 phut
+  const [timeRemaining, setTimeRemaining] = useState(session.timeLimitSeconds);
 
   const currentQ = session.questions[questionIndex];
   const isLastQ = questionIndex === session.questions.length - 1;
@@ -64,7 +64,7 @@ export function PracticeSessionScreen({ navigation, route }: Props) {
     }
   }, [sessionToken, session, navigation, correctCount]);
 
-  // Timer đếm ngược 30 phút — auto-complete khi về 0
+  // Timer đếm ngược theo timeLimitSeconds từ server — auto-complete khi về 0
   useEffect(() => {
     if (timeRemaining <= 0) {
       // Auto-complete khi hết thời gian.

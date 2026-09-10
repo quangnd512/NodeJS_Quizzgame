@@ -14,6 +14,7 @@ export interface PracticeQuestion {
 export interface StartSessionResult {
   sessionId: string;
   subject: string;
+  timeLimitSeconds: number;
   questions: PracticeQuestion[];
 }
 
