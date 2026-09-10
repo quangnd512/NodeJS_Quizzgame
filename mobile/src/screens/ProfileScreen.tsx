@@ -50,6 +50,10 @@ export function ProfileScreen({ navigation }: Props) {
   const { colors, preference, setPreference } = useAppTheme();
   const { profile, signOut, sessionToken } = useAuth();
   const [unreadCount, setUnreadCount] = useState(0);
+  // Helper navigate sang tab chinh (ProfileScreen nam trong ProfileStack nam trong BottomTab)
+  function goToTab(tabName: string) {
+    navigation.getParent()?.navigate(tabName as never);
+  }
 
   // Poll so thong bao chua doc moi 30 giay
   useEffect(() => {
@@ -106,6 +110,28 @@ export function ProfileScreen({ navigation }: Props) {
         <Text style={[styles.bodyText, { color: colors.textMuted }]}>
           {profile && profile.subjects.length > 0 ? profile.subjects.map((s) => s.name).join(', ') : 'Chưa chọn môn'}
         </Text>
+      </View>
+
+      {/* Quick links den 5 tinh nang chinh */}
+      <Text style={[styles.sectionHeader, { color: colors.textMuted }]}>TRUY CẬP NHANH</Text>
+      <View style={styles.quickLinksGrid}>
+        {[
+          { emoji: '✏️', label: 'Luyện tập', onPress: () => goToTab('Practice') },
+          { emoji: '📝', label: 'Thi thử', onPress: () => goToTab('Exam') },
+          { emoji: '🏆', label: 'BXH', onPress: () => goToTab('Leaderboard') },
+          { emoji: '⚔️', label: 'Thi đấu', onPress: () => navigation.push('Battle') },
+          { emoji: '📊', label: 'Tiến độ', onPress: () => goToTab('Progress') },
+        ].map((item) => (
+          <TouchableOpacity
+            key={item.label}
+            style={[styles.quickLinkBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
+            onPress={item.onPress}
+            activeOpacity={0.75}
+          >
+            <Text style={styles.quickLinkEmoji}>{item.emoji}</Text>
+            <Text style={[styles.quickLinkLabel, { color: colors.text }]}>{item.label}</Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
       {/* Cac tinh nang phu */}
@@ -200,4 +226,18 @@ const styles = StyleSheet.create({
   themeRow: { flexDirection: 'row', gap: 8 },
   themeOption: { flex: 1, borderWidth: 1.5, borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
   footer: { marginTop: 4 },
+  // Quick links
+  quickLinksGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  quickLinkBtn: {
+    width: '30%',
+    flexGrow: 1,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    gap: 6,
+  },
+  quickLinkEmoji: { fontSize: 24 },
+  quickLinkLabel: { fontSize: 12, fontWeight: '700', textAlign: 'center' },
 });
