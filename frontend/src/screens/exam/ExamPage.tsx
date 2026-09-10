@@ -341,6 +341,17 @@ function ExamPage({
           );
         })}
       </div>
+
+      {/* Thông tin thi — giúp học sinh biết format trước khi bắt đầu */}
+      <div className="exam-info-card">
+        <p className="exam-info-title">📋 Thông tin thi</p>
+        <ul className="exam-info-list">
+          <li>Đề thi ngẫu nhiên từ ngân hàng câu hỏi</li>
+          <li>Thời gian: 45 phút</li>
+          <li>Có nhiều loại câu (MCQ, Đúng/Sai, Điền chỗ trống)</li>
+          <li>⭐ Premium: xem đáp án chi tiết sau khi nộp</li>
+        </ul>
+      </div>
     </div>
   );
 }
