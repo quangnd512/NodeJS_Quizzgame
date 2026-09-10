@@ -47,7 +47,13 @@ export function ExamTakingScreen({ navigation, route }: Props) {
   const [answers, setAnswers] = useState<ExamAnswerValue[]>(
     session.questions.map((q) => emptyAnswer(q.questionType)),
   );
-  const [timeLeft, setTimeLeft] = useState(session.durationMinutes * 60);
+  // Tinh thoi gian con lai dua tren startedAt de resume dung gio (khong bat dau lai tu dau)
+  const [timeLeft, setTimeLeft] = useState(() => {
+    const elapsed = session.startedAt
+      ? Math.floor((Date.now() - new Date(session.startedAt).getTime()) / 1000)
+      : 0;
+    return Math.max(0, session.durationMinutes * 60 - elapsed);
+  });
   const [submitting, setSubmitting] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
