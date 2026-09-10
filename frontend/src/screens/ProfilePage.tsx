@@ -10,9 +10,12 @@ function getInitials(name: string | null, email: string | null): string {
   return src.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('');
 }
 
+type ThemeMode = 'light' | 'dark' | 'system';
+
 function ProfilePage({
   profile, sessionToken, onProfileUpdate, onChangeSubjects, onPractice, onExam, onLeaderboard, onProgress, onWrongAnswers, onSubmissions, onBattle, onError, onLogout,
   resumeAlert, onResumeExam, onAbandonResume, unreadCount, onNotifClick,
+  themeMode, onThemeChange,
 }: {
   profile: UserProfile;
   sessionToken: string;
@@ -32,6 +35,8 @@ function ProfilePage({
   onAbandonResume?: () => void;
   unreadCount?: number;
   onNotifClick?: () => void;
+  themeMode?: ThemeMode;
+  onThemeChange?: (mode: ThemeMode) => void;
 }) {
   const [editMode, setEditMode]         = useState(false);
   const [busy, setBusy]                 = useState(false);
@@ -268,6 +273,31 @@ function ProfilePage({
             : profile.subjects.map((s) => <span key={s.id} className="chip">{s.name}</span>)}
         </div>
       </section>
+
+      {/* Chế độ giao diện */}
+      {onThemeChange && (
+        <section className="card-section">
+          <h3 className="section-title">Giao diện</h3>
+          <div className="theme-toggle-row">
+            {([
+              { mode: 'light',  label: '☀️ Sáng' },
+              { mode: 'dark',   label: '🌙 Tối' },
+              { mode: 'system', label: '🕐 Theo hệ thống' },
+            ] as const).map(({ mode, label }) => (
+              <button
+                key={mode}
+                className={`theme-btn${themeMode === mode ? ' active' : ''}`}
+                onClick={() => onThemeChange(mode)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {themeMode === 'system' && (
+            <p className="theme-hint">5:00–18:00 → Sáng · Còn lại → Tối</p>
+          )}
+        </section>
+      )}
 
       {/* Profile edit */}
       <section className="card-section">

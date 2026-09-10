@@ -65,6 +65,41 @@ export default function App() {
   // -1 = chưa poll lần nào → lần đầu poll không hiện toast (tránh spam khi mới vào app)
   const prevUnreadRef                   = useRef(-1);
 
+  // ─── Chế độ giao diện (Sáng / Tối / Theo hệ thống) ─────────────────────────
+  type ThemeMode = 'light' | 'dark' | 'system';
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    try {
+      const saved = localStorage.getItem('quizz_theme') as ThemeMode | null;
+      if (saved === 'light' || saved === 'dark' || saved === 'system') return saved;
+    } catch { /* localStorage blocked (private mode) → bỏ qua */ }
+    return 'system';
+  });
+
+  // Chỉ thao tác DOM + localStorage — KHÔNG gọi setState (dùng trong useEffect)
+  function applyThemeToDom(mode: ThemeMode) {
+    const hour = new Date().getHours();
+    const effective = mode === 'system'
+      ? (hour >= 5 && hour < 18 ? 'light' : 'dark')
+      : mode;
+    document.documentElement.setAttribute('data-theme', effective);
+    try { localStorage.setItem('quizz_theme', mode); } catch { /* bỏ qua */ }
+  }
+
+  // Handler dùng ở UI: cập nhật state + DOM
+  function applyTheme(mode: ThemeMode) {
+    applyThemeToDom(mode);
+    setThemeMode(mode);
+  }
+
+  // Khởi tạo theme khi mount và mỗi khi themeMode thay đổi
+  useEffect(() => {
+    applyThemeToDom(themeMode);
+    // Nếu 'system', cập nhật lại mỗi phút để phát hiện khi qua 5h/18h
+    if (themeMode !== 'system') return undefined;
+    const id = setInterval(() => applyThemeToDom('system'), 60_000);
+    return () => clearInterval(id);
+  }, [themeMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     // Trang Admin chay doc lap, khong can dang nhap Firebase
     if (screen === 'admin') return;
@@ -330,6 +365,8 @@ export default function App() {
           }}
           unreadCount={unreadCount}
           onNotifClick={() => setNotifOpen(true)}
+          themeMode={themeMode}
+          onThemeChange={applyTheme}
         />
       )}
       {screen === 'practice' && profile && (

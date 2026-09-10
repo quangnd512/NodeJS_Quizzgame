@@ -519,6 +519,41 @@ body {
   font-weight: 700;
 }
 
+/* ─── Theme toggle (ProfilePage) ─────────────────────────────────────────── */
+.theme-toggle-row {
+  display: flex;
+  gap: .5rem;
+  flex-wrap: wrap;
+  margin-top: .5rem;
+}
+.theme-btn {
+  flex: 1;
+  min-width: 90px;
+  padding: .45rem .625rem;
+  font-size: .825rem;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.theme-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.theme-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 700;
+}
+.theme-hint {
+  margin: .4rem 0 0;
+  font-size: .78rem;
+  color: var(--muted);
+}
+
 /* Chips */
 .chips { display: flex; flex-wrap: wrap; gap: .5rem; }
 
