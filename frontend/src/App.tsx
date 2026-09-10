@@ -27,11 +27,12 @@ import SubmissionsPage from './screens/SubmissionsPage.js';
 import BattlePage from './screens/battle/BattlePage.js';
 import BattleHistoryPage from './screens/battle/BattleHistoryPage.js';
 import AdminPage from './screens/admin/AdminPage.js';
+import DevLoginPage from './screens/DevLoginPage.js';
 import NotificationPanel, { NotificationToast } from './components/NotificationPanel.js';
 import { clearDraftAnswers } from './screens/exam/examUtils.js';
 import { BATTLE_ACTIVE_MATCH_KEY } from './screens/battle/battleConstants.js';
 
-type Screen = 'loading' | 'login' | 'onboarding' | 'adGate' | 'profile' | 'practice' | 'exam' | 'admin' | 'leaderboard' | 'progress' | 'wrongAnswers' | 'submissions' | 'battle' | 'battleHistory';
+type Screen = 'loading' | 'login' | 'devLogin' | 'onboarding' | 'adGate' | 'profile' | 'practice' | 'exam' | 'admin' | 'leaderboard' | 'progress' | 'wrongAnswers' | 'submissions' | 'battle' | 'battleHistory';
 
 /** Trạng thái khôi phục trận Thi đấu đối kháng sau khi tải lại trang/đăng nhập lại (Fix S5). */
 type BattleResumeState =
@@ -41,9 +42,12 @@ type BattleResumeState =
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [screen, setScreen]             = useState<Screen>(() =>
-    window.location.hash === '#admin' ? 'admin' : 'loading',
-  );
+  const [screen, setScreen]             = useState<Screen>(() => {
+    if (window.location.hash === '#admin') return 'admin';
+    // Dev-login page: chỉ hiện khi DEV mode và URL có ?devLogin=1
+    if (import.meta.env.DEV && new URLSearchParams(window.location.search).get('devLogin') === '1') return 'devLogin';
+    return 'loading';
+  });
   const [sessionToken, setSessionToken] = useState('');
   const [profile, setProfile]           = useState<UserProfile | null>(null);
   const [globalError, setGlobalError]   = useState('');
@@ -128,6 +132,38 @@ export default function App() {
     });
     return unsub;
   }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // CHI DUNG DE TEST (S5-ThuNghiem) — dang nhap thang bang session token lay tu
+  // POST /api/auth/dev-login, KHONG qua Firebase. Cho phep S5 tu dua mot tai khoan
+  // test thu 2 vao dung giao dien web that (khong phai gia lap) de kiem thu UI/UX,
+  // vi du 2 tai khoan cung mo tren 2 tab de test tinh nang can nhieu nguoi (Battle).
+  //
+  // AN TOAN: `import.meta.env.DEV` la co dinh cua Vite — LUON la `false` trong ban
+  // build production (khong phai bien .env co the quen bat/tat), nen khoi nay
+  // KHONG BAO GIO chay o production du co truy cap URL voi param nao.
+  // Dung: mo `http://localhost:5173/?devToken=<token-tu-dev-login>`.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const devToken = new URLSearchParams(window.location.search).get('devToken');
+    if (!devToken) return;
+
+    // Xoa param khoi URL ngay de tranh dang nhap lai neu component re-render/F5.
+    const cleanUrl = window.location.pathname + window.location.hash;
+    window.history.replaceState({}, '', cleanUrl);
+
+    // Khong can setScreen('loading') vi screen khoi tao la 'loading' khi co devToken
+    // (khoi tao state da xu ly truong hop nay). Goi async trong effect la OK voi React 18+.
+    getMyProfile(devToken)
+      .then((me) => {
+        setSessionToken(devToken);
+        setProfile(me);
+        setScreen('profile');
+      })
+      .catch((err) => {
+        setGlobalError(err instanceof Error ? err.message : 'Lỗi không xác định (dev-login)');
+        setScreen('login');
+      });
+  }, []);
 
   // Polling thông báo mỗi 30 giây — chỉ chạy khi đã đăng nhập
   useEffect(() => {
@@ -238,6 +274,20 @@ export default function App() {
       {screen === 'admin'      && <AdminPage />}
       {screen === 'loading'    && <LoadingScreen />}
       {screen === 'login'      && <LoginPage onError={(m) => setGlobalError(m)} />}
+      {screen === 'devLogin'   && import.meta.env.DEV && (
+        <DevLoginPage
+          onSuccess={(result) => {
+            setSessionToken(result.token);
+            setProfile(result.user);
+            if (result.isNewUser) {
+              setScreen('onboarding');
+            } else {
+              setScreen('profile');
+            }
+          }}
+          onError={(m) => setGlobalError(m)}
+        />
+      )}
       {screen === 'onboarding' && (
         <OnboardingPage
           sessionToken={sessionToken}

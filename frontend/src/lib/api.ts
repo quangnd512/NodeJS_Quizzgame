@@ -78,6 +78,23 @@ async function request<T>(
   return body;
 }
 
+/**
+ * POST /api/auth/dev-login — CHI DUNG DE TEST CUC BO (S5-ThuNghiem).
+ * Khoa boi backend: NODE_ENV !== 'production' && DEV_LOGIN_ENABLED === 'true'.
+ */
+export async function devLoginApi(email: string, displayName?: string): Promise<LoginResult> {
+  const res = await fetch('/api/auth/dev-login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, displayName }),
+  });
+  const body = await parseJsonBody<LoginResult>(res);
+  if (!res.ok) {
+    throw new ApiError(body.error ?? 'UNKNOWN_ERROR', body.message ?? `Loi HTTP ${res.status}`, res.status);
+  }
+  return body;
+}
+
 /** POST /api/auth/login — doi Firebase ID Token lay session token noi bo. */
 export async function loginWithFirebaseToken(firebaseIdToken: string): Promise<LoginResult> {
   const res = await fetch('/api/auth/login', {

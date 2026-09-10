@@ -239,4 +239,3 @@ function LeaderboardPage({
 }
 
 export default LeaderboardPage;
-export { TREND_ICON, TREND_COLOR };
