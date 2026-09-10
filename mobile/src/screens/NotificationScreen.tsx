@@ -17,7 +17,7 @@ import {
   markNotificationAsRead,
   markAllNotificationsAsRead,
 } from '../api/notifications';
-import type { NotificationItem } from '../api/notifications';
+import type { NotificationItem, NotificationTargetScreen } from '../api/notifications';
 
 const TYPE_ICON: Record<string, string> = {
   STREAK_MILESTONE: '🔥',
@@ -27,11 +27,20 @@ const TYPE_ICON: Record<string, string> = {
   NEW_EXAM_PAPER: '📝',
 };
 
+// Anh xa targetScreen → ten tab trong MainTabParamList
+const TARGET_SCREEN_TO_TAB: Record<NonNullable<NotificationTargetScreen>, string> = {
+  progress: 'Progress',
+  leaderboard: 'Leaderboard',
+  exam: 'Exam',
+};
+
 interface Props {
   onBack: () => void;
+  /** Navigate sang tab chinh khi bam thong bao co targetScreen */
+  onNavigateToTab?: (tab: string) => void;
 }
 
-export function NotificationScreen({ onBack }: Props) {
+export function NotificationScreen({ onBack, onNavigateToTab }: Props) {
   const insets = useSafeAreaInsets();
   const { colors } = useAppTheme();
   const { sessionToken } = useAuth();
@@ -51,12 +60,17 @@ export function NotificationScreen({ onBack }: Props) {
       .finally(() => { setLoading(false); });
   }, [sessionToken]);
 
-  async function handleMarkRead(id: string) {
+  async function handleMarkRead(id: string, targetScreen?: NotificationTargetScreen) {
     if (!sessionToken) return;
     try {
       await markNotificationAsRead(sessionToken, id);
       setItems((prev) => prev.map((n) => n.id === id ? { ...n, isRead: true } : n));
       setUnreadCount((c) => Math.max(0, c - 1));
+      // Neu co targetScreen → navigate sang tab tuong ung
+      if (targetScreen && onNavigateToTab) {
+        const tab = TARGET_SCREEN_TO_TAB[targetScreen];
+        if (tab) onNavigateToTab(tab);
+      }
     } catch {
       // im lang neu loi
     }
@@ -87,7 +101,7 @@ export function NotificationScreen({ onBack }: Props) {
             borderColor: isUnread ? colors.primary + '40' : colors.border,
           },
         ]}
-        onPress={() => { if (isUnread) void handleMarkRead(item.id); }}
+        onPress={() => { void handleMarkRead(item.id, item.targetScreen); }}
         activeOpacity={0.85}
       >
         <View style={styles.notifIcon}>
