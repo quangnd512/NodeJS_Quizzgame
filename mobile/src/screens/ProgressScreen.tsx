@@ -6,18 +6,21 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../auth/AuthContext';
 import { useAppTheme } from '../theme/ThemeContext';
-import { getProgressSummary } from '../api/progress';
-import type { ProgressSummary } from '../api/progress';
+import { getProgressSummary, getExamHistory } from '../api/progress';
+import type { ProgressSummary, ExamHistoryItem } from '../api/progress';
 import { SUBJECT_CATALOG } from '../constants/subjects';
 
 function subjectName(id: string): string {
   return SUBJECT_CATALOG.find((s) => s.id === id)?.name ?? id;
 }
+
+const EXAM_PAGE_SIZE = 10;
 
 export function ProgressScreen() {
   const insets = useSafeAreaInsets();
@@ -26,6 +29,13 @@ export function ProgressScreen() {
   const [summary, setSummary] = useState<ProgressSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Lich su thi thu — phan trang bang offset
+  const [examHistory, setExamHistory] = useState<ExamHistoryItem[]>([]);
+  const [examTotal, setExamTotal] = useState(0);
+  const [examOffset, setExamOffset] = useState(0);
+  // Khoi tao true vi fetch ngay khi mount — tranh flicker "Chua co bai thi nao"
+  const [examLoading, setExamLoading] = useState(true);
 
   useEffect(() => {
     if (!sessionToken) return;
@@ -37,6 +47,33 @@ export function ProgressScreen() {
       })
       .finally(() => { setLoading(false); });
   }, [sessionToken]);
+
+  // Fetch lich su thi lan dau khi mount (chi Premium moi xem duoc)
+  useEffect(() => {
+    if (!sessionToken) return;
+    getExamHistory(sessionToken, EXAM_PAGE_SIZE, 0)
+      .then((res) => {
+        setExamHistory(res.items);
+        setExamTotal(res.total);
+        setExamOffset(res.items.length);
+      })
+      .catch(() => {})
+      .finally(() => { setExamLoading(false); });
+  }, [sessionToken]);
+
+  async function handleLoadMoreExams() {
+    if (!sessionToken || examLoading || examHistory.length >= examTotal) return;
+    setExamLoading(true);
+    try {
+      const res = await getExamHistory(sessionToken, EXAM_PAGE_SIZE, examOffset);
+      setExamHistory((prev) => [...prev, ...res.items]);
+      setExamOffset((prev) => prev + res.items.length);
+    } catch {
+      // im lang neu loi load more
+    } finally {
+      setExamLoading(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -115,37 +152,61 @@ export function ProgressScreen() {
         )}
       </View>
 
-      {/* Tong quan so lieu */}
+      {/* Tong quan so lieu — 4 ô như website */}
       <View style={styles.overviewRow}>
         <View style={[styles.overviewCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[styles.overviewLabel, { color: colors.textMuted }]}>Phiên ôn tập</Text>
           <Text style={[styles.overviewValue, { color: colors.primary }]}>{overview.totalPracticeSessions}</Text>
-          <Text style={[styles.overviewLabel, { color: colors.textMuted }]}>Phiên luyện</Text>
         </View>
         <View style={[styles.overviewCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[styles.overviewLabel, { color: colors.textMuted }]}>Lần thi thử</Text>
           <Text style={[styles.overviewValue, { color: colors.text }]}>{overview.totalExamSessions}</Text>
-          <Text style={[styles.overviewLabel, { color: colors.textMuted }]}>Bài thi</Text>
         </View>
         <View style={[styles.overviewCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[styles.overviewLabel, { color: colors.textMuted }]}>Điểm tích lũy</Text>
           <Text style={[styles.overviewValue, { color: '#f59e0b' }]}>{overview.currentPoints}</Text>
-          <Text style={[styles.overviewLabel, { color: colors.textMuted }]}>Tổng điểm</Text>
+        </View>
+        <View style={[styles.overviewCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[styles.overviewLabel, { color: colors.textMuted }]}>Số ngày giữ chuỗi</Text>
+          <Text style={[styles.overviewValue, { color: colors.primary }]}>{overview.currentStreak}</Text>
+          <Text style={[styles.overviewSub, { color: colors.textMuted }]}>ngày 🔥</Text>
         </View>
       </View>
 
       {/* So sanh thang nay voi thang truoc */}
       <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>📅 Tháng này vs. tháng trước</Text>
-        <View style={styles.compRow}>
-          <View style={styles.compCol}>
-            <Text style={[styles.compLabel, { color: colors.textMuted }]}>Phiên luyện tập</Text>
-            <Text style={[styles.compValue, { color: colors.text }]}>
-              {monthComparison.thisMonth.practiceSessions} (trước: {monthComparison.lastMonth.practiceSessions})
-            </Text>
+        <View style={styles.monthCompareGrid}>
+          <View style={styles.monthCol}>
+            <Text style={[styles.monthLabel, { color: colors.textMuted }]}>Tháng này</Text>
+            <View style={styles.monthRow}>
+              <Text style={[styles.monthRowLabel, { color: colors.textMuted }]}>Phiên ôn tập</Text>
+              <Text style={[styles.monthRowValue, { color: colors.text }]}>
+                {monthComparison.thisMonth.practiceSessions}
+              </Text>
+            </View>
+            <View style={styles.monthRow}>
+              <Text style={[styles.monthRowLabel, { color: colors.textMuted }]}>Điểm thi TB</Text>
+              <Text style={[styles.monthRowValue, { color: colors.text }]}>
+                {monthComparison.thisMonth.examAvgScore?.toFixed(1) ?? '—'}
+              </Text>
+            </View>
           </View>
-          <View style={styles.compCol}>
-            <Text style={[styles.compLabel, { color: colors.textMuted }]}>TB điểm thi</Text>
-            <Text style={[styles.compValue, { color: colors.text }]}>
-              {monthComparison.thisMonth.examAvgScore?.toFixed(1) ?? '—'} (trước: {monthComparison.lastMonth.examAvgScore?.toFixed(1) ?? '—'})
-            </Text>
+          <View style={styles.monthDivider} />
+          <View style={styles.monthCol}>
+            <Text style={[styles.monthLabel, { color: colors.textMuted }]}>Tháng trước</Text>
+            <View style={styles.monthRow}>
+              <Text style={[styles.monthRowLabel, { color: colors.textMuted }]}>Phiên ôn tập</Text>
+              <Text style={[styles.monthRowValue, { color: colors.text }]}>
+                {monthComparison.lastMonth.practiceSessions}
+              </Text>
+            </View>
+            <View style={styles.monthRow}>
+              <Text style={[styles.monthRowLabel, { color: colors.textMuted }]}>Điểm thi TB</Text>
+              <Text style={[styles.monthRowValue, { color: colors.text }]}>
+                {monthComparison.lastMonth.examAvgScore?.toFixed(1) ?? '—'}
+              </Text>
+            </View>
           </View>
         </View>
       </View>
@@ -192,6 +253,50 @@ export function ProgressScreen() {
           ))}
         </View>
       )}
+
+      {/* Lich su thi thu (chi Premium) */}
+      {isPremium ? (
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>
+            📋 Lịch sử thi thử {examTotal > 0 ? `(${examTotal})` : ''}
+          </Text>
+          {examHistory.length === 0 && !examLoading ? (
+            <Text style={[styles.premiumNotice, { color: colors.textMuted }]}>Chưa có bài thi nào.</Text>
+          ) : (
+            examHistory.map((item) => (
+              <View key={item.id} style={[styles.examRow, { borderBottomColor: colors.border }]}>
+                <View style={styles.examInfo}>
+                  <Text style={[styles.examTitle, { color: colors.text }]} numberOfLines={1}>{item.title}</Text>
+                  <Text style={[styles.examSubject, { color: colors.textMuted }]}>{subjectName(item.subject)}</Text>
+                </View>
+                <View style={styles.examRight}>
+                  <Text style={[styles.examScore, { color: item.score !== null && item.score >= 70 ? '#16a34a' : '#f59e0b' }]}>
+                    {item.score !== null ? `${item.score}đ` : '—'}
+                  </Text>
+                  <Text style={[styles.examDate, { color: colors.textMuted }]}>
+                    {new Date(item.completedAt).toLocaleDateString('vi-VN', { day: 'numeric', month: 'numeric' })}
+                  </Text>
+                </View>
+              </View>
+            ))
+          )}
+          {examLoading && <ActivityIndicator color={colors.primary} style={{ marginVertical: 8 }} />}
+          {!examLoading && examHistory.length < examTotal && (
+            <TouchableOpacity
+              onPress={() => { void handleLoadMoreExams(); }}
+              style={[styles.loadMoreBtn, { borderColor: colors.border }]}
+            >
+              <Text style={[styles.loadMoreText, { color: colors.primary }]}>Xem thêm</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      ) : (
+        <View style={[styles.premiumLockedBanner]}>
+          <Text style={[styles.premiumLockedIcon]}>⭐</Text>
+          <Text style={[styles.premiumLockedTitle, { color: colors.text }]}>Lịch sử thi thử là quyền lợi Premium</Text>
+          <Text style={[styles.premiumLockedSub, { color: colors.textMuted }]}>Nâng cấp Premium để xem lịch sử thi thử chi tiết.</Text>
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -210,12 +315,20 @@ const styles = StyleSheet.create({
   weekRow: { flexDirection: 'row', gap: 6, justifyContent: 'center' },
   dayDot: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
   freezeLabel: { fontSize: 12, textAlign: 'center' },
-  overviewRow: { flexDirection: 'row', gap: 10 },
-  overviewCard: { flex: 1, borderWidth: 1, borderRadius: 14, padding: 12, alignItems: 'center', gap: 4 },
-  overviewValue: { fontSize: 22, fontWeight: '800' },
-  overviewLabel: { fontSize: 11, textAlign: 'center' },
+  overviewRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  overviewCard: { width: '48%', borderWidth: 1, borderRadius: 14, padding: 14, alignItems: 'center', gap: 6 },
+  overviewValue: { fontSize: 28, fontWeight: '800' },
+  overviewLabel: { fontSize: 12, textAlign: 'center', fontWeight: '600' },
+  overviewSub: { fontSize: 11 },
   section: { borderWidth: 1, borderRadius: 14, padding: 16, gap: 8 },
-  sectionTitle: { fontSize: 14, fontWeight: '700', marginBottom: 4 },
+  sectionTitle: { fontSize: 14, fontWeight: '700', marginBottom: 8 },
+  monthCompareGrid: { flexDirection: 'row', gap: 12, alignItems: 'stretch' },
+  monthCol: { flex: 1, gap: 8 },
+  monthDivider: { width: 1, backgroundColor: '#e2e4ea', marginVertical: 0 },
+  monthLabel: { fontSize: 12, fontWeight: '600', marginBottom: 4 },
+  monthRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  monthRowLabel: { fontSize: 13 },
+  monthRowValue: { fontSize: 14, fontWeight: '600' },
   compRow: { gap: 8 },
   compCol: { gap: 2 },
   compLabel: { fontSize: 12 },
@@ -225,6 +338,20 @@ const styles = StyleSheet.create({
   statNums: { flexDirection: 'row', gap: 10 },
   statNum: { fontSize: 12, fontWeight: '600' },
   premiumCard: { borderWidth: 1.5, borderRadius: 14, padding: 16, gap: 4 },
+  premiumLockedBanner: { alignItems: 'center', paddingVertical: 32, paddingHorizontal: 16 },
+  premiumLockedIcon: { fontSize: 36, marginBottom: 8 },
+  premiumLockedTitle: { fontSize: 14, fontWeight: '700', marginBottom: 4, textAlign: 'center' },
+  premiumLockedSub: { fontSize: 13, textAlign: 'center' },
+  premiumNotice: { fontSize: 13, textAlign: 'center', paddingVertical: 8 },
+  examRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, gap: 8 },
+  examInfo: { flex: 1 },
+  examTitle: { fontSize: 14, fontWeight: '600' },
+  examSubject: { fontSize: 12, marginTop: 2 },
+  examRight: { alignItems: 'flex-end', gap: 2 },
+  examScore: { fontSize: 15, fontWeight: '800' },
+  examDate: { fontSize: 11 },
+  loadMoreBtn: { borderWidth: 1, borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 8 },
+  loadMoreText: { fontSize: 14, fontWeight: '600' },
   trendRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, gap: 10 },
   trendDate: { fontSize: 12, width: 56 },
   trendSubject: { flex: 1, fontSize: 13 },
