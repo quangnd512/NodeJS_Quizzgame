@@ -26,6 +26,7 @@ export function MainTabNavigator() {
 
   return (
     <Tab.Navigator
+      initialRouteName="Profile"
       screenOptions={({ route }) => {
         const config = TAB_CONFIG[route.name as keyof MainTabParamList];
         return {
