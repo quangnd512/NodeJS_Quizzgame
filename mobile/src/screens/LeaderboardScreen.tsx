@@ -3,6 +3,8 @@ import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -33,6 +35,8 @@ export function LeaderboardScreen() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
+  // Popup chi tiet user khi bam vao 1 dong
+  const [selected, setSelected] = useState<LeaderboardEntry | null>(null);
 
   useEffect(() => {
     if (!sessionToken) return;
@@ -73,8 +77,10 @@ export function LeaderboardScreen() {
   function renderEntry(item: LeaderboardEntry) {
     const isMe = item.userId === profile?.id;
     return (
-      <View
+      <TouchableOpacity
         key={item.userId}
+        onPress={() => setSelected(item)}
+        activeOpacity={0.75}
         style={[
           styles.entryRow,
           {
@@ -96,12 +102,66 @@ export function LeaderboardScreen() {
           <Text style={[styles.reputation, { color: colors.primary }]}>{item.reputationScore}</Text>
           <Text style={{ color: TREND_COLOR[item.trend], fontSize: 14 }}>{TREND_ICON[item.trend]}</Text>
         </View>
-      </View>
+      </TouchableOpacity>
     );
   }
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
+      {/* Modal chi tiet nguoi dung */}
+      <Modal
+        visible={selected !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSelected(null)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setSelected(null)}>
+          <Pressable style={[styles.detailCard, { backgroundColor: colors.surface }]} onPress={() => {}}>
+            {selected && (
+              <>
+                <View style={styles.detailHeader}>
+                  <View style={[styles.detailAvatar, { backgroundColor: colors.primary }]}>
+                    <Text style={styles.detailAvatarText}>
+                      {(selected.displayName ?? '?').charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={styles.detailInfo}>
+                    <Text style={[styles.detailName, { color: colors.text }]}>
+                      {selected.displayName ?? 'Ẩn danh'}
+                    </Text>
+                    <Text style={[styles.detailRank, { color: colors.primary }]}>Hạng #{selected.rank}</Text>
+                  </View>
+                  <Text style={{ color: TREND_COLOR[selected.trend], fontSize: 22, fontWeight: '700' }}>
+                    {TREND_ICON[selected.trend]}
+                  </Text>
+                </View>
+
+                <View style={[styles.detailStats, { borderTopColor: colors.border }]}>
+                  <View style={styles.detailStatItem}>
+                    <Text style={[styles.detailStatVal, { color: colors.primary }]}>{selected.reputationScore}</Text>
+                    <Text style={[styles.detailStatLabel, { color: colors.textMuted }]}>Điểm uy tín</Text>
+                  </View>
+                  <View style={styles.detailStatItem}>
+                    <Text style={[styles.detailStatVal, { color: colors.text }]}>{selected.avgScore.toFixed(1)}</Text>
+                    <Text style={[styles.detailStatLabel, { color: colors.textMuted }]}>Điểm TB</Text>
+                  </View>
+                  <View style={styles.detailStatItem}>
+                    <Text style={[styles.detailStatVal, { color: colors.text }]}>{selected.examCount}</Text>
+                    <Text style={[styles.detailStatLabel, { color: colors.textMuted }]}>Số bài thi</Text>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.detailCloseBtn, { borderColor: colors.border }]}
+                  onPress={() => setSelected(null)}
+                >
+                  <Text style={[{ color: colors.text, fontSize: 14, fontWeight: '600' }]}>Đóng</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
       {/* Header gradient area */}
       <View style={[styles.header, { paddingTop: insets.top + 16, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <Text style={[styles.title, { color: colors.text }]}>🏆 Bảng Xếp Hạng</Text>
@@ -148,7 +208,7 @@ export function LeaderboardScreen() {
                   {[top3[1], top3[0], top3[2]].map((entry, podIdx) => {
                     if (!entry) return <View key={podIdx} style={{ flex: 1 }} />;
                     const realRank = podIdx === 1 ? 0 : podIdx === 0 ? 1 : 2;
-                    const podiumHeights = [60, 84, 44];
+                    const podiumHeights = [84, 60, 44];
                     return (
                       <View key={entry.userId} style={[styles.podiumItem, { flex: 1, alignItems: 'center' }]}>
                         <Text style={{ fontSize: 24 }}>{MEDAL[realRank]}</Text>
@@ -216,4 +276,18 @@ const styles = StyleSheet.create({
   entrySub: { fontSize: 12, marginTop: 2 },
   entryRight: { alignItems: 'flex-end', gap: 2 },
   reputation: { fontSize: 15, fontWeight: '800' },
+  // Modal chi tiet
+  modalOverlay: { flex: 1, backgroundColor: '#00000050', justifyContent: 'flex-end' },
+  detailCard: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, gap: 16, elevation: 8, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 16 },
+  detailHeader: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  detailAvatar: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
+  detailAvatarText: { color: '#fff', fontSize: 22, fontWeight: '800' },
+  detailInfo: { flex: 1 },
+  detailName: { fontSize: 18, fontWeight: '800' },
+  detailRank: { fontSize: 13, fontWeight: '600', marginTop: 2 },
+  detailStats: { flexDirection: 'row', justifyContent: 'space-around', paddingTop: 16, borderTopWidth: 1 },
+  detailStatItem: { alignItems: 'center', gap: 4 },
+  detailStatVal: { fontSize: 22, fontWeight: '900' },
+  detailStatLabel: { fontSize: 12 },
+  detailCloseBtn: { borderWidth: 1.5, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
 });
