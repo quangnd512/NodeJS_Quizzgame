@@ -98,6 +98,50 @@ rm -rf node_modules && npm install --legacy-peer-deps
 
 Đây là chẩn đoán ĐÚNG cho triệu chứng treo, không phải "máy yếu" hay "cấu hình sai".
 
+### 🚨 Nếu `node_modules` KHÔNG hỏng mà vẫn treo — kiểm tra tài nguyên máy
+
+Đã xác nhận thực tế (phiên debug kéo dài nhiều giờ): trên máy dev này, `npx tsx`/`esbuild`
+có thể treo ở **0% CPU trong 1-5 phút** dù code và `node_modules` hoàn toàn lành, do máy
+bị tranh chấp tài nguyên. Kiểm tra theo thứ tự:
+
+```bash
+top -l 1 -s 0 | grep -E "PhysMem|Load Avg"   # RAM trống < ~300MB hoặc Load Avg > 10 → nghẽn
+iostat -d 1 2                                 # MB/s cao bất thường (>15MB/s liên tục) → đĩa đang bị ai đó ghi/đọc nặng
+```
+
+**Thủ phạm thường gặp** (đã gặp thật, xếp theo tần suất):
+- Chrome nhiều tab, VS Code, hoặc **các tab Claude Code cũ bị bỏ quên** (mỗi tiến trình
+  `.local/bin/claude` tốn ~150MB — kiểm tra `ps aux | grep "\.local/bin/claude"`, tiến
+  trình nào `ELAPSED` nhiều giờ mà không phải đang dùng thì đóng tab đó)
+- Ngay sau khi khởi động lại máy: Spotlight (`mds`/`mdworker`) đánh chỉ mục lại toàn ổ
+  đĩa — tự hết sau 10-30 phút, hoặc `sudo mdutil -i off /` để tắt (cần mật khẩu người dùng)
+- iCloud Drive đồng bộ (`bird`) nếu project nằm trong thư mục được đồng bộ (vd. `~/Desktop`
+  có bật "Desktop & Documents Folders") — mỗi thay đổi trong `node_modules` (hàng trăm
+  nghìn file) kích hoạt đồng bộ, gây nghẽn đĩa triền miên. Nên tắt sync cho thư mục đó
+  hoặc chuyển project ra ngoài `~/Desktop`
+- Service không liên quan tự chạy nền (vd. `mysqld` dù dự án dùng PostgreSQL) — kiểm tra
+  `ps aux | sort -rk3 -n | head` (CPU) và `ps aux | sort -rk6 -n | head` (RAM) để tìm
+
+⚠️ **Bẫy quan trọng nhất**: khi một tiến trình bị treo và bạn `kill -9` nó rồi thử lại,
+**LUÔN xác nhận nó đã chết thật** (`ps -p <PID>`) trước khi spawn tiến trình mới. Tiến
+trình bị treo do tranh chấp tài nguyên có thể **chống lại SIGKILL vài giây** — nếu bạn
+không đợi và chạy lại ngay, tiến trình cũ và mới cùng tồn tại, tự nhân đôi tài nguyên bị
+chiếm dụng qua mỗi lần thử lại, khiến tình hình càng lúc càng tệ thay vì cải thiện.
+
+**Quy trình xử lý dứt điểm** (dùng khi cần khởi động lại toàn bộ hệ thống dev):
+```bash
+# 1. Dọn sạch MỌI tiến trình dev cũ trước, xác nhận chết hẳn
+pkill -9 -f "tsx.*server.ts"; pkill -9 -f "expo start"; pkill -9 -f "vite"
+sleep 3
+ps aux | grep -iE "tsx|esbuild|expo|vite" | grep -v grep   # phải rỗng
+
+# 2. Kiểm tra RAM — nếu < 500MB trống, đóng bớt app nặng trước khi khởi động lại
+top -l 1 -s 0 | grep PhysMem
+
+# 3. Khởi động LẦN LƯỢT (không chạy song song nhiều lệnh init cùng lúc), mỗi lệnh xác
+#    nhận đã lên bằng curl trước khi chạy lệnh tiếp theo
+```
+
 Trước khi chạy, nếu không chắc: `node -e "console.log(Object.keys(require('./<phần>/package.json').scripts))"`
 
 ## Git
