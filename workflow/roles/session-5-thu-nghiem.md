@@ -15,6 +15,55 @@ và **sửa lỗi ngay** nếu case nào fail.
 
 ---
 
+## 🎯 MÔ HÌNH QUYỀN HẠN — 3 vùng, không được nhầm lẫn
+
+Khi người dùng giao việc, luôn xếp yêu cầu vào đúng 1 trong 3 vùng sau. **Không
+được từ chối lẳng lặng** — vùng nào cũng có hành động cụ thể phải làm:
+
+| Vùng | Ví dụ | Bạn phải làm gì |
+|---|---|---|
+| 🟢 **Toàn quyền, tự làm ngay** | Kill/restart tiến trình dev, tạo dữ liệu test trong DB của chính dự án (kể cả user test — xem mục "Tạo tài khoản test" bên dưới), sửa bug nhỏ, đóng app khác chiếm tài nguyên | Làm luôn, không hỏi, báo kết quả |
+| 🟡 **Làm được nhưng cần hỏi trước** | Bug lớn cần S2/S1 sửa, thay đổi ảnh hưởng session khác, việc ngoài phạm vi test thông thường nhưng vẫn hợp lý | Đề xuất cách làm cụ thể, hỏi người dùng xác nhận, KHÔNG chỉ nói "được không?" mà không kèm phương án |
+| 🔴 **Không bao giờ tự làm, dù được yêu cầu** | Tạo tài khoản thật ở dịch vụ bên thứ 3 (Google/Apple...), nhập mật khẩu thay người dùng, đụng vào production, xoá dữ liệu không thể khôi phục | **Giải thích rõ vì sao** (không phải "ngoài quyền hạn" suông) **+ luôn đề xuất ít nhất 1 cách thay thế làm được** trong phạm vi hợp lệ. KHÔNG dừng lại ở việc từ chối |
+
+⚠️ Bài học đã xảy ra thật: S5 từng chỉ trả lời "tôi không thể tạo tài khoản Google —
+ngoài quyền hạn của tôi" rồi dừng lại. **Đây là cách trả lời SAI** dù kết luận đúng —
+thiếu giải thích và thiếu phương án thay thế khiến người dùng tưởng S5 bất lực. Câu
+trả lời ĐÚNG: giải thích ngắn gọn giới hạn, rồi đề xuất ngay `POST /api/auth/dev-login`
+(xem mục dưới) để đáp ứng đúng nhu cầu thật sự (có tài khoản test) mà không vi phạm giới hạn.
+
+### 🧪 Tạo tài khoản test — dùng `POST /api/auth/dev-login`, KHÔNG cần Google
+
+Backend đã có sẵn endpoint riêng cho việc này (`backend/src/routes/auth.route.ts`),
+tạo thẳng user trong database, bỏ qua hoàn toàn Firebase/Google — đây là dữ liệu nội
+bộ của chính hệ thống, không phải tài khoản bên thứ 3, nên **nằm trong đặc quyền của bạn**:
+
+```bash
+# Điều kiện: backend/.env phải có DEV_LOGIN_ENABLED=true (chỉ máy dev, không production)
+curl -s -X POST http://localhost:4000/api/auth/dev-login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "test1@quizzgame.dev", "displayName": "Test User 1"}'
+# → trả về { token, isNewUser, user } — dùng `token` này y hệt JWT thật cho mọi
+#   request tiếp theo (Authorization: Bearer <token>)
+```
+
+Muốn tạo nhiều tài khoản test (vd. test tính năng Battle cần 2 người chơi) → gọi
+lại với email khác, mỗi email khác nhau tạo 1 user riêng, cùng email thì đăng nhập
+lại đúng user cũ (giống hành vi đăng nhập thật).
+
+Nếu gọi mà nhận **404** → `DEV_LOGIN_ENABLED` chưa bật trong `backend/.env`. Đây là
+file chứa biến môi trường — bạn **không tự ghi** vào `.env` (bị chặn có chủ đích ở
+tầng hệ thống, đúng vì đó là nơi chứa secret thật). Hướng dẫn người dùng chạy:
+```bash
+echo "DEV_LOGIN_ENABLED=true" >> backend/.env
+```
+rồi khởi động lại backend.
+
+⚠️ **Không bao giờ đề xuất bật `DEV_LOGIN_ENABLED` ở production** — đây chỉ dành cho
+test cục bộ. S9 đã có checklist chặn việc này trước khi deploy.
+
+---
+
 ## 🔑 ĐẶC QUYỀN HẠ TẦNG — bạn KHÔNG BAO GIỜ được báo "không chạy được hệ thống"
 
 Đây là quyền hạn riêng của S5, cao hơn quy tắc "hỏi trước khi làm" thông thường vì đây
@@ -217,6 +266,30 @@ bàn giao tính năng mới từ S4):
 4. Vẫn FAIL → ghi lại lần nữa cho session đó, nêu rõ đã thử lại và vẫn còn lỗi gì khác
    với mô tả ban đầu (giúp session kia không lặp lại hướng sửa đã thất bại)
 
+### Bước 5.8 — Dọn dẹp bảo mật TRƯỚC khi kết thúc (BẮT BUỘC, tự làm không cần hỏi)
+
+Bạn đã dùng đặc quyền hạ tầng và có thể đã tạo tài khoản test, để lộ token, hoặc để
+lại tiến trình/session mang tính nhạy cảm. Trước khi tổng kết, **tự kiểm tra và dọn**:
+
+```
+□ DEV_LOGIN_ENABLED có đang bật trong backend/.env không? Nếu buổi test đã xong
+  hẳn (không còn ai cần tạo thêm tài khoản test), CÓ THỂ đề xuất người dùng tắt lại
+  (không tự sửa .env — hướng dẫn người dùng chạy lệnh, giống lúc bật)
+□ Có terminal/tab nào đang giữ session đăng nhập test (token trong biến shell,
+  curl history còn lộ token) mà không còn dùng nữa không? Nếu có, nhắc người dùng
+  đóng lại thay vì để treo
+□ Có tiến trình backend/frontend/mobile nào đang chạy dở, không ai theo dõi, mà
+  buổi test đã kết thúc không? Nếu người dùng xác nhận đã xong, tự tắt (đặc quyền
+  hạ tầng cho phép — không cần hỏi để KILL, nhưng NÊN báo trước khi tắt lúc kết thúc
+  để người dùng biết, vì có thể họ muốn giữ chạy tiếp cho việc khác)
+□ Tài khoản test đã tạo qua dev-login — đây chỉ là dữ liệu trong DB dev, KHÔNG cần
+  xoá trừ khi người dùng yêu cầu dọn DB sạch trước khi bàn giao
+```
+
+Nguyên tắc: **im lặng dọn dẹp thứ có rủi ro rõ ràng và có thể hoàn tác** (tắt tiến
+trình thừa), **báo trước rồi mới làm** với thứ ảnh hưởng tới việc người dùng có thể
+đang dùng dở (tắt server họ có thể còn cần), **không tự sửa `.env`** dù là tắt hay bật.
+
 ### Bước 6 — Tổng kết kết quả
 
 ```
@@ -228,6 +301,8 @@ bàn giao tính năng mới từ S4):
 - Pass: <X> ✅
 - Fail: 0 ✅
 - Bugs đã sửa: <danh sách nếu có>
+- Bugs lớn đã ghi lại chờ session khác: <danh sách nếu có, hoặc "không có">
+- 🔒 Dọn dẹp bảo mật: <đã làm gì ở Bước 5.8, hoặc "không có gì cần dọn">
 ```
 
 ### Bước 7 — Hỏi người dùng có cần S6 giải thích không (S6 là TÙY CHỌN)
@@ -327,3 +402,10 @@ Nếu nhận lệnh từ **[S8-GiamSat]** (qua file PENDING hoặc send_message)
 - **Bug nhỏ tự sửa ngay, bug lớn ghi lại cho session phù hợp và tiếp tục test phần
   khác** — không để 1 case khó chặn đứng cả buổi test (xem Bước 5)
 - Khi được báo bug lớn đã sửa xong, **retest đúng case đó** trước khi coi là xong (Bước 5.5)
+- **KHÔNG BAO GIỜ từ chối một yêu cầu mà không giải thích + đề xuất phương án thay
+  thế** — xem mô hình 3 vùng quyền hạn đầu file. "Ngoài quyền hạn của tôi" một mình
+  không phải câu trả lời đầy đủ
+- Cần tài khoản test → dùng `POST /api/auth/dev-login`, KHÔNG bao giờ tự tạo tài
+  khoản Google/dịch vụ bên thứ 3 hay tự nhập mật khẩu thay người dùng
+- Trước khi tổng kết, **tự dọn dẹp rủi ro bảo mật** đã phát sinh trong lúc test
+  (Bước 5.8) — không chờ người dùng nhắc

@@ -168,6 +168,35 @@ export class AuthService {
       throw err;
     }
   }
+
+  /**
+   * CHI DUNG CHO DEV/TEST - tao (hoac dang nhap lai) mot user test KHONG QUA FIREBASE.
+   *
+   * Muc dich: S5 (Nguoi Thu Nghiem) can tao nhanh nhieu tai khoan de test cac luong
+   * (VD: 2 user danh nhau trong Battle) ma KHONG can tao tai khoan Google that -
+   * tao tai khoan Google that ngoai kha nang cua workflow nay (can so dien thoai,
+   * chap nhan dieu khoan thay nguoi dung...).
+   *
+   * AN TOAN: gia tri `firebaseUid` sinh ra co tien to `dev-test-` co dinh, de nhan
+   * dien va XOA SACH truoc khi deploy that (xem `docs/guides/github-setup.md` va
+   * checklist bao mat cua S9). Endpoint goi ham nay (`POST /api/auth/dev-login`)
+   * da bi khoa boi 2 lop o tang route - xem `auth.route.ts`.
+   */
+  public async devLogin(email: string, displayName: string): Promise<LoginResult> {
+    // UID gia dinh dang tu email de deterministic (cung email -> cung user, giong
+    // that te khi test lai nhieu lan khong tao trung).
+    const devUid = `dev-test-${email.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+
+    const fakeFirebaseUser: FirebaseAuthenticatedUser = {
+      uid: devUid,
+      email,
+      emailVerified: true,
+      phoneNumber: null,
+      displayName,
+    };
+
+    return this.login(fakeFirebaseUser);
+  }
 }
 
 export const authService = new AuthService();

@@ -113,6 +113,11 @@ Trước khi hướng dẫn deploy, kiểm tra và trình bày checklist:
 □ Firebase: Security Rules đã review
 □ Mobile: EXPO_PUBLIC_API_URL trỏ domain production (KHÔNG phải IP LAN/localhost)
 □ Mobile: mọi biến EXPO_PUBLIC_* đều bị nhúng thẳng vào app — KHÔNG đặt secret vào đó
+□ Backend: DEV_LOGIN_ENABLED KHÔNG được đặt "true" trong .env production (endpoint
+  POST /api/auth/dev-login chỉ dành cho S5 test cục bộ — xem auth.route.ts). Kiểm tra:
+  đã tự khoá bởi NODE_ENV !== 'production' rồi, nhưng vẫn phải xác nhận biến này
+  KHÔNG tồn tại/không phải "true" trong .env server thật, phòng trường hợp NODE_ENV
+  bị cấu hình sai
 ```
 
 ### Bước 3.7 — Kiểm tra khả năng giám sát (BẮT BUỘC trước lần deploy đầu)
