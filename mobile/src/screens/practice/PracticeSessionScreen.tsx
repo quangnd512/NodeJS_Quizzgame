@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,7 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../auth/AuthContext';
 import { useAppTheme } from '../../theme/ThemeContext';
 import { answerQuestion, completeSession } from '../../api/practice';
-import type { AnswerResult } from '../../api/practice';
+import type { AnswerResult, CompleteResult } from '../../api/practice';
 import type { PracticeStackScreenProps } from '../../navigation/types';
 
 type Props = PracticeStackScreenProps<'PracticeSession'>;
@@ -38,6 +39,8 @@ export function PracticeSessionScreen({ navigation, route }: Props) {
   const [correctCount, setCorrectCount] = useState(0);
   // Dung timeLimitSeconds tu server (1020s = 17 phut), khong hardcode 30 phut
   const [timeRemaining, setTimeRemaining] = useState(session.timeLimitSeconds);
+  // Modal ket qua sau khi ket thuc som
+  const [resultModal, setResultModal] = useState<CompleteResult | null>(null);
 
   const currentQ = session.questions[questionIndex];
   const isLastQ = questionIndex === session.questions.length - 1;
@@ -102,6 +105,33 @@ export function PracticeSessionScreen({ navigation, route }: Props) {
     }
   }
 
+  // Ket thuc som: goi complete ngay, hien modal ket qua (khong navigate ngay)
+  async function handleEarlyComplete() {
+    if (!sessionToken) return;
+    setFinishing(true);
+    try {
+      const complete = await completeSession(sessionToken, session.sessionId);
+      setResultModal(complete);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Không thể kết thúc phiên.';
+      Alert.alert('Lỗi', msg);
+    } finally {
+      setFinishing(false);
+    }
+  }
+
+  // Xac nhan thoat — canh bao mat ket qua neu chua complete
+  function handleExitPress() {
+    Alert.alert(
+      'Thoát phiên luyện tập?',
+      'Thoát ngay sẽ không lưu kết quả. Bạn muốn tiếp tục?',
+      [
+        { text: 'Ở lại', style: 'cancel' },
+        { text: 'Thoát', style: 'destructive', onPress: () => navigation.goBack() },
+      ],
+    );
+  }
+
   async function handleNext() {
     if (!sessionToken) return;
     if (isLastQ) {
@@ -162,9 +192,50 @@ export function PracticeSessionScreen({ navigation, route }: Props) {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
+      {/* Modal ket qua sau khi ket thuc som */}
+      <Modal
+        visible={resultModal !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setResultModal(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>🎯 Kết quả phiên luyện tập</Text>
+            <Text style={[styles.modalScore, { color: colors.primary }]}>
+              {correctCount}/{session.questions.length} câu đúng
+            </Text>
+            {resultModal && (
+              <Text style={[styles.modalPoints, { color: '#f59e0b' }]}>+{resultModal.pointsEarned} điểm</Text>
+            )}
+            <View style={styles.modalBtns}>
+              <TouchableOpacity
+                style={[styles.modalBtn, { borderColor: colors.border }]}
+                onPress={() => navigation.goBack()}
+              >
+                <Text style={[styles.modalBtnText, { color: colors.text }]}>Quay lại</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtnPrimary, { backgroundColor: colors.primary }]}
+                onPress={() => {
+                  setResultModal(null);
+                  navigation.replace('PracticeResult', {
+                    complete: resultModal!,
+                    subject: session.subject,
+                    totalQuestions: session.questions.length,
+                    correctCount,
+                  });
+                }}
+              >
+                <Text style={styles.modalBtnPrimaryText}>Xem chi tiết</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + 8, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+        <TouchableOpacity onPress={handleExitPress} style={styles.backBtn}>
           <Text style={[styles.backText, { color: colors.primary }]}>← Thoát</Text>
         </TouchableOpacity>
         <View style={styles.headerCenterContainer}>
@@ -172,10 +243,23 @@ export function PracticeSessionScreen({ navigation, route }: Props) {
             Câu {questionIndex + 1}/{session.questions.length}
           </Text>
         </View>
-        <View style={[styles.timerContainer, { backgroundColor: timeRemaining <= 60 ? '#dc262618' : 'transparent' }]}>
-          <Text style={[styles.timerText, { color: timeRemaining <= 60 ? '#dc2626' : colors.textMuted }]}>
-            ⏱ {formatTime(timeRemaining)}
-          </Text>
+        <View style={styles.headerRight}>
+          <View style={[styles.timerContainer, { backgroundColor: timeRemaining <= 60 ? '#dc262618' : 'transparent' }]}>
+            <Text style={[styles.timerText, { color: timeRemaining <= 60 ? '#dc2626' : colors.textMuted }]}>
+              ⏱ {formatTime(timeRemaining)}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.earlyEndBtn, { borderColor: colors.border }]}
+            onPress={() => { void handleEarlyComplete(); }}
+            disabled={finishing || submitting || questionState === 'unanswered'}
+          >
+            {finishing ? (
+              <ActivityIndicator color={colors.primary} size="small" />
+            ) : (
+              <Text style={[styles.earlyEndText, { color: colors.primary }]}>Kết thúc sớm</Text>
+            )}
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -289,4 +373,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   nextBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  earlyEndBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
+  earlyEndText: { fontSize: 12, fontWeight: '600' },
+  // Modal ket qua ket thuc som
+  modalOverlay: { flex: 1, backgroundColor: '#00000060', alignItems: 'center', justifyContent: 'center', padding: 24 },
+  modalCard: { borderRadius: 20, padding: 24, width: '100%', alignItems: 'center', gap: 12, elevation: 8, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 16 },
+  modalTitle: { fontSize: 16, fontWeight: '700' },
+  modalScore: { fontSize: 36, fontWeight: '900' },
+  modalPoints: { fontSize: 20, fontWeight: '700' },
+  modalBtns: { flexDirection: 'row', gap: 12, marginTop: 8, width: '100%' },
+  modalBtn: { flex: 1, borderWidth: 1.5, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
+  modalBtnText: { fontSize: 15, fontWeight: '600' },
+  modalBtnPrimary: { flex: 1, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
+  modalBtnPrimaryText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 });
