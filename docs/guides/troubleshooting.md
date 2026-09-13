@@ -438,3 +438,76 @@ ORDER BY "completedAt" DESC LIMIT 30;
 **Nguyên nhân phổ biến nhất**: `RootNavigator` chỉ rời màn Splash khi CẢ HAI `AuthContext` và `AdminAuthContext` đều thoát trạng thái `'booting'` (xem `docs/FEATURE_LOG.md` Section 17, luồng "Khởi động app"). Nếu 1 trong 2 request xác thực lúc khởi động (`GET /api/users/me` hoặc `GET /api/admin/settings/premium-default`) bị treo vô thời hạn (backend không phản hồi, mất mạng ngay lúc khởi động mà chưa kịp raise lỗi rõ ràng) — cả app sẽ kẹt ở Splash.
 
 **Giải pháp**: Kiểm tra backend có đang chạy và phản hồi bình thường không (mục 33 nếu là lỗi kết nối). Nếu backend bình thường mà vẫn kẹt, thử tắt hẳn app (không chỉ đưa xuống nền) rồi mở lại; nếu vẫn kẹt, đây là bug thật cần báo cáo kỹ thuật kèm log console (`console.warn`/`console.error` của `AuthContext`/`AdminAuthContext` lúc boot).
+
+## Lỗi liên quan đến Dev-login (Tự động hóa test) — TASK1
+
+### 36. Đăng nhập Dev-login báo lỗi 403 "Forbidden" hoặc "Endpoint disabled"
+
+**Triệu chứng**: Khi truy cập `http://localhost:5173/?devLogin=1` và submit form dev-login, nhận lỗi HTTP 403.
+
+**Nguyên nhân**: Dev-login endpoint bị khoá bởi 1 trong 2 lớp:
+1. Backend không chạy ở `NODE_ENV=development` (hoặc build production sẽ là `NODE_ENV=production`)
+2. Biến môi trường `DEV_LOGIN_ENABLED` không được đặt hoặc không = `'true'` 
+3. Frontend không ở DEV mode (`import.meta.env.DEV === false`) — xảy ra khi build production
+
+**Giải pháp**: Chắc chắn rằng:
+1. Backend chạy lệnh `npm run dev` (không phải `npm run build`), tức `NODE_ENV=development`
+2. File `.env` của backend có `DEV_LOGIN_ENABLED=true` (nếu không có → thêm vào)
+3. Frontend chạy `npm run dev` ở dev server (`import.meta.env.DEV === true`)
+4. Truy cập **chính xác** URL: `http://localhost:5173/?devLogin=1` (có `?devLogin=1`, chữ hoa)
+
+### 37. Dev-login hiện "an toàn" — không bao giờ bật ở production
+
+**Lưu ý an toàn (không phải lỗi)**: Endpoint `/api/auth/dev-login` được khoá bởi **2 lớp** an toàn:
+- Backend check: `NODE_ENV !== 'development'` + `DEV_LOGIN_ENABLED !== 'true'` → 403
+- Frontend check: `import.meta.env.DEV === false` → không render route
+
+Nếu vô tình build production đặt lên server production, endpoint vẫn **KHÔNG** bật (backend trả 403). Tính năng này chỉ dành cho S5 kiểm thử ở dev machine, không bao giờ cho user cuối.
+
+## Lỗi liên quan đến Dark Mode (TASK2c)
+
+### 38. Chế độ giao diện không lưu — mỗi lần refresh reset về default
+
+**Triệu chứng**: User chọn "Tối" ở ProfilePage, giao diện đổi tối ngay, nhưng khi refresh trang, lại về "Theo hệ thống" (mặc định).
+
+**Nguyên nhân**: `localStorage` bị chặn hoặc lỗi (ví dụ: dùng ở private window, hoặc browser cấu hình chặn localStorage). Khi `localStorage.setItem()` ném exception, code đã bắt silently (không hiện lỗi, chỉ bỏ qua) để tránh crash.
+
+**Giải pháp**: 
+- Kiểm tra browser có cho phép `localStorage` không (mở DevTools → Application → Local Storage → xem có `quizz_theme` entry không)
+- Nếu dùng private/incognito window → chuyển sang cửa sổ bình thường
+- Nếu không phải private → kiểm tra browser setting có chặn localStorage cho domain này không (Settings → Privacy → Cookies and site data)
+
+### 39. Dark mode "Theo hệ thống" không tự chuyển ở 5h/18h
+
+**Triệu chứng**: Chọn "🔄 Theo hệ thống" nhưng toàn bộ ngày (từ 5h sáng đến 18h) vẫn tối (hoặc ngược lại), hoặc không chuyển ở mốc 5h/18h.
+
+**Nguyên nhân**: Có thể là giờ máy tính sai, hoặc browser cấu hình múi giờ khác. App kiểm tra giờ dựa trên `new Date().getHours()` (giờ local của máy user), không phải giờ UTC hay giờ máy chủ.
+
+**Giải pháp**: 
+- Kiểm tra đồng hồ máy tính (bảng đầu góc phải desktop) — nếu sai → chỉnh lại giờ đúng
+- Refresh trang → kiểm tra lại
+- Nếu muốn test chuyển đổi nhanh: tạm chọn "Sáng" hoặc "Tối" cụ thể, không cần chờ đến 5h/18h
+
+## Lỗi liên quan đến Exam-info-card (TASK2b)
+
+### 40. Card "Thông tin thi" không hiển thị hoặc bị che khuất
+
+**Triệu chứng**: Vào ExamPage (Thi thử) trên web nhưng không thấy card "Thông tin thi" — chỉ thấy danh sách môn.
+
+**Nguyên nhân phổ biến**: 
+1. Scroll không đủ xuống dưới — card nằm ở dưới danh sách môn, cần scroll
+2. Giao diện bị che khuất bởi modal/dialog khác
+3. CSS media query — ở mobile width (< 768px), card có thể ẩn hoặc layout khác
+
+**Giải pháp**:
+- Scroll xuống dưới cùng danh sách các nút môn → phải thấy card
+- Đóng bất kỳ modal nào đang hiện (ấn Escape hoặc bấm X close)
+- Test ở desktop width (kéo rộng cửa sổ trên desktop, hoặc test trên web desktop thực) — ở mobile width card hiện không hiện tuỳ CSS design
+
+### 41. Button "Xem đáp án chi tiết" bị disabled hoặc báo "Nâng cấp Premium"
+
+**Triệu chứng**: Bấm button "Xem đáp án chi tiết" ở card "Thông tin thi" nhưng không hoạt động, hoặc button tắt (grayed out) kèm tooltip hướng dẫn nâng cấp.
+
+**Nguyên nhân**: Tài khoản của bạn **không phải Premium** — tính năng xem đáp án chi tiết chỉ dành cho Premium user. User Free sẽ thấy button disabled.
+
+**Giải pháp**: Nâng cấp lên Premium account (cách thực hiện xem mục 15 trong `admin-guide.md`). Sau khi nâng cấp, refresh trang, button sẽ hoạt động.

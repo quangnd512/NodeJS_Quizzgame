@@ -1387,3 +1387,46 @@ cảnh báo rõ, để nguyên cho S5 test thủ công theo checklist đã bổ 
 ### Ghi chú
 - `mobile/` typecheck/lint chạy rất chậm (phù hợp với ghi nhận nhiều vòng trước) — kết quả xác nhận bởi S2 trước bàn giao
 - `connectSocket` deps còn `matchInfo` trước sửa → eslint exhaustive-deps có thể warn; sau sửa (dùng ref) không còn cần dep state
+
+---
+
+## Review: Mobile Complete — TASK1/2a/2b/2c (2026-09-10)
+**Branch**: feature/mobile-complete
+**Reviewer**: S3-SoatLoi
+
+### Files reviewed
+- `frontend/src/screens/DevLoginPage.tsx` (mới)
+- `frontend/src/App.tsx`
+- `frontend/src/index.css`
+- `frontend/src/App.css`
+- `frontend/src/screens/ProfilePage.tsx`
+- `frontend/src/screens/exam/ExamPage.tsx`
+- `mobile/src/navigation/MainTabNavigator.tsx`
+- `frontend/package.json` (thêm @testing-library/dom)
+
+### Lỗi tìm thấy & đã sửa
+1. **ThemeMode duplicate** — type định nghĩa 2 lần (trong App component và ProfilePage module). Fix: export từ ProfilePage.tsx, import trong App.tsx. Xoá local declaration khỏi App component.
+2. **Spurious eslint-disable** — `// eslint-disable-line react-hooks/exhaustive-deps` ở useEffect theme không còn cần thiết sau khi remove ThemeMode local type. Đã xoá comment.
+3. **Missing @testing-library/dom** — peer dependency bị thiếu khiến 13/13 frontend tests FAIL. Đã cài `npm install @testing-library/dom --save-dev`. Tests: 0/101 → 101/101 PASS.
+
+### Đánh giá 9 tiêu chí
+1. **Atomic transaction** ✅ — Không có DB ops trong các changes này
+2. **Race condition** ✅ — devToken effect (DEV-only) có thể race với Firebase onAuthStateChanged, nhưng chấp nhận được vì (a) DEV-only, (b) Firebase auth fires trước (local state), devToken API call fires sau → kết quả cuối đúng
+3. **Error handling** ✅ — DevLoginPage có try/catch, App.tsx devToken effect có .catch()
+4. **Input validation** ✅ — Email input có `required` + `type="email"` validation, backend khoá thêm 2 lớp
+5. **N+1 / Index** ✅ — Không có DB calls mới
+6. **TypeScript any** ✅ — Không có `any`
+7. **Edge cases** ✅ — Theme system: giờ ranh giới 5h/18h handled đúng. DevLogin: disabled khi busy, empty email guarded.
+8. **API contract** ✅ — devLoginApi gọi đúng `POST /api/auth/dev-login`, response shape khớp LoginResult
+9. **File size** ⚠️ — `frontend/src/lib/api.ts` 1464 dòng (pre-existing, đã có trước PR này). Đã ghi PENDING/S1.md.
+
+### Bảo mật DevLogin
+- Guarded 2 lớp ở frontend: `import.meta.env.DEV` (Vite compile-time const → `false` trong production build)
+- Cả state init (`?devLogin=1`) và JSX render đều check `import.meta.env.DEV`
+- Backend khoá `NODE_ENV !== 'production' && DEV_LOGIN_ENABLED === 'true'`
+
+### Kết quả test sau sửa chữa
+- Frontend: 101/101 PASS
+- Lint: 0 errors, 0 warnings
+- TypeScript (`tsc --noEmit`): PASS
+- npm audit: 3 moderate (pre-existing, tất cả từ @vitest/ui)
