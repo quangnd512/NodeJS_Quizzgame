@@ -34,6 +34,7 @@ export default function OnboardingPage({
     setBusy(true);
     try {
       await updateSubjects(sessionToken, [...selected]);
+      setBusy(false);
       onDone();
     } catch (err) { onError(err); setBusy(false); }
   }

@@ -10,7 +10,8 @@ function getInitials(name: string | null, email: string | null): string {
   return src.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('');
 }
 
-type ThemeMode = 'light' | 'dark' | 'system';
+/** Chế độ giao diện: Sáng / Tối / Theo hệ thống. Export để App.tsx dùng chung — tránh duplicate. */
+export type ThemeMode = 'light' | 'dark' | 'system';
 
 function ProfilePage({
   profile, sessionToken, onProfileUpdate, onChangeSubjects, onPractice, onExam, onLeaderboard, onProgress, onWrongAnswers, onSubmissions, onBattle, onError, onLogout,
