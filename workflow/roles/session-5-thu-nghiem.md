@@ -271,15 +271,20 @@ Báo kết quả dạng đã hoàn thành, không phải lời mời:
 
 ### Bước 4.5 — Test case cần nhiều tài khoản (VD: Battle cần 2 người chơi)
 
-1. Tạo tài khoản test qua `POST /api/auth/dev-login` (mục đầu file) — lấy `token`
-2. **Web**: mở tab trình duyệt MỚI, `navigate` tới trang dev-login web (đã có sẵn từ
-   TASK1 — kiểm tra `frontend/src/App.tsx`/route dev-login hiện tại) hoặc dùng cơ chế
-   tương đương để đăng nhập thẳng bằng `token` đó — không đụng tab người dùng đang dùng
-3. **Mobile-web**: tương tự nếu `mobile/App.tsx` đã có cơ chế tương đương; nếu chưa có
-   → đây là case thuộc diện "thiếu công cụ" (Bước 4.6): tự thêm cơ chế đó (code thật,
-   nhỏ, tách biệt khỏi luồng đăng nhập chính), tự kiểm tra bằng typecheck/lint, rồi dùng
-4. Giờ có 2 tab, mỗi tab 1 tài khoản — tự điều khiển cả 2 để test tương tác
-5. Tài khoản người dùng thật không bị ảnh hưởng — hoàn toàn tách biệt
+**Web — đã có sẵn cơ chế chính thức, dùng luôn:**
+1. Mở tab trình duyệt MỚI (không đụng tab người dùng đang dùng)
+2. `navigate` tới `http://localhost:5173/?devLogin=1` — hiện `DevLoginPage`
+   (`frontend/src/screens/DevLoginPage.tsx`, chỉ render khi `import.meta.env.DEV`)
+3. `computer` điền email/tên bất kỳ (VD: `test2@quizzgame.dev`) rồi bấm submit — trang
+   tự gọi `POST /api/auth/dev-login` và đăng nhập thẳng, không qua Google
+4. Giờ có 2 tab, mỗi tab 1 tài khoản — tự điều khiển cả 2 để test tương tác. Tài khoản
+   người dùng thật ở tab kia không bị ảnh hưởng — hoàn toàn tách biệt
+
+**Mobile-web**: nếu `mobile/App.tsx` CHƯA có cơ chế tương đương → đây là case thuộc
+diện "thiếu công cụ" (Bước 4.6): tự thêm 1 màn hình dev-login tương tự bên web (dùng
+lại đúng endpoint `dev-login`, khoá bởi `__DEV__`), tự kiểm tra bằng typecheck/lint,
+rồi dùng. KHÔNG tự chế thêm cơ chế mới cho web nếu `DevLoginPage` đã tồn tại — tái
+dùng, tránh 2 đường vào cùng 1 mục đích (S3 sẽ gắn cờ trùng lặp ở review kiến trúc).
 
 ### Bước 4.6 — Khi 1 case CHƯA đủ công cụ để tự test
 

@@ -18,6 +18,7 @@ import LoginPage from './screens/LoginPage.js';
 import OnboardingPage from './screens/OnboardingPage.js';
 import AdGatePage from './screens/AdGatePage.js';
 import ProfilePage from './screens/ProfilePage.js';
+import type { ThemeMode } from './screens/ProfilePage.js';
 import PracticePage from './screens/practice/PracticePage.js';
 import ExamPage from './screens/exam/ExamPage.js';
 import LeaderboardPage from './screens/LeaderboardPage.js';
@@ -66,7 +67,7 @@ export default function App() {
   const prevUnreadRef                   = useRef(-1);
 
   // ─── Chế độ giao diện (Sáng / Tối / Theo hệ thống) ─────────────────────────
-  type ThemeMode = 'light' | 'dark' | 'system';
+  // ThemeMode được export từ ProfilePage.tsx — tránh duplicate definition
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     try {
       const saved = localStorage.getItem('quizz_theme') as ThemeMode | null;
@@ -98,11 +99,11 @@ export default function App() {
     if (themeMode !== 'system') return undefined;
     const id = setInterval(() => applyThemeToDom('system'), 60_000);
     return () => clearInterval(id);
-  }, [themeMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [themeMode]);
 
   useEffect(() => {
-    // Trang Admin chay doc lap, khong can dang nhap Firebase
-    if (screen === 'admin') return;
+    // Trang Admin + DevLogin chay doc lap, khong can dang nhap Firebase
+    if (screen === 'admin' || screen === 'devLogin') return;
     const unsub = onAuthStateChanged(firebaseAuth, async (user) => {
       if (!user) {
         setScreen('login');
@@ -167,38 +168,6 @@ export default function App() {
     });
     return unsub;
   }, []);  // eslint-disable-line react-hooks/exhaustive-deps
-
-  // CHI DUNG DE TEST (S5-ThuNghiem) — dang nhap thang bang session token lay tu
-  // POST /api/auth/dev-login, KHONG qua Firebase. Cho phep S5 tu dua mot tai khoan
-  // test thu 2 vao dung giao dien web that (khong phai gia lap) de kiem thu UI/UX,
-  // vi du 2 tai khoan cung mo tren 2 tab de test tinh nang can nhieu nguoi (Battle).
-  //
-  // AN TOAN: `import.meta.env.DEV` la co dinh cua Vite — LUON la `false` trong ban
-  // build production (khong phai bien .env co the quen bat/tat), nen khoi nay
-  // KHONG BAO GIO chay o production du co truy cap URL voi param nao.
-  // Dung: mo `http://localhost:5173/?devToken=<token-tu-dev-login>`.
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    const devToken = new URLSearchParams(window.location.search).get('devToken');
-    if (!devToken) return;
-
-    // Xoa param khoi URL ngay de tranh dang nhap lai neu component re-render/F5.
-    const cleanUrl = window.location.pathname + window.location.hash;
-    window.history.replaceState({}, '', cleanUrl);
-
-    // Khong can setScreen('loading') vi screen khoi tao la 'loading' khi co devToken
-    // (khoi tao state da xu ly truong hop nay). Goi async trong effect la OK voi React 18+.
-    getMyProfile(devToken)
-      .then((me) => {
-        setSessionToken(devToken);
-        setProfile(me);
-        setScreen('profile');
-      })
-      .catch((err) => {
-        setGlobalError(err instanceof Error ? err.message : 'Lỗi không xác định (dev-login)');
-        setScreen('login');
-      });
-  }, []);
 
   // Polling thông báo mỗi 30 giây — chỉ chạy khi đã đăng nhập
   useEffect(() => {
@@ -309,16 +278,23 @@ export default function App() {
       {screen === 'admin'      && <AdminPage />}
       {screen === 'loading'    && <LoadingScreen />}
       {screen === 'login'      && <LoginPage onError={(m) => setGlobalError(m)} />}
-      {screen === 'devLogin'   && import.meta.env.DEV && (
+      {screen === 'devLogin' && (
         <DevLoginPage
           onSuccess={(result) => {
             setSessionToken(result.token);
-            setProfile(result.user);
-            if (result.isNewUser) {
-              setScreen('onboarding');
-            } else {
-              setScreen('profile');
-            }
+            // Lấy profile đầy đủ (devLoginApi trả về không đầy đủ)
+            getMyProfile(result.token)
+              .then((fullProfile) => {
+                setProfile(fullProfile);
+                if (result.isNewUser) {
+                  setScreen('onboarding');
+                } else {
+                  setScreen('profile');
+                }
+              })
+              .catch((err) => {
+                setGlobalError(err instanceof Error ? err.message : 'Lỗi lấy thông tin người dùng');
+              });
           }}
           onError={(m) => setGlobalError(m)}
         />
