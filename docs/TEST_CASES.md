@@ -951,3 +951,129 @@
 | 38 | WrongAnswersScreen Premium gate từ server (403) | `getWrongAnswers` trả 403 | `isPremiumBlocked = true`, hiện thông báo nâng cấp | 403 PREMIUM_REQUIRED |
 | 39 | Nộp bài thi khi sessionToken null | `sessionToken = null` trong `doSubmit` | Hàm return sớm, không gọi API | — |
 | 40 | `navigate('ProfileHome')` từ BattleResultScreen | Bấm "Về hồ sơ" trong BattleResultScreen | Navigate đến ProfileHome trong ProfileStack (không phải tab Profile) | — |
+
+---
+
+## Test Cases: TASK1-9 Mobile Complete (Kiểm thử thủ công chi tiết)
+
+### TASK1 — Practice Timer từ Server
+
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| M1 | Bắt đầu phiên luyện tập | Tab Luyện tập → chọn môn (vd. Toán) | Timer hiển thị `17:00` (không phải `30:00`) |
+| M2 | Timer tăng từ 0 | Phiên đang chạy, quan sát 1-2 phút | Timer: `0:00` → `0:01` → `0:02` → ... (tăng, không giảm) |
+| M3 | Force submit khi timeout | Đợi 17 phút → timer về `17:00` | App tự submit, navigate đến ResultScreen |
+| M4 | Timer từ server `timeLimitSeconds` | API return `{ timeLimitSeconds: 1020 }` | Frontend dùng 1020 không hardcode 30 phút (1800s) |
+
+### TASK2 — Exam Resume Timer
+
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| M5 | Start exam (45 phút) | Tab Thi thử → chọn môn (vd. Lý) | Timer: `45:00` |
+| M6 | Thoát giữa chừng (5 phút) | Chơi 5 phút → swipe close/back → xác nhận | Timer dừng ở `40:00` hoặc gần đó |
+| M7 | Reopen app, resume exam | Tắt app hoàn toàn → reopen → vào exam | Timer tiếp tục từ `39:00` hoặc `38:00` (tuỳ mất bao lâu reopen) |
+| M8 | Timer không reset | So sánh timer trước/sau close | KHÔNG reset về `45:00` (buggy case: reset) |
+| M9 | Cleanup interval khi unmount | Navigate ra khỏi ExamTakingScreen | Memory không bị leak (check DevTools memory) |
+
+### TASK3 — Exam History (Premium Gate)
+
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| M10 | Premium user — xem lịch sử thi | Tab Tiến độ → scroll → section "Lịch sử bài thi" | Hiển thị danh sách (nếu đã thi), max 10 item |
+| M11 | Trang 2 | Button "Xem thêm" → cuộn | Trang mới với 10 item tiếp theo hoặc ít hơn |
+| M12 | Free user — lịch sử khóa | Login tài khoản Free → Tab Tiến độ | Section "Lịch sử bài thi" khóa + button "Nâng cấp Premium" |
+| M13 | Empty state | Premium user chưa thi lần nào | "Bạn chưa hoàn thành bài thi nào" (hoặc tương tự) |
+
+### TASK4 — Practice Stats (History + Stats)
+
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| M14 | "5 phiên gần nhất" | Làm 5+ phiên luyện tập → Tab Luyện tập | Danh sách 5 phiên mới nhất (môn, điểm, thời gian) |
+| M15 | "Thống kê" (từng môn) | Làm phiên ở 2+ môn → Tab Luyện tập | Card từng môn: "Toán: 5 phiên | Cao: 20 | Trung bình: 17.5" |
+| M16 | Order: 5 phiên là mới nhất | Làm phiên → check "5 phiên gần nhất" | Item đầu tiên là phiên vừa làm xong |
+| M17 | Stats cộng tất cả phiên | "Tổng số phiên" của Toán | Bằng số lần bất kỳ khi bắt đầu phiên "Toán" |
+
+### TASK5 — Practice Session End
+
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| M18 | Nút "Kết thúc sớm" disabled | Start phiên, chưa trả lời câu | Nút disabled (gray out hoặc không tap được) |
+| M19 | Nút "Kết thúc sớm" enabled | Trả lời 1 câu | Nút enabled (có thể tap) |
+| M20 | Modal confirm khi tap "Kết thúc sớm" | Tap nút → "Xác nhận kết thúc?" | Modal hiện: "Bạn chắc muốn kết thúc? X/20 câu trả lời" + "Hủy" / "Có" button |
+| M21 | Confirm "Có" → submit | Modal → tap "Có" | Submit phiên → navigate PracticeResultScreen |
+| M22 | Confirm "Hủy" → quay lại | Modal → tap "Hủy" | Modal đóng, quay lại phiên (không submit) |
+| M23 | Back button (gesture) → confirm thoát | Tap back hoặc swipe back | Modal "Thoát phiên?" + "Hủy" / "Có, thoát" → "Có" submit |
+
+### TASK6 — Profile Quick Links
+
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| M24 | 5 nút quick links | Tab "Hồ sơ" → scroll | Hiển thị 5 nút: 📊 Luyện tập, 🎯 Thi, 📋 Câu sai, 🏆 Xếp hạng, ⚙️ Cài đặt |
+| M25 | Bấm "Xem lịch sử ôn tập" | Tap nút 📊 | Jump sang Tab "Luyện tập" |
+| M26 | Bấm "Xem lịch sử thi" | Tap nút 🎯 | Jump sang Tab "Tiến độ" + scroll tới section "Lịch sử bài thi" |
+| M27 | Bấm "Xem câu sai" | Tap nút 📋 | Navigate WrongAnswersScreen |
+| M28 | Bấm "Xem xếp hạng" | Tap nút 🏆 | Jump sang Tab "Xếp hạng" |
+| M29 | Bấm "Cài đặt" | Tap nút ⚙️ | Navigate SettingsScreen (hoặc tương tự) |
+
+### TASK7 — Leaderboard Bottom Sheet
+
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| M30 | Tap user ở leaderboard | Tab "Xếp hạng" → tap user #1 | Bottom sheet slide up |
+| M31 | Bottom sheet info | Sheet mở → check nội dung | Hiển thị: avatar, name, rank badge, points, stats (phiên/exam/battle), streak |
+| M32 | Dismiss sheet | Swipe down hoặc tap X | Sheet slide down, quay lại leaderboard |
+| M33 | Tap user khác | Leaderboard → tap #5 | Sheet update với user #5 (không close/open lại) |
+
+### TASK8 — Notification Navigation
+
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| M34 | Notification PvP battle | Trigger notification `targetScreen='BATTLE'` | Backend trả notification object có field `targetScreen` |
+| M35 | Tap notification → navigate | Tab "Thông báo" → tap notification | App navigate tới Tab "Thi đấu" (dựa trên `targetScreen`) |
+| M36 | Notification exam result | Trigger `targetScreen='PROGRESS'` | Tap → jump Tab "Tiến độ" |
+| M37 | Notification ranking | Trigger `targetScreen='LEADERBOARD'` | Tap → jump Tab "Xếp hạng" |
+| M38 | Unknown targetScreen | Backend gửi `targetScreen='UNKNOWN'` | App fallback (hoặc no-op) không crash |
+
+### TASK9 — Battle History
+
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| M39 | Nút "Lịch sử" ở BattleScreen | Tab "Thi đấu" → scroll → nút "Lịch sử" | Nút visible, có thể tap |
+| M40 | Tap "Lịch sử" | Tap nút | Navigate BattleHistoryScreen |
+| M41 | Danh sách trận (10/trang) | BattleHistoryScreen mở | Hiển thị danh sách: đối thủ (avatar, name), kết quả (Win/Loss), điểm (You: 300 vs Opponent: 250), ngày/giờ |
+| M42 | Phân trang | Scroll xuống → button "Xem thêm" | Trang mới load với 10 trận tiếp theo |
+| M43 | Trận đầu tiên (mới nhất) | Danh sách → item #1 | Là trận vừa chơi xong hoặc trận mới nhất |
+| M44 | Empty state | Premium user chưa chơi trận nào | "Bạn chưa thi đấu lần nào" (hoặc tương tự) |
+
+---
+
+## Test Cases: TASK1 Dev-Login Page / TASK2a-c UI Improvements
+
+### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| H1 | Dev-login với email hợp lệ | `?devLogin=1`, email `test1@example.com` | Đăng nhập thành công, vào ProfilePage |
+| H2 | Dev-login tạo user mới | Email chưa tồn tại | User được tạo + đăng nhập, vào OnboardingPage |
+| H3 | Mobile default tab | Mở app lần đầu sau login | Tab "Hồ sơ" được focus (không phải "Luyện tập") |
+| H4 | Xem "Thông tin thi" web | Vào trang Thi thử | Box "📋 Thông tin thi" hiển thị 4 mục: ngẫu nhiên, 45 phút, loại câu, Premium |
+| H5 | Dark mode - chọn Tối | Click "🌙 Tối" | `data-theme="dark"` trên `<html>`, background tối |
+| H6 | Dark mode - chọn Sáng | Click "☀️ Sáng" | `data-theme="light"` trên `<html>`, background sáng |
+| H7 | Dark mode - Theo hệ thống (ngày) | Click "🕐 Theo hệ thống", giờ 10:00 | `data-theme="light"` |
+| H8 | Dark mode persist | F5 sau khi chọn Tối | Vẫn giữ chế độ Tối (từ localStorage) |
+| H9 | devToken URL flow | `?devToken=<token>` | Đăng nhập không qua Firebase, vào ProfilePage |
+
+### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| E1 | Dev-login không có displayName | Email đủ, displayName trống | Đăng nhập thành công (displayName optional) |
+| E2 | Dark mode "Theo hệ thống" lúc 18:00 | Giờ chính xác 18:00 | `data-theme="dark"` (tối) |
+| E3 | Dark mode "Theo hệ thống" lúc 5:00 | Giờ chính xác 5:00 | `data-theme="light"` (sáng) |
+| E4 | Mở DevLoginPage trong production | `?devLogin=1` trong prod build | Render bình thường LoginPage (DEV block) |
+| E5 | localStorage blocked (private mode) | Theme với private mode | Không crash, default về "system" |
+
+### Error Cases
+| # | Mô tả | Input | Expected HTTP | Expected Error |
+|---|-------|-------|---------------|----------------|
+| R1 | Dev-login khi DEV_LOGIN_ENABLED=false | email bất kỳ | 403 | DEV_LOGIN_DISABLED |
+| R2 | Dev-login email không hợp lệ | `abc` (không có @) | — | HTML5 validation chặn submit |
+| R3 | Dev-login khi backend lỗi | email bất kỳ, BE down | — | onError callback hiển thị message |

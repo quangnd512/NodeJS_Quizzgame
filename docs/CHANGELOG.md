@@ -5,6 +5,100 @@
 
 ---
 
+## [Unreleased] — Mobile Complete (Đợt 1b) — Hoàn thiện UX web & mobile
+
+**Branch:** `feature/mobile-complete`
+**Ngày:** 2026-09-11
+**Commits:** 098e44f, dfeadca, 29f9df9, 32098b8
+
+### Added
+
+- **TASK1 — Dev-login page (web):** Trang đăng nhập test cho S5 kiểm thử nhiều tài khoản cùng lúc
+  - Component `DevLoginPage.tsx` với form email + displayName
+  - API `POST /api/auth/dev-login` khoá 2 lớp (NODE_ENV + env var)
+  - Chỉ bật ở DEV mode khi `DEV_LOGIN_ENABLED=true`
+  
+- **TASK2a — Mobile default tab:** Đổi tab mặc định khi mở app di động
+  - Thêm `initialRouteName="Profile"` vào `Tab.Navigator`
+  - Trước: tab Luyện tập (đầu tiên) → Sau: tab Hồ sơ (tab #5)
+  
+- **TASK2b — Web exam-info-card:** Thêm card thông tin thi dưới danh sách môn
+  - Hiển thị: số câu, thời gian 45 phút, loại câu (MCQ/Đúng-Sai/Điền chỗ trống)
+  - Button xem đáp án chi tiết (Premium only)
+  
+- **TASK2c — Dark mode toggle (web):** Chế độ giao diện Sáng/Tối/Theo hệ thống
+  - Lưu preference vào localStorage `quizz_theme`
+  - Tự động chuyển light/dark theo giờ (5h-18h=light, ngoài=dark)
+  - Interval 60s update khi chế độ 'system'
+  - CSS variable overrides cho light/dark mode
+
+- **TASK1 — Practice timer (mobile):** Timer lấy từ server (17 phút) thay vì hardcode 30 phút
+  - Endpoint `GET /api/practice/start` trả về `timeLimitSeconds: 1020`
+  - PracticeSessionScreen dùng giá trị đó, không hardcode
+  - Timer tăng từ 0, khi = `timeLimitSeconds` → force submit
+
+- **TASK2 — Exam resume timer (mobile):** Timer tiếp tục từ nơi để dở, không reset về full time
+  - Khi resume exam → gọi `GET /api/exams/:examId/resume`
+  - Tính `remaining = timeLimitSeconds - (now - startedAt)` → hiển thị đúng
+  - Dùng `useEffect` cleanup hủy interval khi unmount
+
+- **TASK3 — Exam history (mobile):** Lịch sử thi phân trang ở ProgressScreen (Premium only)
+  - Endpoint `GET /api/exams/history?page=0&limit=10`
+  - Hiển thị 10 exam/trang, button "Xem thêm" → trang tiếp
+  - Free user → locked section + button "Nâng cấp Premium"
+
+- **TASK4 — Practice stats (mobile):** 5 phiên luyện tập gần nhất + thống kê từng môn
+  - Section "5 phiên gần nhất" — danh sách (môn, điểm, thời gian)
+  - Section "Thống kê" — card từng môn (số phiên, điểm cao, trung bình)
+  - Endpoint `GET /api/practice/history?limit=5` + `GET /api/practice/stats`
+
+- **TASK5 — Practice session end (mobile):** Nút "Kết thúc sớm" + modal confirm + confirm back
+  - Nút disabled cho tới khi user trả lời câu hiện tại
+  - Modal confirm "Xác nhận kết thúc? X/Y câu trả lời"
+  - Back button (gesture) → modal confirm "Thoát?" → "Có" / "Hủy"
+
+- **TASK6 — Profile quick links (mobile):** 5 nút nhanh chóng truy cập ở ProfileScreen
+  - 📊 Xem lịch sử ôn tập → tab Luyện tập
+  - 🎯 Xem lịch sử thi → tab Tiến độ
+  - 📋 Xem câu sai → WrongAnswersScreen
+  - 🏆 Xem xếp hạng → tab Xếp hạng
+  - ⚙️ Cài đặt → SettingsScreen (hoặc tương tự)
+  - Dùng cross-tab navigate: `navigation.getParent()?.navigate()`
+
+- **TASK7 — Leaderboard user detail (mobile):** Bottom sheet chi tiết khi tap user ở LeaderboardScreen
+  - Slide up bottom sheet → hiển thị: avatar, name, rank, points, stats (phiên/exam/battle, streak)
+  - Component `UserDetailBottomSheet.tsx` (tái sử dụng các lần sau)
+  - Swipe down hoặc X button → dismiss
+
+- **TASK8 — Notification navigation (mobile):** Tap thông báo → navigate tab đúng (dùng `targetScreen`)
+  - Backend notification thêm field `targetScreen` (ví dụ: 'BATTLE', 'PROGRESS', 'LEADERBOARD', v.v.)
+  - NotificationScreen tap handler → `handleNavigateFromNotification(targetScreen)`
+  - Logic switch case: navigate tới tab/screen tương ứng
+
+- **TASK9 — Battle history (mobile):** Nút "Lịch sử" ở BattleScreen + BattleHistoryScreen với phân trang
+  - Endpoint `GET /api/battles/history?page=0&limit=10`
+  - Hiển thị danh sách: đối thủ (name, avatar), kết quả (Win/Loss), điểm, ngày/giờ
+  - Button "Xem thêm" → trang tiếp (phân trang 10 trận/trang)
+
+### Changed
+
+- `frontend/src/App.tsx` — thêm `themeMode` state + `applyThemeToDom()` logic, export `ThemeMode` type từ ProfilePage
+- `frontend/src/App.css` — thêm CSS cho `.exam-info-card`, color variable overrides cho `data-theme="dark"`
+- `frontend/src/screens/ProfilePage.tsx` — export `ThemeMode` type, thêm UI toggle chế độ giao diện
+- `frontend/src/screens/exam/ExamPage.tsx` — thêm JSX render `exam-info-card`
+- `frontend/src/lib/api.ts` — thêm `devLoginApi()` function
+- `mobile/src/navigation/MainTabNavigator.tsx` — thêm `initialRouteName="Profile"`
+- `frontend/package.json` — thêm `@testing-library/dom` devDependency
+
+### Ghi chú
+
+- Dev-login KHÔNG bất ở production — 2 lớp bảo vệ đảm bảo chỉ DEV mode + env var
+- Dark mode localStorage có thể fail ở private mode → catch silently, fallback 'system'
+- exam-info-card responsive, hợp với mobile design
+- Toàn bộ test: 101/101 PASS, 0 lint errors, tsc sạch
+
+---
+
 ## [Unreleased] — Tách App.tsx Vòng 2→7 Gộp (Nợ Kỹ Thuật)
 
 **Branch:** `refactor/split-app-tsx-round-2to5`

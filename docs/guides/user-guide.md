@@ -634,6 +634,19 @@ GET /api/exam/:id/result
 
 ---
 
+### 6.0 Thông tin thi — Card tham khảo trước thi
+
+Trước khi chọn môn để thi, bạn sẽ thấy 1 card nhỏ **"Thông tin thi"** hiển thị:
+
+- 📚 **Số câu hỏi**: Tổng số câu hỏi trong ngân hàng môn đó (VD: "Tổng 450 câu")
+- ⏱️ **Thời gian thi**: Một đề thi thử mất **45 phút** để hoàn thành
+- 📝 **Loại câu hỏi**: Môn học thường có các loại (VD: MCQ — Trắc nghiệm nhiều lựa chọn, Đúng/Sai, Điền chỗ trống)
+- 🔐 **Xem đáp án chi tiết**: Button để xem preview đáp án + lời giải (chỉ khả dụng nếu bạn là **Premium**, nếu bạn là Free thì button sẽ tắt + hướng dẫn nâng cấp)
+
+Card này chỉ để bạn tham khảo nhanh, giúp bạn chuẩn bị trước khi bắt đầu thi.
+
+---
+
 ### 6.1 Điều kiện tham gia thi thử
 
 - Cần có **≥ 60 điểm tích lũy** — đây là phí vào thi (`EXAM_ENTRY_FEE`).
@@ -1595,6 +1608,28 @@ tài khoản — mở 2 kết nối cùng lúc để vào 2 trận song song s�
 khoản. Hãy hoàn tất hoặc thoát hẳn trận đang chơi ở thiết bị/tab kia trước
 khi vào trận mới.
 
+---
+
+## Giao diện (Web) — Chế độ Sáng / Tối / Theo hệ thống
+
+Bạn có thể tùy chỉnh giao diện của trang web QuizzGame theo sở thích:
+
+1. Đăng nhập vào web → vào tab **"Hồ sơ"**
+2. Ở phần **"Giao diện"**, chọn một trong 3 tuỳ chọn:
+   - ☀️ **Sáng** — Màn hình trắng, chữ tối (dễ nhìn ban ngày)
+   - 🌙 **Tối** — Màn hình tối, chữ sáng (dịu mắt ban đêm)
+   - 🔄 **Theo hệ thống** — Ứng dụng tự chuyển Sáng/Tối dựa trên giờ trong ngày:
+     - 5:00 AM - 6:00 PM: Chế độ **Sáng**
+     - 6:00 PM - 5:00 AM: Chế độ **Tối**
+
+3. Khi chuyển chế độ, toàn bộ giao diện đổi màu **ngay tức thì** — không cần refresh trang.
+
+4. **Lựa chọn được lưu lại** — lần tới bạn truy cập web, nó sẽ nhớ chế độ bạn chọn lần trước.
+
+> 💡 **Mẹo**: Chế độ "Theo hệ thống" rất hữu ích nếu bạn dùng cả ngày lẫn đêm — app tự động chuyển từ sáng sang tối lúc 6 giờ chiều, không cần bạn phải chỉnh tay.
+
+---
+
 ## Ứng dụng Di động (Mobile App) — Đợt 1a (Nền móng)
 
 QuizzGame hiện có thêm **ứng dụng di động** (React Native + Expo, cài trên
@@ -1623,7 +1658,7 @@ Google/Apple ở đâu cũng vào đúng hồ sơ, điểm số, môn học đã
 
 ### Khung điều hướng chính
 
-5 tab dưới cùng màn hình:
+5 tab dưới cùng màn hình (khi vừa vào app sau đăng nhập, bạn sẽ thấy tab **Hồ sơ** được chọn mặc định):
 
 | Tab | Nội dung |
 |---|---|
@@ -1631,7 +1666,7 @@ Google/Apple ở đâu cũng vào đúng hồ sơ, điểm số, môn học đã
 | 📝 Thi thử | "Sắp ra mắt" (Đợt 1b) |
 | 🏆 Xếp hạng | "Sắp ra mắt" (Đợt 1b) |
 | 📊 Tiến độ | "Sắp ra mắt" (Đợt 1b) |
-| 👤 Hồ sơ | Đầy đủ — xem điểm tích luỹ, môn đang ôn, đổi giao diện, đăng xuất |
+| 👤 **Hồ sơ** (mặc định khi vừa mở app) | Đầy đủ — xem điểm tích luỹ, môn đang ôn, đổi giao diện, đăng xuất |
 
 ### Tab "Hồ sơ"
 
@@ -1663,14 +1698,136 @@ trị viên? Đăng nhập tại đây"** ở cuối màn Đăng nhập, nhập 
 khoản Google/Apple với học sinh. Xem chi tiết cấu hình ở
 `docs/guides/admin-guide.md` mục 17.
 
+---
+
+## Mobile Complete — 9 tính năng hoàn thiện (Đợt 1b, từ 2026-09-13)
+
+**Từ Đợt 1b**, 4 tab chính không còn "Sắp ra mắt" — đã được bổ sung đầy đủ tính năng. 
+Dưới đây là hướng dẫn chi tiết **9 TASK** mới:
+
+### TASK1: Ôn tập với Timer 17 phút
+
+**Vào tab "Luyện tập" → chọn 1 môn học**
+
+1. Tab "Luyện tập" hiển thị 7 nút môn: Toán, Lý, Hóa, Sinh, Anh, Văn, Sử Địa
+2. Chọn 1 môn (vd. Toán) → app tải 15 câu hỏi + **timer 17:00** (17 phút)
+3. Trả lời từng câu bằng cách chọn 1 trong 4 option, bấm "Nộp"
+4. Nếu đúng → "✓ Đúng!" hiện nhanh, tiến tới câu tiếp theo
+5. Nếu sai → "✗ Sai! Đáp án đúng: [chữ cái]" + giải thích
+6. **Timer tính từ khi bắt đầu** — nếu bạn tắt app rồi mở lại, timer vẫn tiếp tục từ nơi để dở (không reset)
+7. Khi hết 17 phút → phiên tự động kết thúc, app hiển thị kết quả: điểm, điểm thưởng
+
+**Lưu ý:**
+- 17 phút là **thời gian chuẩn từ server** (không phải hardcode)
+- Bạn có thể dừng giữa chừng bằng cách bấm nút **"Kết thúc sớm"** (xem TASK5)
+
+### TASK2: Thi thử với Timer từ nơi để dở
+
+**Vào tab "Thi thử" → chọn 1 môn → Bắt đầu thi**
+
+1. Tab "Thi thử" hiển thị 7 nút môn học
+2. Chọn 1 môn (vd. Lý) → nút **"Bắt đầu thi"**
+3. Bấm → tải đề thi (45 câu, 45 phút timer)
+4. Trả lời các câu hỏi tương tự phần "Ôn tập"
+5. **Nếu bạn đóng app** (swipe close):
+   - Lần sau mở lại, **bấm tab "Thi thử" → vào lại exam đó**
+   - Timer hiển thị **thời gian còn lại** (không reset về 45 phút)
+   - Ví dụ: thi 5 phút rồi thoát → lần sau vào, timer hiển thị ~40 phút
+6. Hoàn thành 45 câu hoặc hết giờ → xem kết quả
+
+**Lưu ý:**
+- Thi thử tính điểm **giống bài thi thật** — ảnh hưởng xếp hạng (nếu Premium)
+- Không thể "pause" rồi tiếp tục sau khi bấm "Nộp bài" — phiên kết thúc vĩnh viễn
+
+### TASK3: Xem Lịch sử bài thi (Premium)
+
+**Vào tab "Tiến độ" → scroll → section "Lịch sử bài thi"**
+
+1. Nếu bạn là **Free user** → section khóa, thấy nút **"🔓 Nâng cấp Premium"**
+2. Nếu bạn là **Premium user** → danh sách bài thi đã hoàn thành:
+   - Môn, Điểm, Tổng câu, Thời gian
+   - Hiển thị **10 bài/trang** (mới nhất trước)
+   - Cuối → button **"Xem thêm"** → trang tiếp
+3. Nhấp vào 1 dòng → xem chi tiết bài thi (nếu hỗ trợ)
+
+### TASK4: Thống kê luyện tập — 5 phiên gần nhất + từng môn
+
+**Vào tab "Luyện tập" → scroll xuống**
+
+**A) "5 phiên luyện tập gần nhất"**
+- Danh sách 5 phiên mới nhất (bất kể môn)
+- Mỗi dòng: Toán 18/20 · 1 giờ trước
+
+**B) "Thống kê từng môn"**
+- Mỗi môn: số phiên đã làm, điểm cao nhất, điểm trung bình
+- Ví dụ: 📊 Toán — 23 phiên | Cao: 20 | Trung bình: 16.5
+
+### TASK5: Kết thúc phiên sớm + xác nhận thoát
+
+**Trong khi luyện tập hoặc thi:**
+
+1. Nút **"Kết thúc sớm"** xuất hiện ở cuối (scroll xuống)
+   - Trước khi trả lời câu đầu → nút **disabled** (mờ)
+   - Sau khi trả lời ≥ 1 câu → nút **enabled**
+2. Bấm "Kết thúc sớm" → modal: "Xác nhận kết thúc? X/Y câu trả lời"
+   - **"Hủy"** → quay lại tiếp tục
+   - **"Có, kết thúc"** → submit (X câu đúng, Y-X câu sai)
+3. **Nút back** → modal: "Thoát phiên?"
+   - **"Hủy"** → tiếp tục
+   - **"Có, thoát"** → thoát + submit
+
+### TASK6: Quick Links — 5 nút truy cập nhanh
+
+**Vào tab "Hồ sơ" → scroll xuống**
+
+Section "Nhanh chóng truy cập" với 5 nút:
+- **📊 Luyện tập** → Jump sang tab "Luyện tập"
+- **🎯 Thi** → Jump sang tab "Tiến độ" (lịch sử bài thi)
+- **📋 Câu sai** → Mở màn "Câu hỏi sai"
+- **🏆 Xếp hạng** → Jump sang tab "Xếp hạng"
+- **⚙️ Cài đặt** → Mở cài đặt (dark mode, đăng xuất, v.v.)
+
+### TASK7: Leaderboard — Xem chi tiết user (Bottom sheet)
+
+**Vào tab "Xếp hạng" → tap vào 1 user**
+
+1. Bottom sheet slide up → hiển thị:
+   - 🏅 Tên user + avatar + rank badge
+   - 💰 Điểm tích luỹ
+   - 📊 Luyện tập (số phiên), 🎯 Thi thử (số bài), 🎮 Thi đấu (số trận), 🔥 Streak
+2. Swipe down hoặc bấm X → đóng
+3. Danh sách leaderboard quay lại vị trí cũ
+
+### TASK8: Thông báo — Tap thông báo → jump tab đúng
+
+**Vào tab "Thông báo"**
+
+Mỗi thông báo có loại khác nhau:
+- 🎮 **PvP Battle** → Tap → Jump tab "Thi đấu"
+- 🎯 **Exam Result** → Tap → Jump tab "Tiến độ"
+- 🏆 **Ranking** → Tap → Jump tab "Xếp hạng"
+- 📢 **Announcement** → Tap → Pop-up hoặc thông báo
+
+Bạn **không cần chủ động jump** — thông báo tự đưa bạn đến nơi cần.
+
+### TASK9: Lịch sử trận thi đấu (PvP Battle)
+
+**Vào tab "Thi đấu" → scroll → button "📊 Lịch sử các trận"**
+
+1. Mở "Lịch sử thi đấu" → danh sách các trận đã chơi:
+   - [WIN/LOSS] Đối thủ · Điểm (You: 350 vs 200) · 2 giờ trước
+2. Hiển thị **10 trận/trang** (mới nhất trước)
+3. Cuối danh sách → **"Xem thêm"** → trang tiếp
+4. Nếu chưa chơi lần nào → "Bạn chưa thi đấu lần nào"
+
+---
+
 ### Câu hỏi thường gặp
 
-**Q: Vì sao 4/5 tab chính chỉ hiện "Sắp ra mắt"?**
+**Q: Bây giờ 4 tab chính ("Luyện tập", "Thi thử", "Xếp hạng", "Tiến độ") đã không còn "Sắp ra mắt" rồi?**
 
-A: App di động hiện đang ở giai đoạn **nền móng** (Đợt 1a) — mới dựng khung
-đăng nhập/điều hướng/giao diện. Các tính năng học tập thật (Luyện tập, Thi
-thử, Xếp hạng, Tiến độ) sẽ được bổ sung ở các đợt kế tiếp. Muốn dùng đầy đủ
-ngay bây giờ, hãy dùng bản web.
+A: Đúng — từ **Đợt 1b (2026-09-13)** trở đi, tất cả 4 tab đã được bổ sung tính năng thực. 
+Danh sách đầy đủ: TASK1-9 ở phần "Mobile Complete — 9 tính năng hoàn thiện" ở trên.
 
 **Q: Tôi đăng ký mới hoàn toàn trên điện thoại — có bị hỏi chọn môn lại nếu
 sau này tôi mở bản web không?**

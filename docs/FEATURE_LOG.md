@@ -8078,4 +8078,472 @@ S3 review phát hiện 6 warning lint (0 lỗi): `react-native-gesture-handler` 
 - **Danh mục môn học hardcode phía client** (`constants/subjects.ts`) — PHẢI cập nhật tay nếu backend thêm/bớt môn trong `SUBJECT_CATALOG` (`backend/src/services/users/users.types.ts`); backend chưa có endpoint liệt kê danh mục để mobile tự đồng bộ.
 - **Chưa có test tự động** — xem mục kỹ thuật #5, khuyến nghị dựng `jest-expo` từ Đợt 1b.
 - **`bundleIdentifier`/`package` hiện đặt tạm `com.quizzgame.mobile`** — cần xác nhận lại trước khi nộp App Store/Play Store (không đổi dễ dàng sau khi đã phát hành).
+
+---
+
+## 18. Mobile Complete (Đợt 1b) — Hoàn thiện UX web & mobile
+
+- **Ngày hoàn thành:** 2026-09-11
+- **Mục tiêu / mô tả ngắn:** Hoàn thiện trải nghiệm người dùng cho web + mobile:
+  - **TASK1:** Tạo trang Dev-login (web) để S5 kiểm thử nhiều tài khoản cùng lúc
+  - **TASK2a:** Đổi tab mặc định mobile từ "Luyện tập" → "Hồ sơ"
+  - **TASK2b:** Thêm card "Thông tin thi" dưới danh sách môn trên web (đồng nhất mobile)
+  - **TASK2c:** Thêm chức năng tự chọn chế độ giao diện (Sáng/Tối/Theo hệ thống) trên web
+- **Branch / commit liên quan:** 
+  - `feature/mobile-complete` — 4 commits
+  - `098e44f` — TASK1: Dev-login page web
+  - `dfeadca` — TASK2a: Mobile default tab → Profile
+  - `29f9df9` — TASK2b: Web exam-info-card
+  - `32098b8` — TASK2c: Dark mode toggle
+
+### Luồng chạy chi tiết (step-by-step)
+
+**TASK1 — Dev-login page (web)**
+
+1. Frontend khởi động ở DEV mode (`import.meta.env.DEV === true`)
+2. Nếu URL có `?devLogin=1` → `App.tsx` navigate tới `DevLoginPage` (trạng thái `screen = 'devLogin'`)
+3. `DevLoginPage` hiển thị form với 2 input:
+   - Email tài khoản test (bắt buộc, phải format email hợp lệ)
+   - Display Name (tùy chọn, để trống → backend dùng email làm tên)
+4. User nhập email test (vd. `test1@example.com`) → nhấp "Đăng nhập"
+5. Frontend gọi `POST /api/auth/dev-login` kèm `{ email, displayName? }`
+6. Backend kiểm tra 2 lớp bảo vệ:
+   - `NODE_ENV !== 'development'` → trả 403 `FORBIDDEN`
+   - `process.env.DEV_LOGIN_ENABLED !== 'true'` → trả 403 `FORBIDDEN`
+   - Nếu cả 2 ✅ → tạo Firebase token + JWT mới cho email đó
+7. Frontend nhận response → store token vào localStorage + SessionStorage → gọi `loginWithFirebaseToken()` → navigate tới `ProfilePage`
+
+**TASK2a — Mobile default tab**
+
+1. Khi user vừa đăng nhập thành công → vào `MainTabNavigator`
+2. **Trước:** Tab đầu tiên (Luyện tập) là mặc định → user cần swipe sang phải để tới tab Hồ sơ
+3. **Sau:** Thêm `initialRouteName="Profile"` vào `Tab.Navigator` component
+4. Khi vào tab navigator lần đầu tiên → render tab Hồ sơ (tab #5) làm tab mặc định thay vì tab #1
+5. Thứ tự tab vẫn giữ nguyên: Luyện tập/Thi thử/Xếp hạng/Tiến độ/🟢**Hồ sơ(selected)**
+
+**TASK2b — Web exam-info-card**
+
+1. Người dùng vào màn hình Thi thử (`ExamPage`) trên web
+2. `ExamPage` render danh sách các môn học dưới dạng button/card
+3. **Dưới danh sách môn học,** thêm section "Thông tin thi" với card hiển thị:
+   - 🎯 "Đề thi": Số câu random từ ngân hàng (vd. "Tổng 450 câu")
+   - ⏱️ "Thời gian thi": 45 phút
+   - 📝 "Loại câu": MCQ / Đúng-Sai / Điền chỗ trống (liệt kê từng loại)
+   - 🔐 "Xem đáp án chi tiết": Button (chỉ hoạt động nếu user là Premium, nếu Free → disabled với tooltip giải thích)
+4. CSS thêm class `exam-info-card` + styling responsive để match mobile design
+5. Layout dễ nhìn, không gây rối mắt (card nhỏ gọn, chỉ để inform, không phải CTA chính)
+
+**TASK2c — Dark mode toggle (web)**
+
+1. `App.tsx` khởi tạo `themeMode` state khi mount:
+   - Đọc từ `localStorage.getItem('quizz_theme')` (nếu user đã chọn trước)
+   - Nếu lỗi (private mode) → catch silently → default `'system'`
+   - Valid values: `'light' | 'dark' | 'system'`
+2. Function `applyThemeToDom(mode)` — chỉ thao tác DOM, KHÔNG setState:
+   - Nếu `mode === 'system'`:
+     - Check giờ hiện tại: `new Date().getHours()`
+     - 5:00 AM - 6:00 PM (5 ≤ hour < 18) → effective = `'light'`
+     - Ngoài giờ đó → effective = `'dark'`
+   - Nếu mode cụ thể (`'light'` hoặc `'dark'`) → dùng trực tiếp
+   - Áp dụng: `document.documentElement.setAttribute('data-theme', effective)`
+   - Lưu vào localStorage: `localStorage.setItem('quizz_theme', mode)`
+3. `useEffect` — gọi `applyThemeToDom()` mỗi khi `themeMode` thay đổi:
+   - Nếu chế độ 'system' → setup interval: mỗi 60 giây check lại giờ, gọi `applyThemeToDom('system')` (tự động chuyển light→dark ở 6PM, dark→light ở 5AM)
+   - Nếu chế độ cụ thể → hủy interval (không cần poll)
+4. `ProfilePage` nhận props `{ themeMode, onThemeChange }`:
+   - Hiển thị 3 radio button: "☀️ Sáng", "🌙 Tối", "🔄 Theo hệ thống"
+   - User chọn một → gọi callback `onThemeChange(mode)`
+   - Callback ở `App.tsx` → gọi `applyThemeToDom()` + `setThemeMode()`
+5. CSS: Biến color định nghĩa trên `:root` + `@media (prefers-color-scheme: dark)` + `[data-theme="dark"]` selector
+   - Light mode: `--bg`, `--text-h`, `--border` v.v. giá trị sáng
+   - Dark mode: giá trị tối
+
+### Các file chính liên quan
+
+- `frontend/src/screens/DevLoginPage.tsx` – Component form Dev-login (input validation, submit handler)
+- `frontend/src/App.tsx` – Khởi tạo route `devLogin`, state `themeMode`, function `applyThemeToDom()`, `applyTheme()`, xử lý theme interval
+- `frontend/src/lib/api.ts` – Thêm function `devLoginApi(email, displayName?)` gọi `/api/auth/dev-login`
+- `frontend/src/screens/ProfilePage.tsx` – **Export type `ThemeMode`** để App.tsx dùng chung, hiển thị 3 radio button theme toggle, callback `onThemeChange`
+- `frontend/src/screens/exam/ExamPage.tsx` – Thêm JSX render `exam-info-card` dưới danh sách môn
+- `frontend/src/App.css` – Thêm CSS cho:
+  - `.exam-info-card` styling (card container, icon, text, button)
+  - `data-theme="light"` / `data-theme="dark"` variable overrides
+  - CSS variable definitions: `--bg`, `--text-h`, `--border`, `--color-warning`, etc.
+- `mobile/src/navigation/MainTabNavigator.tsx` – Thêm `initialRouteName="Profile"` vào `Tab.Navigator`
+- `backend/src/routes/auth.route.ts` – Endpoint `/api/auth/dev-login` đã tồn tại (S2 tạo)
+
+### Cách tự kiểm thử (manual test)
+
+**TASK1 — Dev-login page**
+1. Chắc chắn backend chạy với `NODE_ENV=development` + `DEV_LOGIN_ENABLED=true`
+2. Truy cập `http://localhost:5173/?devLogin=1` trên web
+3. Nhập email test 1: `test1@example.com`, name: `Test User 1` → bấm "Đăng nhập"
+4. Xác nhận vào ProfilePage với profile hiển thị `Test User 1`
+5. Mở tab 2 → truy cập `http://localhost:5173/?devLogin=1` → đăng nhập email khác `test2@example.com`
+6. Xác nhận tab 1 vẫn show `Test User 1`, tab 2 show `Test User 2` (độc lập)
+7. Test error case: tắt `DEV_LOGIN_ENABLED` trên backend → thử đăng nhập → xác nhận báo lỗi 403
+
+**TASK2a — Mobile default tab**
+1. Đăng nhập mobile app
+2. Xác nhận landing tab là "Hồ sơ" (tab #5) — không phải "Luyện tập" (tab #1)
+3. Bấm tab "Luyện tập" → chạy 1 phiên → quay lại app → bấm tab "Hồ sơ" → vẫn show hồ sơ (state persistence OK)
+
+**TASK2b — Web exam-info-card**
+1. Vào web Thi thử (`/exam`)
+2. Scroll xuống dưới danh sách các môn học
+3. Xác nhận thấy card "Thông tin thi" với đầy đủ info: số câu, thời gian, loại câu, button
+4. Nếu user là Premium: bấm button "Xem đáp án chi tiết" → có thể view preview
+5. Nếu user là Free: button disabled, hover → tooltip "Nâng cấp Premium"
+6. Test responsive: thu nhỏ browser → card vẫn readable ở mobile width
+
+**TASK2c — Dark mode toggle**
+1. Vào ProfilePage → tìm section "Chế độ giao diện"
+2. Chọn "☀️ Sáng" → xác nhận color scheme đổi light ngay (background trắng, text tối)
+3. Chọn "🌙 Tối" → xác nhận color scheme đổi dark ngay (background tối, text sáng)
+4. Chọn "🔄 Theo hệ thống" → xác nhận color scheme theo giờ:
+   - Nếu lúc đó 5:00 - 6:00 PM → nên dark
+   - Nếu lúc đó 9:00 AM → nên light
+5. Refresh trang (`Ctrl+R`) → xác nhận theme được lưu, áp dụng lại đúng
+6. Mở DevTools → Application → Local Storage → xác nhận `quizz_theme = 'light' | 'dark' | 'system'` được lưu
+7. Test private mode: Mở private window → truy cập app → chọn theme → refresh → xác nhận fallback về default mà không crash
+8. Test interval: Chọn "🔄 Theo hệ thống" → mở DevTools → keep console open → đợi 1 phút → xác nhận không spam log (interval chạy đúng mà không quá tần suất)
+
+### Lưu ý / rủi ko / TODO tiếp theo
+
+- **TASK1 Dev-login an toàn:** Endpoint `/api/auth/dev-login` KHÔNG BẬT ở production. Khoá 2 lớp: backend check `NODE_ENV !== 'development'` + env var `DEV_LOGIN_ENABLED`. Frontend cũng check `import.meta.env.DEV === true` trước khi cho phép route. Chỉ S5 (Người Thử Nghiệm) dùng.
+- **TASK2a tab order:** Thứ tự tab icon dưới màn hình vẫn không đổi (1-5), chỉ tab nào được highlight khi app vừa mở. Nếu S5/user sau này muốn thay đổi thứ tự tab, cần sửa riêng trong `MainTabNavigator`.
+- **TASK2b card placement:** Card "Thông tin thi" hiện ở dưới danh sách môn, không gây CTA confusion (nút chính vẫn là từng nút môn). Nếu sau này muốn thêm "Bắt đầu thi", phải cẩn thận không làm người dùng bấm nhầm.
+- **TASK2c theme localStorage:** Trên private mode, `localStorage.getItem()` ném exception → catch silently → fallback 'system'. Không crash, nhưng user private mode sẽ không thấy theme được lưu (mỗi lần refresh reset về default). Đây là behavior mong đợi.
+- **TASK2c color variables:** CSS variable (--bg, --text-h, --border v.v.) cần kiểm thử trên toàn bộ component (Button, Input, Card, etc.) để chắc chắn dark mode áp dụng tất cả. Nếu thiếu chỗ nào → text không đủ contrast, ảnh hưởng UX.
+- **TODO Đợt 2:** Dark mode cần test kỹ trên mobile (xem App.tsx dark mode variable có cập nhật ở `mobile/src/App.css` không, hay chỉ web thôi).
+- **TODO Đợt 2:** Thêm setting "Lưu năng lượng" (chế độ high contrast dark) cho OLED phone.
 - **Đợt 1b trở đi**: lấp dần 4 tab "Sắp ra mắt" (Luyện tập, Thi thử, Xếp hạng, Tiến độ) bằng màn hình chức năng thật, tái sử dụng đúng các endpoint đã có ở `frontend/`.
+
+---
+
+## 10. Mobile Complete — 9 TASK (Stage 2→6)
+
+- **Ngày hoàn thành:** 2026-09-13
+- **Mục tiêu / mô tả ngắn:** Hoàn thành 9 tính năng còn thiếu trên mobile app để cân bằng với web
+  (timer lấy từ server, exam resume, exam/practice history, stats, quick links, leaderboard popup,
+  notification navigate, battle history). Kết thúc giai đoạn 2→6 của Mobile Complete.
+- **Branch / commit liên quan:** `feature/mobile-complete` (9 commit: `136b830` → `ba06d3c`)
+
+### TASK1 — Practice timer lấy từ server (17 phút, không hardcode 30 phút)
+
+**Mục tiêu:**
+- Backend trả về `timeLimitSeconds` (1020s = 17 phút) khi `GET /api/practice/start`
+- Mobile `PracticeSessionScreen` dùng giá trị đó, không hardcode 30 phút
+- Timer tính từ `0` → tăng lên, khi = `timeLimitSeconds` → force submit
+
+**Luồng chạy:**
+1. User vào tab "Luyện tập" → bấm một môn (vd. Toán)
+2. Frontend gọi `GET /api/practice/start?subject=TOAN`
+3. Backend trả `{ sessionId, subject, timeLimitSeconds: 1020, questions: [...] }`
+4. Mobile parse response → lấy `timeLimitSeconds = 1020`
+5. `PracticeSessionScreen` state: `elapsedSeconds = 0`
+6. Mỗi 1 giây, increment `elapsedSeconds` (dùng `setInterval`)
+7. Hiển thị timer: `17:00 → 17:01 → ... → 0:00` (countdown từ 1020s)
+8. Khi `elapsedSeconds >= timeLimitSeconds` → `forceSubmitAndNavigateBack()`
+
+**Các file chính liên quan:**
+- `mobile/src/api/practice.ts` – Interface `StartSessionResult` thêm `timeLimitSeconds: number`
+- `mobile/src/screens/practice/PracticeSessionScreen.tsx` – Đọc `timeLimitSeconds` từ result, setup timer
+
+**Cách tự kiểm thử:**
+1. Đăng nhập mobile → tab Luyện tập → chọn 1 môn
+2. Xác nhận timer hiển thị `17:00` (không phải `30:00`)
+3. Đợi timer tăng từ `0:00` → khoảng 1 phút → tắt app → vào lại → timer tiếp tục tính từ `startedAt` (S5 verify sau ở TASK2)
+
+**Ghi chú:**
+- Timer là tuyệt đối (dựa trên `startedAt` timestamp), không phải relative — cách tính chính xác ở TASK2
+
+---
+
+### TASK2 — Exam resume: timer tính từ startedAt, không reset về full time
+
+**Mục tiêu:**
+- Khi user `thoát giữa chừng` → quay lại exam → timer tiếp tục từ nơi để dở (không reset về 45 phút)
+- Ví dụ: bắt đầu exam, 5 phút sau thoát → quay lại → timer hiển thị `40:00` (còn lại), không phải `45:00` (reset)
+
+**Luộng chạy:**
+1. User start exam (vd. Toán, 45 phút)
+2. Backend tạo `ExamSession { startedAt: now, timeLimitSeconds: 2700 }`
+3. User chơi 5 phút → đóng app
+4. Quay lại app → `ExamTakingScreen` call `GET /api/exams/:examId/resume`
+5. Backend trả `{ sessionId, startedAt: <5 phút trước>, remaining: 2400 }` (hoặc tính lại: `remaining = timeLimitSeconds - (now - startedAt)`)
+6. Frontend tính: `remainingSeconds = (now - startedAt) của phiên cũ`
+7. Timer hiển thị `40:00` → giảm xuống → khi = 0 → force submit
+
+**Các file chính liên quan:**
+- `mobile/src/api/exam.ts` – Interface `ResumeExamResult { sessionId, startedAt, timeLimitSeconds }`
+- `mobile/src/screens/exam/ExamTakingScreen.tsx` – Tính `remainingSeconds = startedAt + timeLimitSeconds - now`
+
+**Cách tự kiểm thử:**
+1. Mobile exam → bắt đầu thi
+2. Chơi vài câu, xem timer (vd. `44:30`)
+3. Tắt app hoàn toàn (swipe close, không background)
+4. Mở lại → tập vào exam → xác nhận timer tiếp tục từ `44:00` hoặc gần đó (tuỳ mất bao lâu tái mở)
+5. Không phải reset về `45:00`
+
+**Ghi chú:**
+- Sử dụng `useEffect` cleanup để hủy interval khi unmount (tránh memory leak)
+- Khi app vừa reopen, cần call resume endpoint ngay lập tức để sync timestamp với server
+
+---
+
+### TASK3 — Exam history trong ProgressScreen (phân trang, Premium only)
+
+**Mục tiêu:**
+- Tab "Tiến độ" hiển thị lịch sử các bài exam đã làm (phân trang, mỗi trang 10)
+- Chỉ Premium users xem được; Free users → locked section → button "Nâng cấp Premium"
+
+**Luồng chạy:**
+1. User vào tab "Tiến độ" → scroll xuống section "Lịch sử bài thi"
+2. Nếu Free → thấy card khóa + "Nâng cấp Premium" button
+3. Nếu Premium → load `GET /api/exams/history?page=0&limit=10`
+4. Backend trả `{ history: [ { sessionId, examType, score, totalQuestions, completedAt }, ... ], hasMore: bool }`
+5. Hiển thị list 10 item mỗi trang (exam date, subject, score/total, duration)
+6. Button "Xem thêm" ở dưới → `page++` → load trang tiếp → append vào list
+
+**Các file chính liên quan:**
+- `mobile/src/api/exam.ts` – Hàm `getExamHistory(page: number, limit?: number)`
+- `mobile/src/screens/ProgressScreen.tsx` – Section "Lịch sử bài thi" + pagination logic
+- Nếu user Free: hiển thị `<LockedSection premium text="Xem lịch sử..." />`
+
+**Cách tự kiểm thử:**
+1. Login Premium user → tab Tiến độ
+2. Scroll down → section "Lịch sử bài thi"
+3. Xác nhận thấy 10 item (nếu đã làm thi)
+4. Cuối list → button "Xem thêm" → trang 2 hiện thêm 10 item
+5. Login Free user → section khóa, thấy "Nâng cấp" button
+
+---
+
+### TASK4 — PracticeScreen: lịch sử 5 phiên gần nhất + stats từng môn
+
+**Mục tiêu:**
+- Tab "Luyện tập" → dưới 5 nút môn học, thêm section:
+  - "5 phiên gần nhất": Danh sách 5 lần luyện tập mới nhất (môn, điểm, thời gian)
+  - "Thống kê từng môn": Card cho mỗi môn (Toán/Lý/Hóa/...) hiển thị: Tổng số phiên, điểm cao nhất, điểm trung bình
+
+**Luồng chạy:**
+1. User vào tab "Luyện tập"
+2. App call `GET /api/practice/history?limit=5` → load 5 phiên mới nhất
+3. Call `GET /api/practice/stats` → load thống kê từng môn
+4. Render section "5 phiên gần nhất":
+   ```
+   [Môn] [Điểm] [Thời gian]
+   Toán  18/20  2 ngày trước
+   Lý    15/20  4 ngày trước
+   ...
+   ```
+5. Render section "Thống kê":
+   ```
+   Toán: 23 phiên | Cao: 20 | Trung bình: 16.5
+   Lý:   15 phiên | Cao: 18 | Trung bình: 14.2
+   ...
+   ```
+
+**Các file chính liên quan:**
+- `mobile/src/api/practice.ts` – Thêm hàm `getPracticeHistory(limit?: number)`, `getPracticeStats()`
+- `mobile/src/screens/practice/PracticeScreen.tsx` – Fetch history + stats khi mount, render 2 section
+
+**Cách tự kiểm thử:**
+1. Làm vài phiên luyện tập trên các môn khác nhau
+2. Tab "Luyện tập" → scroll down → xác nhận thấy "5 phiên gần nhất"
+3. Xác nhận thấy "Thống kê" với từng môn và số liệu đúng
+
+---
+
+### TASK5 — PracticeSession: nút "Kết thúc sớm" + modal kết quả + confirm thoát
+
+**Mục tiêu:**
+- Trong phiên luyện tập, khi user muốn thoát → thêm 3 thành phần:
+  1. Nút "Kết thúc sớm" (disabled khi chưa trả lời câu hiện tại)
+  2. Modal xác nhận: "Bạn chắc muốn kết thúc? Số câu đã trả lời: X/Y"
+  3. Confirm thoát (back button) → nếu đang làm → toast + modal confirm, không thoát ngay
+
+**Luộng chạy:**
+1. User làm câu hỏi X/20
+2. Scroll xuống → nút "Kết thúc sớm" (enabled khi đã trả lời câu)
+3. Bấm → modal "Xác nhận kết thúc" + "Hủy" / "Có, kết thúc" button
+4. Bấm "Có" → submit phiên → navigate `PracticeResultScreen` (hiển thị score + retry?)
+5. Ngoài ra: mobile back button (gesture hoặc physical) → modal xác nhận "Bạn muốn thoát?" → "Hủy" / "Có, thoát"
+
+**Các file chính liên quan:**
+- `mobile/src/screens/practice/PracticeSessionScreen.tsx` – Thêm state, modal, nút "Kết thúc sớm"
+- `mobile/src/components/ConfirmModal.tsx` – Reuse hoặc tạo component modal xác nhận
+
+**Cách tự kiểm thử:**
+1. Tab Luyện tập → start → trả lời 1 câu
+2. Scroll down → xác nhận nút "Kết thúc sớm" enabled (không phải disabled)
+3. Bấm nút → modal hiện "Bạn chắc muốn kết thúc? 1/20 câu trả lời"
+4. Bấm "Có" → kết thúc, thấy score
+5. Start lại → bấm back button → modal confirm "Thoát?" → "Có" → quay lại tab Luyện tập
+
+---
+
+### TASK6 — ProfileScreen: quick links đến 5 tính năng chính
+
+**Mục tiêu:**
+- Tab "Hồ sơ" → dưới profile info (avatar, name, premium badge), thêm section "Quick links" (5 nút):
+  - 📊 Xem lịch sử ôn tập (→ tab Luyện tập)
+  - 🎯 Xem lịch sử thi (→ tab Tiến độ)
+  - 📋 Xem câu hỏi sai (→ WrongAnswersScreen)
+  - 🏆 Xem xếp hạng (→ tab Xếp hạng)
+  - ⚙️ Cài đặt (→ SettingsScreen)
+
+**Luồng chạy:**
+1. User vào tab "Hồ sơ"
+2. Thấy profile section (avatar, name, points, premium badge)
+3. Scroll down → section "Nhanh chóng truy cập" với 5 nút grid (2-3 cột)
+4. Bấm nút → `navigation.navigate()` → chuyển tab hoặc mở screen
+5. Ví dụ: bấm "Xem lịch sử thi" → jump sang tab "Tiến độ" + scroll tới section history
+
+**Các file chính liên quan:**
+- `mobile/src/screens/ProfileScreen.tsx` – Thêm JSX render 5 nút quick link
+- `mobile/src/navigation/` – Verify cross-tab navigation logic (dùng `navigation.getParent()?.navigate()`)
+
+**Cách tự kiểm thử:**
+1. Tab "Hồ sơ" → scroll down
+2. Xác nhận thấy section "Nhanh chóng truy cập" với 5 nút
+3. Bấm "Xem xếp hạng" → jump sang tab Xếp hạng
+4. Bấm "Xem lịch sử thi" → jump sang tab Tiến độ
+
+---
+
+### TASK7 — LeaderboardScreen: bottom sheet chi tiết khi bấm vào user
+
+**Mục tiêu:**
+- Tab "Xếp hạng" → danh sách users → bấm vào 1 user → slide up bottom sheet hiển thị:
+  - Avatar + name + rank
+  - 🏆 Điểm (points)
+  - 📊 Phiên luyện tập (count)
+  - 🎯 Đề thi hoàn thành (count)
+  - 🎮 Trận PvP (count)
+  - 💪 Streak ngày hiện tại
+
+**Luộng chạy:**
+1. User vào tab "Xếp hạng" → thấy danh sách (rank 1-10, name, points)
+2. Tap vào 1 user (vd. rank #3)
+3. Bottom sheet slide up → hiển thị thông tin chi tiết user đó
+4. Sheet có button "Đóng" hoặc swipe down to dismiss
+
+**Các file chính liên quan:**
+- `mobile/src/screens/LeaderboardScreen.tsx` – Thêm state `selectedUser`, render bottom sheet với user info
+- `mobile/src/components/UserDetailBottomSheet.tsx` (tạo mới) – Component bottom sheet
+
+**Cách tự kiểm thử:**
+1. Tab Xếp hạng → thấy danh sách users
+2. Tap user #1 → bottom sheet slide up
+3. Xác nhận thấy chi tiết: avatar, name, points, stats
+4. Swipe down hoặc bấm X → sheet đóng
+
+---
+
+### TASK8 — NotificationScreen: tap thông báo → navigate tab đúng
+
+**Mục tiêu:**
+- Tab "Thông báo" hiển thị list notifications
+- User tap vào 1 thông báo (vd. "Bạn muốn thi đấu với XYZ?") → app navigate tới tab/screen tương ứng
+  - Thông báo PvP battle → tab "Thi đấu"
+  - Thông báo exam result → tab "Tiến độ"
+  - Thông báo ranking → tab "Xếp hạng"
+  - v.v.
+- Backend trả về `targetScreen` field → frontend dùng logic `handleNavigateFromNotification(targetScreen)`
+
+**Luộng chạy:**
+1. Backend gửi notification: `{ id, title, body, targetScreen: 'BATTLE' }`
+2. Mobile app nhận notification → thêm vào NotificationScreen list
+3. User tap → gọi `handleNavigateFromNotification(targetScreen)`
+4. Logic switch/case:
+   - `targetScreen = 'BATTLE'` → `navigation.getParent()?.navigate('Battle')`
+   - `targetScreen = 'PROGRESS'` → navigate tab "Tiến độ"
+   - `targetScreen = 'LEADERBOARD'` → navigate tab "Xếp hạng"
+   - v.v.
+5. App navigate → tab/screen mở ra, user thấy content liên quan
+
+**Các file chính liên quan:**
+- `mobile/src/screens/NotificationScreen.tsx` – Thêm tap handler, logic navigate
+- `mobile/src/navigation/` – Verify cross-tab navigate setup
+- API contract: notification object thêm `targetScreen: string` field
+
+**Cách tự kiểm thử:**
+1. Trigger notification (vd. via admin hoặc S5 manual test)
+2. Tab "Thông báo" → thấy notification
+3. Tap → app navigate tới tab/screen đúng
+4. Verify: notification PvP → mở tab "Thi đấu"; notification exam → mở tab "Tiến độ", v.v.
+
+---
+
+### TASK9 — BattleScreen: nút "Lịch sử" + BattleHistoryScreen (phân trang)
+
+**Mục tiêu:**
+- Tab "Thi đấu" → thêm nút "Lịch sử các trận" → mở `BattleHistoryScreen` 
+- Hiển thị danh sách các trận PvP đã chơi (phân trang, 10 trận/trang):
+  - Đối thủ (name, avatar)
+  - Kết quả (Win/Loss)
+  - Điểm (You: X pts, Opponent: Y pts)
+  - Ngày/giờ
+
+**Luộng chạy:**
+1. Tab "Thi đấu" → scroll down → button "Lịch sử"
+2. Bấm → navigate tới `BattleHistoryScreen`
+3. Gọi `GET /api/battles/history?page=0&limit=10`
+4. Render list:
+   ```
+   [Win/Loss] [Opponent name] [You: 300pts vs 250pts] [2 giờ trước]
+   [Loss]     [John Doe]       [You: 200pts vs 400pts] [1 ngày trước]
+   ...
+   ```
+5. Cuối danh sách → button "Xem thêm" → `page++`
+
+**Các file chính liên quan:**
+- `mobile/src/screens/battle/BattleScreen.tsx` – Thêm button "Lịch sử"
+- `mobile/src/screens/battle/BattleHistoryScreen.tsx` (tạo mới) – Component list + pagination
+- `mobile/src/api/battle.ts` – Hàm `getBattleHistory(page, limit)`
+
+**Cách tự kiểm thử:**
+1. Tab "Thi đấu" → scroll down → button "Lịch sử"
+2. Bấm → mở `BattleHistoryScreen`
+3. Xác nhận thấy danh sách (nếu đã chơi trận PvP)
+4. Scroll → xác nhận pagination ("Xem thêm")
+
+---
+
+### Các file chính liên quan (tổng hợp)
+
+**Mobile:**
+- `mobile/src/api/practice.ts` – Thêm `timeLimitSeconds`, `getPracticeHistory()`, `getPracticeStats()`
+- `mobile/src/api/exam.ts` – Thêm `ResumeExamResult`, `getExamHistory()`, `getBattleHistory()`
+- `mobile/src/screens/practice/PracticeScreen.tsx` – History + stats section
+- `mobile/src/screens/practice/PracticeSessionScreen.tsx` – Timer từ server + kết thúc sớm + modal
+- `mobile/src/screens/exam/ExamTakingScreen.tsx` – Resume timer từ startedAt
+- `mobile/src/screens/ProgressScreen.tsx` – Exam history section (Premium gate)
+- `mobile/src/screens/ProfileScreen.tsx` – Quick links 5 tính năng
+- `mobile/src/screens/LeaderboardScreen.tsx` + `UserDetailBottomSheet.tsx` – Bottom sheet chi tiết user
+- `mobile/src/screens/NotificationScreen.tsx` – Click-to-navigate với `targetScreen`
+- `mobile/src/screens/battle/BattleScreen.tsx` – Nút "Lịch sử"
+- `mobile/src/screens/battle/BattleHistoryScreen.tsx` (mới) – List + pagination
+- `mobile/src/navigation/` – Verify cross-tab navigate logic
+
+### Cách tự kiểm thử toàn bộ (manual test flow)
+
+1. **TASK1 + TASK2:** Start practice → xác nhận timer `17:00` → chơi 2 phút → tắt app → reopen → timer tiếp tục
+2. **TASK3:** Premium user → tab Tiến độ → scroll → thấy "Lịch sử bài thi" + phân trang
+3. **TASK4:** Tab Luyện tập → scroll → xác nhận "5 phiên gần nhất" + "Thống kê"
+4. **TASK5:** Tab Luyện tập → start → trả lời → bấm "Kết thúc sớm" → modal confirm → kết thúc
+5. **TASK6:** Tab Hồ sơ → scroll → bấm "Xem lịch sử thi" → jump tab Tiến độ
+6. **TASK7:** Tab Xếp hạng → tap user → bottom sheet chi tiết
+7. **TASK8:** Trigger notification PvP → tab Thông báo → tap → jump tab "Thi đấu"
+8. **TASK9:** Tab Thi đấu → button "Lịch sử" → mở history list + phân trang
+
+### Lưu ý / rủi ro / TODO
+
+- **Cross-tab navigate:** Dùng `navigation.getParent()?.navigate()` thay vì `navigation.navigate()` để jump giữa các tab. Cần verify pattern này hoạt động trên React Navigation 7 (mobile).
+- **Pagination:** Các TASK3, TASK4, TASK9 dùng pagination — cần handle loading state, empty state, error state rõ ràng.
+- **Premium gate:** TASK3 (exam history) chỉ Premium users xem → backend `GET /api/exams/history` phải check auth.isPremium
+- **Timer precision:** TASK1 + TASK2 dùng `setInterval` — cần hủy interval khi unmount. Nếu interval 1 giây, sai lệch ±1-2 giây là bình thường.
+- **Resume endpoint:** TASK2 phải gọi `/api/exams/:examId/resume` để sync timestamp. Backend phải trả về thông tin startedAt chính xác.
+- **Bottom sheet dismiss:** TASK7 — sau khi user đóng bottom sheet, có thể cần scroll lazylist về top (nếu list rất dài).
