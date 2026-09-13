@@ -321,7 +321,14 @@ function ExamPage({
       )}
 
       <div className="practice-subjects">
-        {subjects.map((s) => {
+        {subjects.length === 0 ? (
+          <div className="empty-subjects-hint">
+            <p className="empty-subjects-icon">📋</p>
+            <p className="empty-subjects-msg">Bạn chưa chọn môn học nào.</p>
+            <p className="empty-subjects-sub">Hãy quay lại trang chính và nhấn <strong>Đổi môn</strong> để chọn môn học.</p>
+            <button className="btn-secondary btn-sm" onClick={onBack}>← Quay lại</button>
+          </div>
+        ) : subjects.map((s) => {
           const info = SUBJECTS_MAP[s.id] ?? { name: s.name, emoji: '📘' };
           const busy = loadingSubj === s.id;
           return (

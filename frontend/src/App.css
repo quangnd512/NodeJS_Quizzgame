@@ -29,6 +29,28 @@
   --shadow-lg:  0 16px 48px rgba(79,70,229,.16), 0 4px 12px rgba(0,0,0,.08);
 }
 
+/* ─── Dark mode overrides ─────────────────────────────────────────────────── */
+/* Đồng bộ với index.css: ghi đè các biến đặc thù của App (--cream, --surface, --muted)
+   khi user chọn "Tối" hoặc hệ điều hành ở dark mode (và user chưa chọn "Sáng").
+   Thứ tự selector phải khớp index.css để cascade nhất quán.                    */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --cream:   #16171d;
+    --surface: #1f2028;
+    --muted:   #6b7280;
+    --indigo-50: rgba(99, 102, 241, 0.12);
+    --indigo-100: rgba(99, 102, 241, 0.18);
+  }
+}
+
+:root[data-theme="dark"] {
+  --cream:   #16171d;
+  --surface: #1f2028;
+  --muted:   #6b7280;
+  --indigo-50: rgba(99, 102, 241, 0.12);
+  --indigo-100: rgba(99, 102, 241, 0.18);
+}
+
 body {
   font-family: 'Be Vietnam Pro', system-ui, sans-serif;
   background: var(--cream);
@@ -826,6 +848,19 @@ body {
 .ps-stat { display: block; font-size: .75rem; color: var(--muted); margin-top: .1rem; }
 .ps-stat.ps-new { color: var(--indigo-400); }
 .ps-arrow { color: var(--indigo-400); font-size: .8rem; }
+
+/* Empty subjects hint — hiển thị khi user chưa chọn môn học */
+.empty-subjects-hint {
+  text-align: center;
+  padding: 2rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .75rem;
+}
+.empty-subjects-icon { font-size: 2.5rem; }
+.empty-subjects-msg { font-size: 1rem; font-weight: 700; color: var(--text); }
+.empty-subjects-sub { font-size: .85rem; color: var(--muted); line-height: 1.5; }
 
 /* History rows */
 .history-row {
