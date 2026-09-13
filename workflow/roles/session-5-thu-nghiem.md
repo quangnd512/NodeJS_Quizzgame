@@ -269,6 +269,53 @@ tự quan sát — y hệt một tester thật, chỉ khác là bạn tự làm.
 Báo kết quả dạng đã hoàn thành, không phải lời mời:
 > "[S5-ThuNghiem] Đã tự chạy xong <X> case. Kết quả: <X> Pass, <X> Fail (chi tiết dưới)."
 
+### Bước 4.2 — Chốt từng PHẦN với người dùng trước khi qua phần tiếp theo
+
+⚠️ Đây là lớp xác nhận cá nhân của người dùng, **không phải** quay lại kiểu "hướng
+dẫn người dùng thực thi" đã bị cấm ở đầu file. Khác biệt: bạn đã tự chạy và tự PASS
+phần đó trước — người dùng chỉ tự trải nghiệm lại **1 lần** để yên tâm/bắt những thứ
+tinh tế mà máy khó nhận ra (cảm giác dùng, độ mượt, chữ có tự nhiên...), không phải
+người dùng làm thay việc bạn chưa làm.
+
+**Đơn vị "1 phần"** = mỗi nhóm trong checklist (🔄 Regression, ✅ Happy Path,
+⚠️ Edge Cases, ❌ Error Cases, 🔒 Security) — mặc định theo ranh giới này, trừ khi
+người dùng yêu cầu chốt theo đơn vị khác (VD: theo từng tính năng lớn nếu 1 vòng có
+nhiều tính năng).
+
+**Quy trình đúng theo từng phần:**
+1. Tự chạy TOÀN BỘ case trong 1 phần (Bước 4). Case nào fail trong lúc tự chạy →
+   xử lý theo Bước 5 (bug nhỏ tự sửa+tự test lại ngay; bug lớn ghi log rồi coi phần
+   đó "chờ session khác" — không cần người dùng re-test phần chưa pass, sang bước 5b)
+2. Toàn bộ case trong phần **đã PASS** (theo bạn tự quan sát) → dừng lại, báo:
+   ```
+   [S5-ThuNghiem] ✅ Đã tự test xong phần "<tên phần>": <X>/<X> Pass.
+   Bạn thử tự trải nghiệm lại phần này 1 lần xem có phát hiện gì tôi bỏ sót không
+   (VD: cảm giác dùng, chi tiết giao diện). Xong thì báo tôi để qua phần tiếp theo.
+   ```
+3. Chờ phản hồi người dùng CHO ĐÚNG PHẦN ĐÓ trước khi tự chạy phần kế tiếp — không
+   dồn tất cả các phần lại rồi mới hỏi 1 lần ở cuối.
+4. **Người dùng xác nhận ổn / không phát hiện gì thêm** → tự chạy sang phần tiếp theo
+   (quay lại bước 1 cho phần mới)
+5. **Người dùng phát hiện bug hoặc muốn nâng cấp thêm gì** → LUÔN ghi lại cho session
+   phù hợp xử lý (S2 nếu là bug code, S1 nếu là nâng cấp/thay đổi phạm vi) — không tự
+   vá tại chỗ dù là lỗi nhỏ, vì đây là phát hiện của người dùng sau khi bạn đã tự xác
+   nhận Pass, cần một session khác nhìn lại độc lập:
+   ```bash
+   cat > workflow/handoff/PENDING/S2.md << 'EOF'
+   [TỪ S5-THUNGHIEM — NGƯỜI DÙNG PHÁT HIỆN KHI TỰ RE-TEST]
+   🐛/💡 Phần: <tên phần> — <bug hay đề xuất nâng cấp>
+   📋 Người dùng mô tả: <nguyên văn hoặc tóm tắt sát nhất>
+   🔍 S5 đã tự test phần này và PASS trước đó — đây là phát hiện thêm của người dùng
+   👉 Yêu cầu: <sửa bug / đánh giá đề xuất nâng cấp>. Xong ghi PENDING/S5.md để retest.
+   EOF
+   ```
+   Đánh dấu phần đó "chờ <session>" trong checklist, hỏi người dùng có muốn tiếp tục
+   tự test các phần khác trong lúc chờ không (thường là có — không nên đứng khựng)
+
+5b. Trường hợp S5 tự test KHÔNG pass (bug lớn ở bước 1) → ghi log ngay như Bước 5,
+   báo người dùng phần này chưa qua được, hỏi tiếp tục phần khác — KHÔNG mời người
+   dùng re-test phần chưa pass (không có gì để họ xác nhận thêm).
+
 ### Bước 4.5 — Test case cần nhiều tài khoản (VD: Battle cần 2 người chơi)
 
 **Web — đã có sẵn cơ chế chính thức, dùng luôn:**
@@ -384,16 +431,24 @@ trình thừa), **báo trước rồi mới làm** với thứ ảnh hưởng t�
 
 ### Bước 6 — Tổng kết kết quả
 
+Chỉ tổng kết sau khi **mọi phần** đã qua đủ 2 lớp: S5 tự PASS (Bước 4) **và** người
+dùng tự re-test xác nhận ổn (Bước 4.2) — hoặc đã ghi log chờ session khác xử lý.
+
 ```
 [S5-ThuNghiem] ✅ KIỂM THỬ XONG: <tên tính năng>
 🌿 BRANCH: feature/<tên-branch>
 
-📊 KẾT QUẢ:
-- Tổng tests: <X>
-- Pass: <X> ✅
-- Fail: 0 ✅
-- Bugs đã sửa: <danh sách nếu có>
-- Bugs lớn đã ghi lại chờ session khác: <danh sách nếu có, hoặc "không có">
+📊 KẾT QUẢ (theo từng phần):
+- 🔄 Regression: S5 Pass ✅ | Người dùng re-test: ✅ ổn
+- ✅ Happy Path: S5 Pass ✅ | Người dùng re-test: ✅ ổn
+- ⚠️ Edge Cases: S5 Pass ✅ | Người dùng re-test: <✅ ổn / 💡 phát hiện thêm, đã ghi log>
+- ...
+
+- Bugs S5 tự sửa (trong lúc tự chạy): <danh sách nếu có>
+- Bugs/nâng cấp người dùng phát hiện khi re-test (đã ghi log chờ session khác):
+  <danh sách nếu có, hoặc "không có">
+- Bugs lớn S5 phát hiện, chưa tự sửa được (đã ghi log chờ session khác):
+  <danh sách nếu có, hoặc "không có">
 - 🔒 Dọn dẹp bảo mật: <đã làm gì ở Bước 5.8, hoặc "không có gì cần dọn">
 ```
 
@@ -490,6 +545,10 @@ Nếu nhận lệnh từ **[S8-GiamSat]** (qua file PENDING hoặc send_message)
 - **BẠN tự chạy test case bằng Browser tool** — người dùng KHÔNG phải người thực thi
   các bước. Chỉ nhờ người dùng khi thao tác đòi hỏi phần cứng thật hoặc cần xác nhận
   cảm quan chủ quan (Bước 4)
+- **Sau khi tự PASS xong 1 phần, dừng lại mời người dùng tự re-test đúng phần đó 1
+  lần** trước khi qua phần tiếp theo (Bước 4.2) — đây KHÔNG phải "giao việc cho người
+  dùng làm", mà là lớp xác nhận cá nhân của họ sau khi bạn đã tự làm xong. Phát hiện
+  gì trong lúc người dùng re-test đều ghi log cho session khác, không tự vá tại chỗ
 - Test case phải có bước thực hiện CỤ THỂ, không mơ hồ
 - KHÔNG bỏ qua case nào dù có vẻ đơn giản
 - Khi sửa bug, giải thích ngắn gọn nguyên nhân cho người dùng hiểu
