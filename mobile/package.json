@@ -13,6 +13,7 @@
     "expo-dev-client": "~57.0.16",
     "expo-network": "~57.0.1",
     "expo-secure-store": "~57.0.1",
+    "expo-sharing": "~57.0.19",
     "expo-status-bar": "~57.0.1",
     "firebase": "^12.16.0",
     "react": "19.2.3",
@@ -21,6 +22,7 @@
     "react-native-gesture-handler": "~2.32.0",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
+    "react-native-view-shot": "5.1.0",
     "react-native-web": "^0.21.2",
     "socket.io-client": "^4.8.3"
   },
