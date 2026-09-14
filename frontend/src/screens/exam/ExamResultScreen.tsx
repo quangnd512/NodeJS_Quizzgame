@@ -3,17 +3,24 @@ import { getExamResult } from '../../lib/api.js';
 import type { SubmitExamResult, ExamResult } from '../../lib/api.js';
 import Spinner from '../../components/Spinner.js';
 import { describeExamAnswer } from './examUtils.js';
+import ShareCard from '../../components/share/ShareCard.js';
+import { useShareCard } from '../../hooks/useShareCard.js';
 
 function ExamResultScreen({
-  sessionToken, result, onHome, onRetry,
+  sessionToken, result, onHome, onRetry, userName, subjectName,
 }: {
   sessionToken: string;
   result: SubmitExamResult;
   onHome: () => void;
   onRetry: () => void;
+  /** Tên hiển thị của người dùng để gắn vào card chia sẻ */
+  userName: string;
+  /** Tên môn học, ví dụ "Toán Đại số" */
+  subjectName: string;
 }) {
   const [detail, setDetail]   = useState<ExamResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const { cardRef, sharing, shareAsPng } = useShareCard();
 
   useEffect(() => {
     void getExamResult(sessionToken, result.sessionId)
@@ -24,8 +31,33 @@ function ExamResultScreen({
 
   const icon = result.score >= 8 ? '🎉' : result.score >= 5 ? '💪' : '📖';
 
+  // Props cho ShareCard kết quả thi
+  const shareResultText = `${result.score.toFixed(1)}/10`;
+  const shareSubtitle   = subjectName
+    ? `${subjectName}${result.pointsAwarded > 0 ? ` · +${result.pointsAwarded} điểm` : ''}`
+    : (result.pointsAwarded > 0 ? `+${result.pointsAwarded} điểm thưởng` : 'Thi thử');
+
+  function handleShare() {
+    void shareAsPng(`ket-qua-thi-${Date.now()}.png`);
+  }
+
   return (
     <div className="screen exam-result">
+      {/* ShareCard off-screen — html2canvas chụp từ đây */}
+      <div
+        style={{ position: 'absolute', left: '-9999px', top: '-9999px', pointerEvents: 'none' }}
+        aria-hidden="true"
+      >
+        <div ref={cardRef}>
+          <ShareCard
+            userName={userName}
+            result={shareResultText}
+            subtitle={shareSubtitle}
+            type="exam"
+          />
+        </div>
+      </div>
+
       <div className="exam-result-header">
         <h2 className="page-title">Kết quả thi thử</h2>
       </div>
@@ -39,6 +71,14 @@ function ExamResultScreen({
         {result.pointsAwarded > 0 && (
           <div className="result-pts">+{result.pointsAwarded} điểm thưởng</div>
         )}
+        <button
+          className="btn-secondary"
+          style={{ marginTop: '.75rem', display: 'flex', alignItems: 'center', gap: '.375rem', justifyContent: 'center' }}
+          onClick={handleShare}
+          disabled={sharing}
+        >
+          {sharing ? '⏳ Đang tạo ảnh...' : '📤 Chia sẻ kết quả'}
+        </button>
       </div>
 
       {loading ? (

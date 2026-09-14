@@ -271,6 +271,12 @@ function ExamPage({
         result={result}
         onHome={onBack}
         onRetry={() => { setResult(null); setSession(null); setHubError(''); setSub('hub'); }}
+        userName={profile.displayName ?? profile.email}
+        subjectName={
+          profile.subjects.find((s) => s.id === session?.data.subject)?.name
+          ?? session?.data.subject
+          ?? ''
+        }
       />
     );
   }
