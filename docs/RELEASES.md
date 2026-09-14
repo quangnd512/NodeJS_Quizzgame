@@ -4,6 +4,49 @@
 
 ---
 
+## v1.19.0 — 2026-09-14
+
+### Feature: Mobile Complete — Tính Năng Di Động Hoàn Chỉnh
+
+**Branch:** `feature/mobile-complete` | **Merge:** PR #30
+
+#### Added
+
+- **13 tính năng mobile hoàn thiện** (React Native + Expo 57):
+  - **Practice** (TASK1): Ôn tập từ câu sai trước với API mới
+  - **Exam** (TASK2): Làm bài thi để lấy điểm
+  - **Leaderboard** (TASK3): Xem xếp hạng người dùng
+  - **Progress** (TASK4): Theo dõi tiến độ cá nhân + streak
+  - **Wrong Answers** (TASK5): Danh sách câu sai + ôn tập
+  - **Notifications** (TASK6): Nhận thông báo + điều hướng theo loại
+  - **Battle PvP** (TASK7): Thi đấu realtime qua Socket.io
+  - **Submissions** (TASK8): Gửi lại câu hỏi cho duyệt
+  - **Premium Features** (TASK9): Gate các tính năng cao cấp
+
+- **4 tính năng web bổ sung** (React + Vite):
+  - Onboarding page cho người dùng mới
+  - Profile page + avatar upload
+  - Dark mode toggle (Sáng/Tối/Theo hệ thống)
+  - Dev-login endpoint cho QA
+
+- **9 API modules hoàn chỉnh**: exam, practice, battle, progress, leaderboard, notifications, wrongAnswers, submissions, battleSocket
+
+#### Testing
+
+- **Automated**: 420/420 test PASS (282 backend + 101 frontend + 37 mobile)
+- **TypeScript**: Clean cả 3 phần
+- **Quality**: S8 quality gate ĐẠT sau 2 vòng review phức tạp
+- **Documentation**: 6 file cập nhật (FEATURE_LOG, CHANGELOG, TEST_CASES, CODE_REVIEW_LOG, troubleshooting, user-guide)
+
+#### Notes
+
+- Tích hợp 3 phần (Backend/Frontend/Mobile) đồng thời lần đầu trong dự án
+- S3 phát hiện race condition trong resolveReport → fix claim-pattern
+- S5 test 6 kịch bản Socket.io engine → bổ sung unit test
+- Merge master vào feature phức tạp do incompatibility API → resolved bằng cách xóa test file cũ + update types
+
+---
+
 ## v1.18.0 — 2026-09-05
 
 ### Feature: Mobile Stage 1 — Màn Hình Học Tập Di Động
