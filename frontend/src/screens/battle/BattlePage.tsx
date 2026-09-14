@@ -20,6 +20,8 @@ import {
   BATTLE_ACTIVE_MATCH_KEY,
   BATTLE_QUEUE_CRITERIA_LABEL,
 } from './battleConstants.js';
+import ShareCard from '../../components/share/ShareCard.js';
+import { useShareCard } from '../../hooks/useShareCard.js';
 
 // Mirrors App.tsx — BattleResumeState phải ở đây vì BattlePage nhận nó qua props;
 // App.tsx giữ bản gốc, file này giữ bản cục bộ để tránh circular import.
@@ -459,6 +461,7 @@ function BattlePage({
           match={match}
           onPlayAgain={handlePlayAgain}
           onBack={onBack}
+          userName={profile.displayName ?? profile.email}
         />
       )}
     </div>
@@ -730,16 +733,50 @@ function BattlePlayPhase({
 // ─── BattleResultPhase (TASK 14 — màn hình kết quả) ──────────────────────────
 
 function BattleResultPhase({
-  result, match, onPlayAgain, onBack,
+  result, match, onPlayAgain, onBack, userName,
 }: {
   result: BattleMatchEndedPayload;
   match: BattleMatchFoundPayload | null;
   onPlayAgain: () => void;
   onBack: () => void;
+  /** Tên hiển thị của người dùng để gắn vào card chia sẻ */
+  userName: string;
 }) {
   const label = BATTLE_RESULT_LABEL[result.result];
+  const { cardRef, sharing, shareAsPng } = useShareCard();
+
+  // Kết quả nổi bật cho card chia sẻ
+  const isWin = result.result === 'WIN' || result.result === 'OPPONENT_LEFT_WIN';
+  const isDraw = result.result === 'DRAW' || result.result === 'CANCELLED_BOTH_LEFT';
+  const shareResultText = isWin ? 'THẮNG 🏆' : isDraw ? 'HÒA 🤝' : 'THUA';
+  const pointsStr       = result.pointsChange >= 0
+    ? `+${result.pointsChange.toLocaleString('vi-VN')} điểm`
+    : `${result.pointsChange.toLocaleString('vi-VN')} điểm`;
+  const shareSubtitle   = match
+    ? `${match.subject} · ${pointsStr}`
+    : pointsStr;
+
+  function handleShare() {
+    void shareAsPng(`ket-qua-battle-${Date.now()}.png`);
+  }
+
   return (
     <div className="screen-center" style={{ padding: '2rem 1.25rem', textAlign: 'center' }}>
+      {/* ShareCard off-screen */}
+      <div
+        style={{ position: 'absolute', left: '-9999px', top: '-9999px', pointerEvents: 'none' }}
+        aria-hidden="true"
+      >
+        <div ref={cardRef}>
+          <ShareCard
+            userName={userName}
+            result={shareResultText}
+            subtitle={shareSubtitle}
+            type="battle"
+          />
+        </div>
+      </div>
+
       <p style={{ fontSize: '3rem', margin: 0 }}>{label.icon}</p>
       <h2 className={label.cls} style={{ margin: '.5rem 0' }}>{label.text}</h2>
       <p style={{ color: 'var(--muted)' }}>
@@ -764,6 +801,13 @@ function BattleResultPhase({
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '.625rem', marginTop: '1.5rem' }}>
         <button className="btn-primary btn-lg" onClick={onPlayAgain}>Chơi lại</button>
+        <button
+          className="btn-secondary btn-lg"
+          onClick={handleShare}
+          disabled={sharing}
+        >
+          {sharing ? '⏳ Đang tạo ảnh...' : '📤 Chia sẻ kết quả'}
+        </button>
         <button className="btn-secondary btn-lg" onClick={onBack}>Về trang chủ</button>
       </div>
     </div>
