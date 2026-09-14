@@ -1,5 +1,6 @@
-// Khai bao kieu du lieu cho tung navigator - giup cac man hinh dung `useNavigation`/`navigation.navigate`
-// co goi y kieu (autocomplete) + bat loi luc bien dich neu goi sai ten man hinh/thieu tham so.
+// Khai bao kieu du lieu cho tung navigator — giup cac man hinh dung `useNavigation`/
+// `navigation.navigate` co goi y kieu (autocomplete) + bat loi luc bien dich neu goi sai
+// ten man hinh hoac thieu tham so.
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { NavigatorScreenParams } from '@react-navigation/native';
@@ -7,7 +8,11 @@ import type { StartSessionResult, CompleteResult } from '../api/practice';
 import type { StartExamResult } from '../api/exam';
 import type { BattleMatchEndedPayload } from '../battle/battleSocket';
 
-/** Stack luc CHUA dang nhap - man Dang nhap hoc sinh + loi vao Dang nhap Admin. */
+// ---------------------------------------------------------------------------
+// Auth stack
+// ---------------------------------------------------------------------------
+
+/** Stack luc CHUA dang nhap — man Dang nhap hoc sinh + loi vao Dang nhap Admin. */
 export type AuthStackParamList = {
   Login: undefined;
   AdminLogin: undefined;
@@ -17,6 +22,10 @@ export type AuthStackScreenProps<T extends keyof AuthStackParamList> = NativeSta
   AuthStackParamList,
   T
 >;
+
+// ---------------------------------------------------------------------------
+// Onboarding stack
+// ---------------------------------------------------------------------------
 
 /** Stack Onboarding (dot nay chi co 1 man, giu dang Stack de de mo rong sau nay). */
 export type OnboardingStackParamList = {
@@ -82,9 +91,49 @@ export type MainTabParamList = {
   Profile: NavigatorScreenParams<ProfileStackParamList>;
 };
 
-export type MainTabScreenProps<T extends keyof MainTabParamList> = BottomTabScreenProps<MainTabParamList, T>;
+export type MainTabScreenProps<T extends keyof MainTabParamList> = BottomTabScreenProps<
+  MainTabParamList,
+  T
+>;
 
-/** Stack rieng cho Admin - hoan toan tach biet, khong chia se man hinh voi luong hoc sinh. */
+// ---------------------------------------------------------------------------
+// Composite props: man hinh trong stack co the dung ca navigation cua tab
+// ---------------------------------------------------------------------------
+
+export type PracticeStackScreenProps<T extends keyof PracticeStackParamList> =
+  CompositeScreenProps<
+    NativeStackScreenProps<PracticeStackParamList, T>,
+    BottomTabScreenProps<MainTabParamList>
+  >;
+
+export type ExamStackScreenProps<T extends keyof ExamStackParamList> =
+  CompositeScreenProps<
+    NativeStackScreenProps<ExamStackParamList, T>,
+    BottomTabScreenProps<MainTabParamList>
+  >;
+
+export type LeaderboardStackScreenProps<T extends keyof LeaderboardStackParamList> =
+  CompositeScreenProps<
+    NativeStackScreenProps<LeaderboardStackParamList, T>,
+    BottomTabScreenProps<MainTabParamList>
+  >;
+
+export type ProgressStackScreenProps<T extends keyof ProgressStackParamList> =
+  CompositeScreenProps<
+    NativeStackScreenProps<ProgressStackParamList, T>,
+    BottomTabScreenProps<MainTabParamList>
+  >;
+
+export type ProfileStackScreenProps<T extends keyof ProfileStackParamList> =
+  CompositeScreenProps<
+    NativeStackScreenProps<ProfileStackParamList, T>,
+    BottomTabScreenProps<MainTabParamList>
+  >;
+
+// ---------------------------------------------------------------------------
+// Admin stack — hoan toan tach biet, khong chia se man hinh voi luong hoc sinh
+// ---------------------------------------------------------------------------
+
 export type AdminStackParamList = {
   AdminHome: undefined;
 };

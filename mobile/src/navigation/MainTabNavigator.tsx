@@ -13,16 +13,39 @@ import type { MainTabParamList } from './types';
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
-const TAB_CONFIG: Record<keyof MainTabParamList, { label: string; emoji: string }> = {
-  Practice: { label: 'Luyện tập', emoji: '✏️' },
-  Exam: { label: 'Thi thử', emoji: '📝' },
-  Leaderboard: { label: 'Xếp hạng', emoji: '🏆' },
-  Progress: { label: 'Tiến độ', emoji: '📊' },
-  Profile: { label: 'Hồ sơ', emoji: '👤' },
-};
+/** Hook lay so thong bao chua doc — poll moi 60 giay de cap nhat badge. */
+function useUnreadNotificationCount(token: string | null): number {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    if (!token) return;
+
+    let cancelled = false;
+
+    const fetch = async () => {
+      try {
+        const res = await getUnreadCount(token);
+        if (!cancelled) setCount(res.count);
+      } catch {
+        // Khong bao loi — badge chi la tiện ich, khong anh huong den luong chinh.
+      }
+    };
+
+    fetch();
+    const id = setInterval(fetch, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [token]);
+
+  return count;
+}
 
 export function MainTabNavigator() {
   const { colors } = useAppTheme();
+  const { sessionToken } = useAuth();
+  const unreadCount = useUnreadNotificationCount(sessionToken ?? null);
 
   return (
     <Tab.Navigator
@@ -36,7 +59,7 @@ export function MainTabNavigator() {
           tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
           tabBarLabel: config.label,
           tabBarIcon: ({ color, size }: { color: string; size: number }) => (
-            <Text style={{ fontSize: size * 0.85, color }}>{config.emoji}</Text>
+            <Text style={{ fontSize: size * 0.85, color }}>✏️</Text>
           ),
         };
       }}

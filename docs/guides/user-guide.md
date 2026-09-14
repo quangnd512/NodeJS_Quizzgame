@@ -1636,11 +1636,9 @@ QuizzGame hiện có thêm **ứng dụng di động** (React Native + Expo, cà
 điện thoại Android/iOS), dùng **chung 1 tài khoản** với bản web — đăng nhập
 Google/Apple ở đâu cũng vào đúng hồ sơ, điểm số, môn học đã chọn của bạn.
 
-> ⚠️ **Đợt 1a chỉ là "nền móng"**: app di động hiện tại MỚI CÓ đăng nhập,
-> điều hướng, chọn môn học, dark mode. Các màn hình chức năng thật (Luyện
-> tập, Thi thử, Xếp hạng, Tiến độ) tạm hiện **"Sắp ra mắt"** — sẽ được bổ
-> sung dần ở các đợt tiếp theo. Muốn dùng đầy đủ tính năng, hiện tại vẫn nên
-> dùng bản web.
+**Đợt 1a (Nền móng, 2026-07-29):** Khung đăng nhập, điều hướng, chọn môn học, dark mode.
+
+**Đợt 1b (Màn hình học tập, 2026-09-04):** Luyện tập, Thi thử, Bảng xếp hạng, Tiến độ, Ôn câu sai, Thông báo, Gửi câu hỏi, Thi đấu PvP — tất cả tính năng chính đã hoàn thiện trên mobile.
 
 ### Đăng nhập lần đầu
 
