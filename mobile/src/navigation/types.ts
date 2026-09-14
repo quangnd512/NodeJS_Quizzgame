@@ -53,7 +53,7 @@ export type PracticeStackScreenProps<T extends keyof PracticeStackParamList> =
 export type ExamStackParamList = {
   ExamList: undefined;
   ExamTaking: { session: StartExamResult };
-  ExamResult: { sessionId: string };
+  ExamResult: { sessionId: string; score?: number; subjectName?: string; pointsAwarded?: number };
 };
 
 export type ExamStackScreenProps<T extends keyof ExamStackParamList> =

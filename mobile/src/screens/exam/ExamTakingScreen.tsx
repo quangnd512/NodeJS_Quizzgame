@@ -76,7 +76,12 @@ export function ExamTakingScreen({ navigation, route }: Props) {
       try {
         const result = await submitExam(sessionToken, session.sessionId, formattedAnswers);
         setSubmitting(false);
-        navigation.replace('ExamResult', { sessionId: result.sessionId });
+        navigation.replace('ExamResult', {
+          sessionId:    result.sessionId,
+          score:        result.score,
+          subjectName:  session.subject,
+          pointsAwarded: result.pointsAwarded,
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Không thể nộp bài.';
         Alert.alert('Lỗi', msg);
