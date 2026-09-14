@@ -461,7 +461,7 @@ function BattlePage({
           match={match}
           onPlayAgain={handlePlayAgain}
           onBack={onBack}
-          userName={profile.displayName ?? profile.email}
+          userName={profile.displayName ?? profile.email ?? ''}
         />
       )}
     </div>
