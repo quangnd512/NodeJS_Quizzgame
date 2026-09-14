@@ -3,7 +3,7 @@
 // ten man hinh hoac thieu tham so.
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
-import type { NavigatorScreenParams } from '@react-navigation/native';
+import type { NavigatorScreenParams, CompositeScreenProps } from '@react-navigation/native';
 import type { StartSessionResult, CompleteResult } from '../api/practice';
 import type { StartExamResult } from '../api/exam';
 import type { BattleMatchEndedPayload } from '../battle/battleSocket';
@@ -69,6 +69,22 @@ export type BattleStackParamList = {
 
 export type BattleStackScreenProps<T extends keyof BattleStackParamList> =
   NativeStackScreenProps<BattleStackParamList, T>;
+
+/** Stack xep hang (Leaderboard tab). */
+export type LeaderboardStackParamList = {
+  LeaderboardHome: undefined;
+};
+
+export type LeaderboardStackScreenProps<T extends keyof LeaderboardStackParamList> =
+  NativeStackScreenProps<LeaderboardStackParamList, T>;
+
+/** Stack tien do (Progress tab). */
+export type ProgressStackParamList = {
+  ProgressHome: undefined;
+};
+
+export type ProgressStackScreenProps<T extends keyof ProgressStackParamList> =
+  NativeStackScreenProps<ProgressStackParamList, T>;
 
 /** Stack trong tab Ho so — cho phep ProfileScreen push cac man hinh phu. */
 export type ProfileStackParamList = {
