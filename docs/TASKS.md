@@ -24,6 +24,7 @@
 | TD-B1 | Tách App.tsx Vòng 1/7 — components dùng chung + màn auth | ✅ Done | refactor/split-app-tsx-round-1 | 2026-09-03 |
 | TD-B2 | Tách App.tsx Vòng 2→7 gộp — 26 file (screens + components + constants) | ✅ Done | refactor/split-app-tsx-round-2to5 | 2026-09-04 |
 | 017 | Mobile Stage 1 — 15 màn hình học tập mobile (Practice, Exam, Leaderboard, Progress, WrongAnswer, Notifications, Submission, Battle PvP) | ✅ Done | feature/mobile-stage1 | 2026-09-05 |
+| 018 | Chia sẻ kết quả (Share Results) — Chia sẻ ảnh kết quả thi/battle (FE: html2canvas, Mobile: ViewShot+Sharing) | ✅ Done | feature/share-results | 2026-09-15 |
 
 ---
 

@@ -16,7 +16,7 @@ import { useAuth } from '../../auth/AuthContext';
 import { startPracticeSession } from '../../api/practice';
 import { SUBJECT_CATALOG } from '../../constants/subjects';
 import type { PracticeStackScreenProps } from '../../navigation/types';
-import type { StartSessionResponse } from '../../api/practice';
+import type { StartSessionResult } from '../../api/practice';
 
 type Props = PracticeStackScreenProps<'PracticeHome'>;
 
@@ -34,13 +34,7 @@ export function PracticeHomeScreen({ navigation }: Props) {
     setLoading(subjectId);
     try {
       const session = await startPracticeSession(sessionToken, subjectId);
-      navigation.navigate('PracticeSession', {
-        subjectId,
-        subjectName,
-      });
-      // Truyen session qua global state thay vi params de tranh loi khi params lon
-      // Luu tam vao module-level var (don gian cho Mobile Stage 1)
-      storePracticeSession(session);
+      navigation.navigate('PracticeSession', { session });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Không thể bắt đầu phiên ôn tập.';
       Alert.alert('Lỗi', msg);
@@ -119,13 +113,13 @@ const styles = StyleSheet.create({
 // Dung cho Mobile Stage 1 — co the nang cap sau.
 // ---------------------------------------------------------------------------
 
-let _currentSession: StartSessionResponse | null = null;
+let _currentSession: StartSessionResult | null = null;
 
-export function storePracticeSession(s: StartSessionResponse): void {
+export function storePracticeSession(s: StartSessionResult): void {
   _currentSession = s;
 }
 
-export function getPracticeSession(): StartSessionResponse | null {
+export function getPracticeSession(): StartSessionResult | null {
   return _currentSession;
 }
 

@@ -76,13 +76,13 @@ export function BattleSessionScreen({ navigation, route }: Props) {
       setSelectedOpt(null);
       setQResult(null);
       setWaiting(false);
-      startTimer(data.timeLimit);
+      startTimer(20); // Server chưa gửi timeLimit — dùng mặc định 20 giây
     });
 
     socket.on('battle:question-result', (data: BattleQuestionResultEvent) => {
       if (!isMounted.current) return;
       setQResult(data);
-      setMyScore(data.myScore);
+      setMyScore(data.myTotalScore);
       if (timerRef.current) clearInterval(timerRef.current);
     });
 
@@ -95,7 +95,7 @@ export function BattleSessionScreen({ navigation, route }: Props) {
       if (!isMounted.current) return;
       disconnectBattleSocket();
       navigation.replace('BattleResult', {
-        matchId: data.matchId,
+        matchId: matchId, // lấy từ route.params (BattleMatchEndedPayload không có matchId)
         myScore: data.myScore,
         opponentScore: data.opponentScore,
         result: data.result,
@@ -150,16 +150,12 @@ export function BattleSessionScreen({ navigation, route }: Props) {
         backgroundColor: selectedOpt === i ? (colors.primary + '20') : colors.surface,
       };
     }
-    // User trả lời đúng: highlight xanh cho đáp án đã chọn
-    if (qResult.isCorrect && i === selectedOpt) {
-      return { borderColor: '#16a34a', backgroundColor: '#dcfce7' };
-    }
-    // Server gửi correctAnswer rõ ràng: highlight xanh cho đáp án đúng
-    if (qResult.correctAnswer !== null && i === qResult.correctAnswer) {
+    // Server gửi correctOption: highlight xanh cho đáp án đúng
+    if (i === qResult.correctOption) {
       return { borderColor: '#16a34a', backgroundColor: '#dcfce7' };
     }
     // User chọn sai: highlight đỏ
-    if (i === selectedOpt && !qResult.isCorrect) {
+    if (i === selectedOpt && i !== qResult.correctOption) {
       return { borderColor: colors.danger, backgroundColor: '#fee2e2' };
     }
     return { borderColor: colors.border, backgroundColor: colors.surface };
@@ -215,11 +211,14 @@ export function BattleSessionScreen({ navigation, route }: Props) {
             </TouchableOpacity>
           ))}
 
-          {qResult && (
-            <Text style={[styles.resultHint, { color: qResult.isCorrect ? '#16a34a' : colors.danger }]}>
-              {qResult.isCorrect ? '✅ Đúng! Bạn được ' + qResult.myScore + ' điểm' : '❌ Sai rồi!'}
-            </Text>
-          )}
+          {qResult && (() => {
+            const isCorrect = selectedOpt === qResult.correctOption;
+            return (
+              <Text style={[styles.resultHint, { color: isCorrect ? '#16a34a' : colors.danger }]}>
+                {isCorrect ? '✅ Đúng! Bạn được ' + qResult.myPointsEarned + ' điểm' : '❌ Sai rồi!'}
+              </Text>
+            );
+          })()}
         </View>
       ) : null}
     </View>

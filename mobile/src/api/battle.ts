@@ -8,6 +8,9 @@ export interface BattleConfig {
   currentPoints: number;
 }
 
+/** Alias tương thích cho BattleConfig (dùng trong BattleLobbyScreen). */
+export type BattleConfigResponse = BattleConfig;
+
 export type BattleResult = 'WIN' | 'LOSE' | 'DRAW';
 
 export interface BattleHistoryItem {

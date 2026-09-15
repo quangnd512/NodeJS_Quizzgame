@@ -1430,3 +1430,30 @@ cảnh báo rõ, để nguyên cho S5 test thủ công theo checklist đã bổ 
 - Lint: 0 errors, 0 warnings
 - TypeScript (`tsc --noEmit`): PASS
 - npm audit: 3 moderate (pre-existing, tất cả từ @vitest/ui)
+
+## Review: Feature 018 — Chia sẻ kết quả (Share Results)
+- **Ngày**: 2026-09-14
+- **Branch**: feature/share-results
+- **Reviewer**: S3-SoatLoi
+
+### Kết quả 9 tiêu chí
+1. ✅ Atomic transaction — không có thao tác DB mới (feature thuần client-side)
+2. ✅ Race condition — không có điểm/cược; `sharing` state chặn gọi đôi
+3. ✅ Error handling — try/catch đầy đủ cả FE và mobile, error state được set
+4. ✅ SQL injection / Validation — không có input user mới gửi lên backend
+5. ✅ N+1 / Index — không có query DB mới
+6. ✅ TypeScript: không có `any` trong file mới. TS errors mobile là pre-existing (WrongAnswerList, QuestionSubmission)
+7. ✅ Edge cases: userName rỗng → fallback "Bạn"; SHARE_APP_URL rỗng → hiện "QuizzGame"; cardRef null → early return; subtitle logic đúng với mọi combo score/subjectName
+8. ✅ API contract — feature thuần client-side, không có backend endpoint mới. Không có API draft cần đối chiếu
+9. ✅ File size — lớn nhất BattlePage.tsx (818 dòng) < 1.000, bình thường
+
+### Lỗi tìm thấy & đã sửa
+- **Không** — code S2 giao đạt yêu cầu, không cần sửa thêm
+
+### Test bổ sung
+- `frontend/src/components/__tests__/share/ShareCard.test.tsx` — 5 test (render + fallback)
+- `frontend/src/hooks/__tests__/useShareCard.test.ts` — 3 test (happy path + error case với mock html2canvas)
+
+### Kết quả kiểm tra
+- frontend: 109/109 tests PASS, lint PASS (0 lỗi), build PASS
+- mobile: 37/37 tests PASS, lint errors pre-existing (không do feature này)

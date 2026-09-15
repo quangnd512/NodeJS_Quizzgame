@@ -13,7 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../../theme/ThemeContext';
 import { useAuth } from '../../auth/AuthContext';
-import { submitExam, type StartExamResponse, type ExamQuestionPublicDto } from '../../api/exam';
+import { submitExam, type StartExamResult as StartExamResponse, type ExamQuestionPublic as ExamQuestionPublicDto } from '../../api/exam';
 import type { ExamStackScreenProps } from '../../navigation/types';
 
 type Props = ExamStackScreenProps<'ExamSession'>;

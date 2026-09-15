@@ -1,15 +1,26 @@
 // Khung dieu huong chinh cho HOC SINH - Bottom Tab 5 muc.
 // Moi tab (tru "Ho so") duoc thay the bang nested stack navigator chua cac man hinh thuc.
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Text } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useAppTheme } from '../theme/ThemeContext';
+import { useAuth } from '../auth/AuthContext';
+import { getUnreadCount } from '../api/notifications';
 import { LeaderboardScreen } from '../screens/LeaderboardScreen';
 import { ProgressScreen } from '../screens/ProgressScreen';
 import { PracticeStackNavigator } from './PracticeStackNavigator';
 import { ExamStackNavigator } from './ExamStackNavigator';
 import { ProfileStackNavigator } from './ProfileStackNavigator';
 import type { MainTabParamList } from './types';
+
+/** Nhãn và icon cho từng tab chính. */
+const TAB_CONFIG: Record<keyof MainTabParamList, { label: string; emoji: string }> = {
+  Practice: { label: 'Ôn tập', emoji: '✏️' },
+  Exam: { label: 'Thi thử', emoji: '📝' },
+  Leaderboard: { label: 'Xếp hạng', emoji: '🏆' },
+  Progress: { label: 'Tiến độ', emoji: '📊' },
+  Profile: { label: 'Hồ sơ', emoji: '👤' },
+};
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
@@ -44,8 +55,8 @@ function useUnreadNotificationCount(token: string | null): number {
 
 export function MainTabNavigator() {
   const { colors } = useAppTheme();
-  const { sessionToken } = useAuth();
-  const unreadCount = useUnreadNotificationCount(sessionToken ?? null);
+  const { sessionToken = null } = useAuth();
+  const unreadCount = useUnreadNotificationCount(sessionToken);
 
   return (
     <Tab.Navigator
@@ -68,7 +79,11 @@ export function MainTabNavigator() {
       <Tab.Screen name="Exam" component={ExamStackNavigator} />
       <Tab.Screen name="Leaderboard" component={LeaderboardScreen} />
       <Tab.Screen name="Progress" component={ProgressScreen} />
-      <Tab.Screen name="Profile" component={ProfileStackNavigator} />
+      <Tab.Screen
+        name="Profile"
+        component={ProfileStackNavigator}
+        options={{ tabBarBadge: unreadCount > 0 ? unreadCount : undefined }}
+      />
     </Tab.Navigator>
   );
 }

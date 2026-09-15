@@ -5,6 +5,43 @@
 
 ---
 
+## [Unreleased] — Feature 018: Chia sẻ kết quả (Share Results)
+
+**Branch:** `feature/share-results`
+**Ngày:** 2026-09-14
+**Commits:** 82e9b51–4408118
+
+### Added
+
+- **Share Results — Chia sẻ kết quả thi/battle dưới dạng ảnh:**
+  - **Frontend (Web):** Component `ShareCard` (400×220px) + hook `useShareCard()`
+    - Dùng **html2canvas** để chụp card → PNG
+    - Người dùng bấm nút "📤 Chia sẻ kết quả" → tải file PNG về máy
+    - Gradient khác nhau: xanh dương (exam) vs tím (battle)
+  - **Mobile (React Native):** Component `ShareCard` + hook `useShareCard()`
+    - Dùng **react-native-view-shot** để chụp View → PNG
+    - Dùng **expo-sharing** để mở native share dialog (Messages, WhatsApp, AirDrop, vv)
+  - **Nơi gắn nút:**
+    - Frontend: `ExamResultScreen`, `BattlePage` (BattleResultPhase)
+    - Mobile: `ExamResultScreen`, `BattleResultScreen`
+  - **Cấu hình:** `shareConfig.ts` (cả FE + mobile) với `SHARE_APP_URL` placeholder
+- **Props ShareCard:**
+  - `userName`: tên hiển thị người dùng
+  - `result`: điểm số (`8.5/10`) hoặc kết quả (`THẮNG`, `THUA`)
+  - `subtitle`: môn học + điểm thưởng (exam) hoặc mô tả (battle)
+  - `type`: `'exam'` | `'battle'`
+
+### Fixed
+
+- Fallback `userName` → "Bạn" khi null từ backend (commit 4408118)
+
+### TODO (Backlog)
+
+- **Backend Open Graph:** Endpoint `GET /share/:shareId` → meta tags (og:image, og:title) để preview đẹp trên mạng xã hội
+- **Analytics:** Track event `SHARE_RESULT` khi người dùng chia sẻ → growth metrics
+
+---
+
 ## [Unreleased] — Mobile Complete (Đợt 1b) — Hoàn thiện UX web & mobile
 
 **Branch:** `feature/mobile-complete`

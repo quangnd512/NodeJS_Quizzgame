@@ -11,7 +11,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../../theme/ThemeContext';
 import { useAuth } from '../../auth/AuthContext';
-import { getLeaderboard, getMyRank, type LeaderboardEntry, type MyRankResponse } from '../../api/leaderboard';
+import { getLeaderboard, getMyLeaderboardRank as getMyRank, type LeaderboardEntry, type MyRankResponse } from '../../api/leaderboard';
 import { SUBJECT_CATALOG } from '../../constants/subjects';
 
 const TREND_ICON: Record<string, string> = {
@@ -37,7 +37,7 @@ export function LeaderboardScreen() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     Promise.all([
-      getLeaderboard(sessionToken, selectedSubject),
+      getLeaderboard(sessionToken, 1, selectedSubject),
       getMyRank(sessionToken),
     ])
       .then(([board, rank]) => {

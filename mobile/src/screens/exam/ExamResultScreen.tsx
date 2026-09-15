@@ -14,6 +14,8 @@ import { useAppTheme } from '../../theme/ThemeContext';
 import { getExamResult } from '../../api/exam';
 import type { ExamResult, ExamChapterAnalysis, ExamWrongAnswer } from '../../api/exam';
 import type { ExamStackScreenProps } from '../../navigation/types';
+import ShareCard from '../../components/share/ShareCard';
+import { useShareCard } from '../../hooks/useShareCard';
 
 type Props = ExamStackScreenProps<'ExamResult'>;
 
@@ -23,7 +25,7 @@ export function ExamResultScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const { colors } = useAppTheme();
   const { sessionToken, profile } = useAuth();
-  const { sessionId } = route.params;
+  const { sessionId, score: paramScore, subjectName: paramSubject, pointsAwarded: paramPoints } = route.params;
 
   const [result, setResult] = useState<ExamResult | null>(null);
   // Khoi tao true ngay tu dau — tranh goi setLoading(true) dong bo trong effect
@@ -32,6 +34,7 @@ export function ExamResultScreen({ navigation, route }: Props) {
   const [showDetail, setShowDetail] = useState(false);
 
   const isPremium = profile?.isPremium ?? false;
+  const { cardRef, sharing, shareAsImage } = useShareCard();
 
   useEffect(() => {
     // sessionToken luon co mat o man hinh nay (chi mo duoc khi da dang nhap)
@@ -70,6 +73,16 @@ export function ExamResultScreen({ navigation, route }: Props) {
     : 0;
   const grade = result.score >= 90 ? '🏆 Xuất sắc' : result.score >= 70 ? '🌟 Tốt' : result.score >= 50 ? '📚 Đạt' : '💪 Chưa đạt';
 
+  // Du lieu cho ShareCard — uu tien params (co ngay khi nop bai), fallback sang result
+  const shareScore    = paramScore    ?? result.score;
+  const shareSubject  = paramSubject  ?? '';
+  const sharePoints   = paramPoints   ?? result.pointsAwarded;
+  const shareResultTxt = `${shareScore}/100`;
+  const shareSubtitle  = shareSubject
+    ? `${shareSubject}${sharePoints > 0 ? ` · +${sharePoints} điểm` : ''}`
+    : (sharePoints > 0 ? `+${sharePoints} điểm thưởng` : 'Thi thử');
+  const shareUserName  = profile?.displayName ?? profile?.email ?? '';
+
   function renderWrongAnswer(wa: ExamWrongAnswer, idx: number) {
     const correctOpt = typeof wa.correctAnswer === 'number' ? OPTION_LABELS[wa.correctAnswer as number] : String(wa.correctAnswer);
     return (
@@ -105,6 +118,23 @@ export function ExamResultScreen({ navigation, route }: Props) {
   }
 
   return (
+    <>
+      {/* ShareCard off-screen — ViewShot chup tu day */}
+      <View
+        style={styles.offScreen}
+        accessible={false}
+        importantForAccessibility="no-hide-descendants"
+      >
+        <View ref={cardRef}>
+          <ShareCard
+            userName={shareUserName}
+            result={shareResultTxt}
+            subtitle={shareSubtitle}
+            type="exam"
+          />
+        </View>
+      </View>
+
     <ScrollView
       style={{ backgroundColor: colors.background }}
       contentContainerStyle={[styles.container, { paddingTop: insets.top + 16 }]}
@@ -127,6 +157,17 @@ export function ExamResultScreen({ navigation, route }: Props) {
           <Text style={[styles.statLabel, { color: colors.textMuted }]}>Điểm thưởng</Text>
         </View>
       </View>
+
+      {/* Nut chia se */}
+      <TouchableOpacity
+        style={[styles.shareBtn, { borderColor: colors.primary }]}
+        onPress={() => { void shareAsImage(); }}
+        disabled={sharing}
+      >
+        <Text style={[styles.shareBtnText, { color: colors.primary }]}>
+          {sharing ? '⏳ Đang tạo ảnh...' : '📤 Chia sẻ kết quả'}
+        </Text>
+      </TouchableOpacity>
 
       {/* Premium gate cho phan phan tich */}
       {!isPremium ? (
@@ -183,10 +224,14 @@ export function ExamResultScreen({ navigation, route }: Props) {
         <Text style={[styles.btnOutlineText, { color: colors.text }]}>📊 Xem tiến độ</Text>
       </TouchableOpacity>
     </ScrollView>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
+  offScreen: { position: 'absolute', left: -9999, top: -9999, opacity: 0 },
+  shareBtn: { borderWidth: 1.5, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  shareBtnText: { fontSize: 15, fontWeight: '700' },
   container: { paddingHorizontal: 20, paddingBottom: 40, gap: 16 },
   grade: { fontSize: 22, fontWeight: '800', textAlign: 'center', marginBottom: 4 },
   statsRow: { flexDirection: 'row', gap: 10 },

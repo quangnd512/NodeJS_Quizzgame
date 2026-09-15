@@ -3,8 +3,11 @@ import React from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../../theme/ThemeContext';
+import { useAuth } from '../../auth/AuthContext';
 import type { BattleMatchResult } from '../../battle/battleSocket';
 import type { BattleStackScreenProps } from '../../navigation/types';
+import ShareCard from '../../components/share/ShareCard';
+import { useShareCard } from '../../hooks/useShareCard';
 
 type Props = BattleStackScreenProps<'BattleResult'>;
 
@@ -19,11 +22,39 @@ const RESULT_CONFIG: Record<BattleMatchResult, { icon: string; label: string; co
 export function BattleResultScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const { colors } = useAppTheme();
+  const { profile } = useAuth();
   const { ended, opponentName } = route.params;
 
   const cfg = RESULT_CONFIG[ended.result];
+  const { cardRef, sharing, shareAsImage } = useShareCard();
+
+  // Du lieu cho card chia se
+  const isWin  = ended.result === 'WIN' || ended.result === 'OPPONENT_LEFT_WIN';
+  const isDraw = ended.result === 'DRAW' || ended.result === 'CANCELLED_BOTH_LEFT';
+  const shareResultTxt = isWin ? 'THẮNG 🏆' : isDraw ? 'HÒA 🤝' : 'THUA';
+  const pointsStr      = ended.pointsChange >= 0
+    ? `+${ended.pointsChange} điểm`
+    : `${ended.pointsChange} điểm`;
+  const shareUserName  = profile?.displayName ?? profile?.email ?? '';
 
   return (
+    <>
+      {/* ShareCard off-screen — ViewShot chup tu day */}
+      <View
+        style={styles.offScreen}
+        accessible={false}
+        importantForAccessibility="no-hide-descendants"
+      >
+        <View ref={cardRef}>
+          <ShareCard
+            userName={shareUserName}
+            result={shareResultTxt}
+            subtitle={pointsStr}
+            type="battle"
+          />
+        </View>
+      </View>
+
     <ScrollView
       style={{ backgroundColor: colors.background }}
       contentContainerStyle={[styles.container, { paddingTop: insets.top + 32 }]}
@@ -69,16 +100,30 @@ export function BattleResultScreen({ navigation, route }: Props) {
       </TouchableOpacity>
 
       <TouchableOpacity
+        style={[styles.shareBtn, { borderColor: colors.primary }]}
+        onPress={() => { void shareAsImage(); }}
+        disabled={sharing}
+      >
+        <Text style={[styles.shareBtnText, { color: colors.primary }]}>
+          {sharing ? '⏳ Đang tạo ảnh...' : '📤 Chia sẻ kết quả'}
+        </Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
         style={[styles.btnOutline, { borderColor: colors.border }]}
         onPress={() => navigation.getParent()?.navigate('ProfileHome')}
       >
         <Text style={[styles.btnOutlineText, { color: colors.text }]}>← Về hồ sơ</Text>
       </TouchableOpacity>
     </ScrollView>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
+  offScreen: { position: 'absolute', left: -9999, top: -9999, opacity: 0 },
+  shareBtn: { width: '100%', borderWidth: 1.5, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  shareBtnText: { fontSize: 15, fontWeight: '700' },
   container: { paddingHorizontal: 24, paddingBottom: 48, gap: 20, alignItems: 'center' },
   resultIcon: { fontSize: 72 },
   resultLabel: { fontSize: 26, fontWeight: '900' },

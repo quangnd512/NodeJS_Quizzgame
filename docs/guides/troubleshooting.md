@@ -511,3 +511,41 @@ Nếu vô tình build production đặt lên server production, endpoint vẫn *
 **Nguyên nhân**: Tài khoản của bạn **không phải Premium** — tính năng xem đáp án chi tiết chỉ dành cho Premium user. User Free sẽ thấy button disabled.
 
 **Giải pháp**: Nâng cấp lên Premium account (cách thực hiện xem mục 15 trong `admin-guide.md`). Sau khi nâng cấp, refresh trang, button sẽ hoạt động.
+
+### 42. Nút "📤 Chia sẻ kết quả" không hiển thị hoặc báo lỗi
+
+**Triệu chứng**: Khi xem kết quả thi/battle, không thấy nút "📤 Chia sẻ kết quả", hoặc bấm vào thấy toast "Không thể tạo ảnh" (web) hoặc "Không thể chia sẻ ảnh" (mobile).
+
+**Nguyên nhân**:
+1. **Nút không hiển thị**: Chưa hoàn thành bài thi/battle hoàn toàn (trang kết quả chưa load xong)
+2. **Lỗi khi chia sẻ (web)**: Trình duyệt chặn download tự động, hoặc **html2canvas** không thể chụp (do JavaScript bị vô hiệu hoá)
+3. **Lỗi khi chia sẻ (mobile)**: Thiếu quyền truy cập camera/photo library, hoặc app chia sẻ (WhatsApp, Messages) chưa cài
+
+**Giải pháp**:
+- **Web**: 
+  - Chờ trang kết quả load xong (nút phải hiển thị tự động)
+  - Nếu lỗi "Không thể tạo ảnh": Thử làm mới trang (F5) → thực hiện bài thi lại → chia sẻ
+  - Kiểm tra cài đặt trình duyệt: Settings → Downloads → có cho phép download hay không
+- **Mobile**:
+  - Chờ trang kết quả load xong
+  - Nếu lỗi "Không thể chia sẻ ảnh": 
+    - Kiểm tra cấp quyền cho app (Settings → App Permissions)
+    - Cài ít nhất 1 app chia sẻ (WhatsApp, Messages, Telegram, vv)
+    - Thử lại
+
+### 43. Ảnh PNG được tải về/chia sẻ nhưng chứa nội dung sai hoặc bị cắt
+
+**Triệu chứng**: Bấm "📤 Chia sẻ kết quả", ảnh được sinh ra nhưng:
+- Tên user hiển thị sai (trống, hoặc tên cũ)
+- Điểm số/kết quả hiển thị sai
+- Một phần ảnh bị cắt hoặc trắng
+
+**Nguyên nhân**: 
+1. **Tên user rỗng**: Hồ sơ chưa cập nhật displayName
+2. **Dữ liệu không đồng bộ**: Backend gửi dữ liệu chậm, frontend đã render trước khi nhận
+3. **CSS/Layout issue (hiếm)**: ShareCard component không render đầy đủ do CSS
+
+**Giải pháp**:
+- Cập nhật tên hiển thị ở hồ sơ (Profile) → quay lại chia sẻ lại
+- Refresh trang → chờ dữ liệu load xong → thực hiện hành động lại
+- Nếu vẫn lỗi: Contact admin hoặc report bug
