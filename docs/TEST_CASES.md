@@ -1077,3 +1077,32 @@
 | R1 | Dev-login khi DEV_LOGIN_ENABLED=false | email bất kỳ | 403 | DEV_LOGIN_DISABLED |
 | R2 | Dev-login email không hợp lệ | `abc` (không có @) | — | HTML5 validation chặn submit |
 | R3 | Dev-login khi backend lỗi | email bất kỳ, BE down | — | onError callback hiển thị message |
+
+## Test Cases: Feature 018 — Chia sẻ kết quả (Share Results)
+
+### Happy Path
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| S1 | ShareCard exam render đúng | `type="exam"`, userName="A", result="8.5/10" | Hiển thị nhãn "KẾT QUẢ THI THỬ", tên A, điểm 8.5/10 |
+| S2 | ShareCard battle render đúng | `type="battle"`, result="THẮNG 🏆" | Hiển thị nhãn "KẾT QUẢ BATTLE", kết quả THẮNG 🏆 |
+| S3 | useShareCard — khởi tạo đúng | renderHook | sharing=false, error=null, cardRef và shareAsPng tồn tại |
+| S4 | shareAsPng tải về PNG (FE) | cardRef gắn vào element, gọi shareAsPng() | html2canvas gọi 1 lần, link.click() tải về PNG |
+| S5 | Nút chia sẻ trên ExamResultScreen FE | Bấm "📤 Chia sẻ kết quả" | Trạng thái "⏳ Đang tạo ảnh..." trong lúc xử lý → PNG tải về |
+| S6 | Nút chia sẻ trên BattleResultScreen mobile | Bấm "📤 Chia sẻ kết quả" | captureRef + shareAsync mở native share dialog |
+| S7 | ExamResult mobile nhận params đúng | navigate('ExamResult', {score, subjectName}) | Card hiển thị score/100 và subjectName |
+
+### Edge Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| SE1 | userName rỗng → fallback "Bạn" | userName="" | ShareCard hiển thị "Bạn" |
+| SE2 | SHARE_APP_URL rỗng → fallback nhãn | SHARE_APP_URL="" | Footer hiển thị "QuizzGame" |
+| SE3 | shareAsPng khi cardRef.current = null | Gọi shareAsPng() trước khi ref gắn | Không crash, return sớm, sharing=false |
+| SE4 | subjectName rỗng → subtitle chỉ điểm | subjectName="", pointsAwarded=50 | Subtitle: "+50 điểm thưởng" |
+| SE5 | pointsAwarded = 0 → subtitle tối giản | pointsAwarded=0, subjectName="" | Subtitle: "Thi thử" |
+| SE6 | Battle CANCELLED_BOTH_LEFT | result=CANCELLED_BOTH_LEFT | shareResultTxt="HÒA 🤝", isDraw=true |
+
+### Error Cases
+| # | Mô tả | Input | Expected Output |
+|---|-------|-------|-----------------|
+| SR1 | html2canvas throw exception | mock html2canvas reject | error="Không thể tạo ảnh. Vui lòng thử lại.", sharing=false |
+| SR2 | expo-sharing throw exception (mobile) | mock shareAsync reject | error="Không thể chia sẻ ảnh. Vui lòng thử lại.", sharing=false |

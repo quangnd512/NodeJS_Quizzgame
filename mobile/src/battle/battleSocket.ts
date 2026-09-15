@@ -98,3 +98,47 @@ export function createBattleSocket(sessionToken: string): BattleSocket {
     transports: ['websocket', 'polling'],
   });
 }
+
+// ---------------------------------------------------------------------------
+// Type alias dùng hậu tố "Event" (dùng trong BattleLobbyScreen/BattleSessionScreen)
+// — tương đương Payload tương ứng, giữ compatibility.
+// ---------------------------------------------------------------------------
+
+export type BattleQueueStatusEvent = BattleQueueStatusPayload;
+export type BattleRoomCreatedEvent = BattleRoomCreatedPayload;
+export type BattleMatchFoundEvent = BattleMatchFoundPayload;
+export type BattleQuestionEvent = BattleQuestionPayload;
+export type BattleOpponentProgressEvent = BattleOpponentProgressPayload;
+export type BattleQuestionResultEvent = BattleQuestionResultPayload;
+export type BattleMatchEndedEvent = BattleMatchEndedPayload;
+export type BattleOpponentDisconnectedEvent = BattleOpponentDisconnectedPayload;
+export type BattleErrorEvent = BattleErrorPayload;
+
+// ---------------------------------------------------------------------------
+// Singleton socket — getBattleSocket tao hoac tra ve socket hien co.
+// disconnectBattleSocket ngat ket noi va xoa singleton.
+// ---------------------------------------------------------------------------
+
+let _battleSocket: BattleSocket | null = null;
+
+/**
+ * Lấy socket Battle hiện có hoặc tạo mới nếu chưa có.
+ * Dùng cho luồng multi-screen (BattleLobbyScreen → BattleSessionScreen) cần chia sẻ socket.
+ */
+export function getBattleSocket(sessionToken: string): BattleSocket {
+  if (!_battleSocket) {
+    _battleSocket = createBattleSocket(sessionToken);
+  }
+  return _battleSocket;
+}
+
+/**
+ * Ngắt kết nối và xóa singleton socket Battle.
+ * Gọi khi rời màn hình Battle hoặc kết thúc trận.
+ */
+export function disconnectBattleSocket(): void {
+  if (_battleSocket) {
+    _battleSocket.disconnect();
+    _battleSocket = null;
+  }
+}

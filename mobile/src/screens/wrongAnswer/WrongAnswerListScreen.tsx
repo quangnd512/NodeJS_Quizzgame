@@ -68,7 +68,6 @@ export function WrongAnswerListScreen({ navigation }: Props) {
                 navigation.navigate('WrongAnswerSession', {
                   id: item.id,
                   questionContent: item.question.content,
-                  subjectId: item.question.subjectId,
                 })
               }
               activeOpacity={0.75}

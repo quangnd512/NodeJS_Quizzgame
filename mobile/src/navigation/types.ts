@@ -46,18 +46,13 @@ export type PracticeStackParamList = {
   };
 };
 
-export type PracticeStackScreenProps<T extends keyof PracticeStackParamList> =
-  NativeStackScreenProps<PracticeStackParamList, T>;
-
 /** Stack thi thu (Exam tab). */
 export type ExamStackParamList = {
   ExamList: undefined;
   ExamTaking: { session: StartExamResult };
+  ExamSession: { sessionId: string; durationMinutes: number };
   ExamResult: { sessionId: string; score?: number; subjectName?: string; pointsAwarded?: number };
 };
-
-export type ExamStackScreenProps<T extends keyof ExamStackParamList> =
-  NativeStackScreenProps<ExamStackParamList, T>;
 
 /** Stack thi dau doi khang (truy cap tu Profile). */
 export type BattleStackParamList = {
@@ -75,16 +70,12 @@ export type LeaderboardStackParamList = {
   LeaderboardHome: undefined;
 };
 
-export type LeaderboardStackScreenProps<T extends keyof LeaderboardStackParamList> =
-  NativeStackScreenProps<LeaderboardStackParamList, T>;
-
-/** Stack tien do (Progress tab). */
+/** Stack tien do (Progress tab) — gom ca On cau sai. */
 export type ProgressStackParamList = {
   ProgressHome: undefined;
+  WrongAnswerList: undefined;
+  WrongAnswerSession: { id: number; questionContent: string };
 };
-
-export type ProgressStackScreenProps<T extends keyof ProgressStackParamList> =
-  NativeStackScreenProps<ProgressStackParamList, T>;
 
 /** Stack trong tab Ho so — cho phep ProfileScreen push cac man hinh phu. */
 export type ProfileStackParamList = {
@@ -93,10 +84,12 @@ export type ProfileStackParamList = {
   WrongAnswers: undefined;
   Submissions: undefined;
   Battle: undefined; // BattleStackNavigator luon bat dau tu BattleHome
+  QuestionSubmissionList: undefined;
+  QuestionSubmissionForm: undefined;
+  BattleLobby: undefined;
+  BattleSession: { matchId: string; subject: string; stake: number; opponentName: string; isBotMatch: boolean };
+  BattleResult: { matchId: string; myScore: number; opponentScore: number; result: string; pointsChange: number };
 };
-
-export type ProfileStackScreenProps<T extends keyof ProfileStackParamList> =
-  NativeStackScreenProps<ProfileStackParamList, T>;
 
 /** 5 tab chinh cua hoc sinh. */
 export type MainTabParamList = {

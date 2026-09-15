@@ -8547,3 +8547,149 @@ S3 review phát hiện 6 warning lint (0 lỗi): `react-native-gesture-handler` 
 - **Timer precision:** TASK1 + TASK2 dùng `setInterval` — cần hủy interval khi unmount. Nếu interval 1 giây, sai lệch ±1-2 giây là bình thường.
 - **Resume endpoint:** TASK2 phải gọi `/api/exams/:examId/resume` để sync timestamp. Backend phải trả về thông tin startedAt chính xác.
 - **Bottom sheet dismiss:** TASK7 — sau khi user đóng bottom sheet, có thể cần scroll lazylist về top (nếu list rất dài).
+
+---
+
+## 18. Chia sẻ kết quả (Share Results)
+
+- **Ngày hoàn thành:** 2026-09-14
+- **Mục tiêu / mô tả ngắn:** Cho phép người dùng chia sẻ kết quả thi và kết quả PvP Battle dưới dạng ảnh
+  trên mạng xã hội hoặc qua chat. Frontend dùng **html2canvas** để chụp PNG + tải về; Mobile dùng
+  **react-native-view-shot** + **expo-sharing** để mở native share dialog (AirDrop, Messages, WhatsApp, vv).
+- **Branch / commit liên quan:** `feature/share-results` (commits 82e9b51–4408118)
+
+### Luồng chạy chi tiết (step-by-step)
+
+**1. Khi người dùng xem kết quả thi (Frontend / Mobile)**
+
+- Màn hình `ExamResultScreen` hiển thị:
+  - Điểm số `8.5/10` (ví dụ)
+  - Môn học `Toán Đại số`
+  - Điểm thưởng `+120 điểm`
+  - Nút `📤 Chia sẻ kết quả` bên dưới
+- Người dùng bấm nút → gọi `handleShare()` (phía frontend) hoặc `handleShare()` (phía mobile)
+
+**2. ShareCard — Card ảnh chia sẻ (kích thước cố định 400×220px)**
+
+Mỗi màn hình kết quả có **1 div ẩn** chứa `<ShareCard>` component:
+- **Màu gradient** khác nhau cho 2 loại kết quả:
+  - `exam` (thi thử): xanh dương (từ `#1e40af` → `#3b82f6`)
+  - `battle` (PvP): tím (từ `#7c3aed` → `#a855f7`)
+- **Nội dung hiển thị**:
+  - Icon + loại (📝 KẾT QUẢ THI THỬ / ⚔️ KẾT QUẢ BATTLE)
+  - Tên người dùng (top-left)
+  - Logo QuizzGame (top-right)
+  - **Kết quả chính** to (ví dụ: "8.5/10" hoặc "THẮNG")
+  - **Mô tả phụ** (ví dụ: "Toán Đại số · +120 điểm")
+  - URL ứng dụng footer (tạm để trống, điền khi có domain thật)
+- **Trang trí**: 2 vòng tròn transparent ở góc (top-right + bottom-left) làm cho card có nhân sâu
+
+**3. Frontend: Chụp ảnh bằng html2canvas**
+
+Hook `useShareCard()` khi called (`shareAsPng()`):
+1. **Import động** `html2canvas` → không đóng gói trong bundle, chỉ tải khi người dùng bấm nút
+2. **Chụp DOM** của `cardRef` (div ẩn chứa `<ShareCard>`):
+   - `backgroundColor: null` → trong suốt (không bắt buộc)
+   - `scale: 2` → độ phân giải Retina (2x)
+   - `useCORS: true` → cho phép ảnh từ CDN
+   - `logging: false` → không in debug message
+3. **Chuyển canvas → PNG**: `canvas.toDataURL('image/png')`
+4. **Tải về**: Tạo `<a>` tag, set `href` + `download` attribute, click, xoá tag
+5. **Tên file**: `ket-qua-thi-{timestamp}.png`
+
+**4. Mobile: Chụp ảnh bằng react-native-view-shot + chia sẻ native**
+
+Hook `useShareCard()` khi called (`shareAsImage()`):
+1. **Import động** `react-native-view-shot` + `expo-sharing`
+2. **Chụp View** của `cardRef` (View ẩn chứa `<ShareCard>`):
+   - `format: 'png'`
+   - `quality: 1` (full quality)
+   - `result: 'tmpfile'` → trả URI tập tin tạm
+3. **Mở native share dialog**: `shareAsync(uri, {...})`
+   - Người dùng chọn app (WhatsApp, Messages, AirDrop, vv)
+   - Native app nhận file tạm → chia sẻ
+4. **Error handling**: nếu lỗi → hiển thị toast "Không thể chia sẻ ảnh"
+
+**5. Nơi gắn nút chia sẻ**
+
+| Màn hình | File | Loại | Vị trí |
+|----------|------|------|---------|
+| **ExamResultScreen** (Frontend) | `frontend/src/screens/exam/ExamResultScreen.tsx` | `exam` | Dưới điểm số, trên "Quay về" |
+| **BattleResultPhase** (Frontend) | `frontend/src/screens/battle/BattlePage.tsx` | `battle` | Dưới "THẮNG/THUA", cạnh "Quay về" |
+| **ExamResultScreen** (Mobile) | `mobile/src/screens/exam/ExamResultScreen.tsx` | `exam` | Tương tự frontend |
+| **BattleResultScreen** (Mobile) | `mobile/src/screens/battle/BattleResultScreen.tsx` | `battle` | Tương tự frontend |
+
+**6. Props truyền cho ShareCard**
+
+Từ parent screen, tính toán:
+- `userName`: lấy từ `profileData.userName` (hoặc fallback "Bạn")
+- `result`: 
+  - Exam: `${score.toFixed(1)}/10` (ví dụ: "8.5/10")
+  - Battle: chuỗi status (ví dụ: "THẮNG", "THUA")
+- `subtitle`:
+  - Exam: `${subjectName} · +${pointsAwarded} điểm` (hoặc chỉ điểm nếu subjectName trống)
+  - Battle: (định nghĩa tùy theo design)
+- `type`: `'exam'` hoặc `'battle'`
+
+### Các file chính liên quan
+
+**Frontend:**
+- `frontend/src/constants/shareConfig.ts` – Cấu hình `SHARE_APP_URL` (tạm trống)
+- `frontend/src/components/share/ShareCard.tsx` – Component card ảnh (kích thước cố định 400×220px)
+- `frontend/src/hooks/useShareCard.ts` – Hook `useShareCard()` dùng html2canvas
+- `frontend/src/screens/exam/ExamResultScreen.tsx` – Thêm nút + div ẩn ShareCard
+- `frontend/src/screens/exam/ExamPage.tsx` – Truyền `userName` + `subjectName` xuống `ExamResultScreen`
+- `frontend/src/screens/battle/BattlePage.tsx` – Thêm nút + ShareCard vào `BattleResultPhase`
+
+**Mobile:**
+- `mobile/src/constants/shareConfig.ts` – Cấu hình `SHARE_APP_URL` (tạm trống)
+- `mobile/src/components/share/ShareCard.tsx` – Component card ảnh (React Native)
+- `mobile/src/hooks/useShareCard.ts` – Hook `useShareCard()` dùng `react-native-view-shot` + `expo-sharing`
+- `mobile/src/screens/exam/ExamResultScreen.tsx` – Thêm nút + View ẩn ShareCard
+- `mobile/src/screens/exam/ExamTakingScreen.tsx` – Truyền params score + subjectName khi navigate
+- `mobile/src/navigation/types.ts` – Mở rộng `ExamResult` param (thêm score, subjectName)
+- `mobile/src/screens/battle/BattleResultScreen.tsx` – Thêm nút + ShareCard
+
+### Cách tự kiểm thử (manual test)
+
+1. **Frontend — Exam Result**
+   - Vào trang ôn tập (Practice) → chọn câu hỏi → submit
+   - Xem trang kết quả → nút "📤 Chia sẻ kết quả" hiển thị
+   - Bấm nút → file PNG `ket-qua-thi-{timestamp}.png` tải về
+   - Kiểm tra ảnh: tên user, điểm số, môn học, điểm thưởng hiển thị đúng
+   - Kiểm tra màu: gradient xanh dương (exam)
+
+2. **Frontend — Battle Result**
+   - Vào thi đấu PvP → chơi xong → xem kết quả
+   - Nút "📤 Chia sẻ kết quả" hiển thị
+   - Bấm nút → file PNG tải về
+   - Kiểm tra ảnh: tên user, "THẮNG" hoặc "THUA", điểm số
+   - Kiểm tra màu: gradient tím (battle)
+
+3. **Mobile — Exam Result**
+   - Vào Practice → chơi → xem kết quả
+   - Nút "📤 Chia sẻ kết quả" hiển thị (có thể là icon + text, tùy design)
+   - Bấm nút → native share dialog mở ra
+   - Chọn app (Messages, WhatsApp, AirDrop) → chia sẻ xong
+
+4. **Mobile — Battle Result**
+   - Tương tự (vào Battle → chơi → xem kết quả)
+
+5. **Edge case — Tên user null**
+   - Nếu `userName` từ backend trả `null` → fallback hiển thị "Bạn"
+   - Kiểm tra ảnh vẫn sinh ra đúng, không có lỗi
+
+### Lưu ý / rủi ro / TODO
+
+- **SHARE_APP_URL tạm trống**: Khi có domain thật (ví dụ: `https://quizzgame.app`), cập nhật file
+  `shareConfig.ts` ở cả 2 frontend + mobile, ảnh footer sẽ hiển thị URL thay vì "QuizzGame"
+- **html2canvas**: Thư viện gọi DOM → canvas, có thể bỏ sót style CSS phức tạp nếu dùng `.cssText`
+  hoặc CSS-in-JS không chuẩn. ShareCard hiện tại dùng `style={{...}}` (inline) → an toàn
+- **Mobile share dialog**: Mỗi platform (iOS / Android) hiển thị dialog khác nhau. Cần test trên
+  cả 2 nền tảng (hoặc sử dụng Expo TestFlight + Android device)
+- **Backend Open Graph (TODO)**: Khi người dùng share URL trực tiếp (chưa implement), backend cần
+  thêm endpoint `GET /share/:shareId` → trả HTML + meta tags (og:image, og:title, vv) để preview
+  được đẹp trên Facebook/Slack. Để backlog sau.
+- **Analytics (TODO)**: Track khi người dùng bấm nút share → gửi event `SHARE_RESULT` tới backend
+  (hữu ích cho growth metrics). Để backlog sau.
+

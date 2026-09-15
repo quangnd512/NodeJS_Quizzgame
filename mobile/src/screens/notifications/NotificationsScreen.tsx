@@ -12,8 +12,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../../theme/ThemeContext';
 import { useAuth } from '../../auth/AuthContext';
 import {
-  listNotifications,
-  markAllAsRead,
+  getNotifications as listNotifications,
+  markAllNotificationsAsRead as markAllAsRead,
   type NotificationItem,
 } from '../../api/notifications';
 import type { ProfileStackScreenProps } from '../../navigation/types';

@@ -1820,6 +1820,47 @@ Bạn **không cần chủ động jump** — thông báo tự đưa bạn đế
 
 ---
 
+### Chia sẻ kết quả thi & Battle
+
+**Nơi tìm:** Sau khi xem xong kết quả thi hoặc kết quả PvP Battle
+
+#### 📱 Web (Frontend)
+
+1. **Thi thử (Exam):**
+   - Khi xong phiên thi → trang hiển thị điểm số (ví dụ "8.5/10")
+   - Nút **"📤 Chia sẻ kết quả"** nằm dưới điểm số
+   - Bấm → browser tải file PNG `ket-qua-thi-{timestamp}.png` về máy
+   - Ảnh PNG chứa: tên bạn, điểm số, môn học, điểm thưởng, logo QuizzGame + gradient xanh dương
+
+2. **Thi đấu PvP (Battle):**
+   - Khi xong 1 trận PvP → trang hiển thị "THẮNG" hoặc "THUA"
+   - Nút **"📤 Chia sẻ kết quả"** nằm dưới kết quả
+   - Bấm → tải file PNG: `ket-qua-battle-{timestamp}.png`
+   - Ảnh PNG chứa: tên bạn, "THẮNG"/"THUA", điểm số, logo QuizzGame + gradient tím
+
+#### 📱 Mobile (Expo + React Native)
+
+1. **Thi thử (Exam):**
+   - Sau khi xem kết quả exam → trang kết quả
+   - Nút **"📤 Chia sẻ kết quả"** hiển thị
+   - Bấm → native share dialog mở ra (tuỳ thiết bị):
+     - **iOS:** AirDrop, Messages, Mail, Notes, v.v.
+     - **Android:** Gmail, Messenger, WhatsApp, Telegram, v.v.
+   - Chọn app → chia sẻ xong
+
+2. **Thi đấu PvP (Battle):**
+   - Sau khi xem kết quả battle → trang kết quả
+   - Nút **"📤 Chia sẻ kết quả"** hiển thị
+   - Bấm → native share dialog → chọn app chia sẻ
+
+#### ℹ️ Lưu ý
+
+- **Ảnh PNG cũ định dạng cố định** (400×220px) để đảm bảo hiển thị đẹp trên mạng xã hội
+- **Tên user hiển thị từ hồ sơ:** Nếu chưa thiết lập tên → hiển thị "Bạn"
+- **URL ứng dụng (footer):** Hiện tại để trống (hiển thị "QuizzGame" tạm), khi có domain thật sẽ cập nhật
+
+---
+
 ### Câu hỏi thường gặp
 
 **Q: Bây giờ 4 tab chính ("Luyện tập", "Thi thử", "Xếp hạng", "Tiến độ") đã không còn "Sắp ra mắt" rồi?**
