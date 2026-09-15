@@ -4,6 +4,51 @@
 
 ---
 
+## v1.20.0 — 2026-09-15
+
+### Feature: Share Results — Chia Sẻ Kết Quả
+
+**Branch:** `feature/share-results` | **Merge:** PR #31
+
+#### Added
+
+- **ShareCard component** (Frontend + Mobile) — thẻ hiển thị kết quả đẹp với:
+  - Điểm số, số câu đúng, thời gian làm bài
+  - Avatar người dùng + tên
+  - Thông tin chủ đề / loại thi đấu
+  
+- **useShareCard hook** — xử lý chia sẻ:
+  - Copy link vào clipboard
+  - Chia sẻ sang social networks (Facebook, Twitter, WhatsApp)
+  - Web intent cho Android
+  - Web Share API cho web browsers
+
+- **Nút chia sẻ trên 4 màn hình**:
+  - Trang kết quả thi (Exam Result Page)
+  - Màn hình kết quả thi (Exam Result Screen)
+  - Trang kết thúc Battle (Battle End Page)
+  - Màn hình kết quả Battle (Battle Result Screen)
+
+- **Mobile app.json config** — sharing intent support
+
+#### Testing
+
+- **Automated**: 146/146 test PASS (109 frontend + 37 mobile)
+- **TypeScript**: 0 errors (backend + frontend + mobile)
+- **Quality gate (S8)**: ✅ PASS
+- **Security**: CodeQL + Gitleaks + npm audit — TẤT CẢ PASS
+- **Documentation**: FEATURE_LOG, CHANGELOG, user-guide, troubleshooting, TEST_CASES cập nhật
+
+#### Notes
+
+- Không phụ thuộc database — thuần UI/UX feature
+- Không có migration Prisma mới
+- Chia sẻ link sẽ điều hướng tới trang kết quả thi (backend public endpoint chưa implement)
+- S3 fix 10 TypeScript errors trong mobile (ParamList/navigation types)
+- S5 verify 37 mobile tests + 14 source code validations
+
+---
+
 ## v1.19.0 — 2026-09-14
 
 ### Feature: Mobile Complete — Tính Năng Di Động Hoàn Chỉnh
